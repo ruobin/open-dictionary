@@ -1,4 +1,4 @@
-# Container image for the ai-dic API server. The Vite SPA is built and
+# Container image for the open-dictionary API server. The Vite SPA is built and
 # deployed separately (any static host: Vercel, Netlify, Cloudflare Pages,
 # S3+CloudFront, nginx, etc.) and proxies /api/* to this service.
 

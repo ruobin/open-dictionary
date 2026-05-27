@@ -145,7 +145,7 @@ app.use((err, req, res, _next) => {
 })
 
 const server = app.listen(PORT, () => {
-  console.log(`ai-dic API listening on http://localhost:${PORT} (${NODE_ENV})`)
+  console.log(`open-dictionary API listening on http://localhost:${PORT} (${NODE_ENV})`)
 })
 
 function shutdown(signal) {

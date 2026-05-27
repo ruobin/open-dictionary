@@ -1,4 +1,4 @@
-# ai-dic
+# open-dictionary
 
 A small Cambridge-style English dictionary. React + Vite on the front, a tiny Express service on the back to sync per-user history and favorites through Auth0 `user_metadata`.
 
@@ -35,8 +35,8 @@ In the Auth0 dashboard:
 
 3. **Create a custom API** (used as the JWT audience)
    - APIs → Create API
-   - Name: `ai-dic-api`
-   - Identifier: `https://ai-dic-api` (any URL-shaped string; just be consistent)
+   - Name: `open-dictionary-api`
+   - Identifier: `https://open-dictionary-api` (any URL-shaped string; just be consistent)
    - Signing Algorithm: `RS256`
 
 4. **Create a Machine-to-Machine application** for the server
@@ -115,8 +115,8 @@ In the Auth0 dashboard, add your production URL to **Allowed Callback URLs**, **
 Build and run with Docker:
 
 ```bash
-docker build -t ai-dic-api .
-docker run --rm -p 3001:3001 --env-file server/.env ai-dic-api
+docker build -t open-dictionary-api .
+docker run --rm -p 3001:3001 --env-file server/.env open-dictionary-api
 ```
 
 Or run directly:
@@ -133,7 +133,7 @@ Required runtime env vars (`server/.env.example` has the full list):
 | `AUTH0_AUDIENCE` | the custom API identifier |
 | `AUTH0_MGMT_CLIENT_ID` | M2M client ID |
 | `AUTH0_MGMT_CLIENT_SECRET` | M2M client secret — **secret** |
-| `ALLOWED_ORIGINS` | comma-separated list of allowed browser origins (e.g. `https://ai-dic.example.com`) |
+| `ALLOWED_ORIGINS` | comma-separated list of allowed browser origins (e.g. `https://open-dictionary.example.com`) |
 | `NODE_ENV` | set to `production` |
 | `TRUST_PROXY` | set to `1` (or higher) if behind a reverse proxy / LB |
 | `PORT` | defaults to `3001` |
