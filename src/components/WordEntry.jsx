@@ -1,0 +1,64 @@
+import AudioButton from './AudioButton.jsx'
+import PosSection from './PosSection.jsx'
+
+function pickAudio(phonetics) {
+  const withAudio = phonetics.filter((p) => p.audio)
+  const uk = withAudio.find((p) => /-uk\.|\/uk\//i.test(p.audio))
+  const us = withAudio.find((p) => /-us\.|\/us\//i.test(p.audio))
+  const fallback = !uk && !us ? withAudio[0] : null
+  return { uk, us, fallback }
+}
+
+function pickPhoneticText(phonetics) {
+  return phonetics.find((p) => p.text)?.text || ''
+}
+
+export default function WordEntry({ entry, isFavorite, onToggleFavorite }) {
+  const phonetics = entry.phonetics || []
+  const { uk, us, fallback } = pickAudio(phonetics)
+  const phoneticText = pickPhoneticText(phonetics)
+
+  return (
+    <article className="word-entry">
+      <header className="word-header">
+        <div>
+          <h1 className="headword">{entry.word}</h1>
+          {phoneticText && <p className="phonetic">{phoneticText}</p>}
+        </div>
+        <div className="word-actions">
+          <div className="audio-row">
+            {uk && <AudioButton label="UK" src={uk.audio} />}
+            {us && <AudioButton label="US" src={us.audio} />}
+            {fallback && <AudioButton label="Play" src={fallback.audio} />}
+          </div>
+          <button
+            className={`fav-btn ${isFavorite ? 'is-fav' : ''}`}
+            onClick={onToggleFavorite}
+            aria-pressed={isFavorite}
+            aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+            type="button"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+              <path d="M12 21s-7-4.35-9.5-9a5.5 5.5 0 0 1 9.5-5 5.5 5.5 0 0 1 9.5 5C19 16.65 12 21 12 21z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div className="meanings">
+        {(entry.meanings || []).map((m, i) => (
+          <PosSection key={i} meaning={m} />
+        ))}
+      </div>
+
+      {entry.sourceUrls && entry.sourceUrls.length > 0 && (
+        <footer className="word-footer">
+          Source:{' '}
+          {entry.sourceUrls.map((u, i) => (
+            <a key={i} href={u} target="_blank" rel="noreferrer">{u}</a>
+          ))}
+        </footer>
+      )}
+    </article>
+  )
+}

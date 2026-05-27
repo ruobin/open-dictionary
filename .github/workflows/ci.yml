@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Smoke-start server
+        run: |
+          AUTH0_DOMAIN=example.auth0.com \
+          AUTH0_AUDIENCE=https://example \
+          AUTH0_MGMT_CLIENT_ID=cid \
+          AUTH0_MGMT_CLIENT_SECRET=secret \
+          PORT=3001 node server/index.js &
+          SERVER_PID=$!
+          sleep 2
+          curl -fsS http://localhost:3001/health
+          kill $SERVER_PID
+
+      - name: Audit (production deps only)
+        run: npm audit --omit=dev --audit-level=high
