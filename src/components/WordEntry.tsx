@@ -1,20 +1,37 @@
-import AudioButton from './AudioButton.jsx'
-import PosSection from './PosSection.jsx'
+import AudioButton from './AudioButton'
+import PosSection from './PosSection'
+import type { DictionaryEntry, Phonetic } from '../api/dictionary'
 
-function pickAudio(phonetics) {
-  const withAudio = phonetics.filter((p) => p.audio)
+type PhoneticWithAudio = Phonetic & { audio: string }
+
+interface AudioPick {
+  uk: PhoneticWithAudio | undefined
+  us: PhoneticWithAudio | undefined
+  fallback: PhoneticWithAudio | undefined
+}
+
+function pickAudio(phonetics: Phonetic[]): AudioPick {
+  const withAudio = phonetics.filter(
+    (p): p is PhoneticWithAudio => Boolean(p.audio)
+  )
   const uk = withAudio.find((p) => /-uk\.|\/uk\//i.test(p.audio))
   const us = withAudio.find((p) => /-us\.|\/us\//i.test(p.audio))
-  const fallback = !uk && !us ? withAudio[0] : null
+  const fallback = !uk && !us ? withAudio[0] : undefined
   return { uk, us, fallback }
 }
 
-function pickPhoneticText(phonetics) {
-  return phonetics.find((p) => p.text)?.text || ''
+function pickPhoneticText(phonetics: Phonetic[]): string {
+  return phonetics.find((p) => p.text)?.text ?? ''
 }
 
-export default function WordEntry({ entry, isFavorite, onToggleFavorite }) {
-  const phonetics = entry.phonetics || []
+interface WordEntryProps {
+  entry: DictionaryEntry
+  isFavorite: boolean
+  onToggleFavorite: () => void
+}
+
+export default function WordEntry({ entry, isFavorite, onToggleFavorite }: WordEntryProps) {
+  const phonetics = entry.phonetics ?? []
   const { uk, us, fallback } = pickAudio(phonetics)
   const phoneticText = pickPhoneticText(phonetics)
 
@@ -46,7 +63,7 @@ export default function WordEntry({ entry, isFavorite, onToggleFavorite }) {
       </header>
 
       <div className="meanings">
-        {(entry.meanings || []).map((m, i) => (
+        {(entry.meanings ?? []).map((m, i) => (
           <PosSection key={i} meaning={m} />
         ))}
       </div>

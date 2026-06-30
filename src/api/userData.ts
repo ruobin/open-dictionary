@@ -1,22 +1,33 @@
 const ANON_KEY = 'userdata:anon'
 
-const empty = () => ({ history: [], favorites: [] })
+export interface UserData {
+  history: string[]
+}
 
-function readLocal(key) {
+export interface UserDataAuth {
+  isAuthenticated: boolean
+  getAccessToken: () => Promise<string>
+}
+
+const empty = (): UserData => ({ history: [] })
+
+function coerceHistory(parsed: unknown): string[] {
+  if (!parsed || typeof parsed !== 'object') return []
+  const value = (parsed as Record<string, unknown>).history
+  return Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : []
+}
+
+function readLocal(key: string): UserData {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return empty()
-    const parsed = JSON.parse(raw)
-    return {
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-      favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
-    }
+    return { history: coerceHistory(JSON.parse(raw)) }
   } catch {
     return empty()
   }
 }
 
-function writeLocal(key, data) {
+function writeLocal(key: string, data: UserData): void {
   try {
     localStorage.setItem(key, JSON.stringify(data))
   } catch {
@@ -24,7 +35,7 @@ function writeLocal(key, data) {
   }
 }
 
-export async function loadUserData({ isAuthenticated, getAccessToken }) {
+export async function loadUserData({ isAuthenticated, getAccessToken }: UserDataAuth): Promise<UserData> {
   if (!isAuthenticated) return readLocal(ANON_KEY)
 
   try {
@@ -33,18 +44,17 @@ export async function loadUserData({ isAuthenticated, getAccessToken }) {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) throw new Error(`Server ${res.status}`)
-    const data = await res.json()
-    return {
-      history: Array.isArray(data.history) ? data.history : [],
-      favorites: Array.isArray(data.favorites) ? data.favorites : [],
-    }
+    return { history: coerceHistory(await res.json()) }
   } catch (err) {
     console.warn('loadUserData failed, falling back to empty', err)
     return empty()
   }
 }
 
-export async function saveUserData(data, { isAuthenticated, getAccessToken }) {
+export async function saveUserData(
+  data: UserData,
+  { isAuthenticated, getAccessToken }: UserDataAuth
+): Promise<void> {
   if (!isAuthenticated) {
     writeLocal(ANON_KEY, data)
     return

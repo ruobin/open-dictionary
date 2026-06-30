@@ -1,4 +1,6 @@
-export default function PosSection({ meaning }) {
+import type { Meaning } from '../api/dictionary'
+
+export default function PosSection({ meaning }: { meaning: Meaning }) {
   const { partOfSpeech, definitions = [], synonyms = [] } = meaning
 
   return (
@@ -8,7 +10,7 @@ export default function PosSection({ meaning }) {
         {definitions.map((d, i) => (
           <li key={i} className="def-item">
             <p className="def-text">{d.definition}</p>
-            {d.example && <p className="def-example">"{d.example}"</p>}
+            {d.example && <p className="def-example">&quot;{d.example}&quot;</p>}
           </li>
         ))}
       </ol>

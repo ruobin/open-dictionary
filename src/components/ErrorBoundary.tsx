@@ -1,25 +1,33 @@
-import { Component } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 
-export default class ErrorBoundary extends Component {
-  constructor(props) {
+interface ErrorBoundaryProps {
+  children: ReactNode
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean
+}
+
+export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false }
   }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(): ErrorBoundaryState {
     return { hasError: true }
   }
 
-  componentDidCatch(error, info) {
+  componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('Unhandled UI error', error, info)
   }
 
-  handleReload = () => {
+  handleReload = (): void => {
     this.setState({ hasError: false })
     window.location.assign('/')
   }
 
-  render() {
+  render(): ReactNode {
     if (!this.state.hasError) return this.props.children
     return (
       <div className="state-msg state-error" role="alert">

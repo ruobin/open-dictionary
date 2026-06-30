@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react'
-import { lookupWord } from '../api/dictionary.js'
+import { lookupWord, type DictionaryEntry, type LookupError } from '../api/dictionary'
 
-export function useDictionary(word) {
-  const [state, setState] = useState({
+export type LookupStatus = 'idle' | 'loading' | 'success' | 'error'
+
+export interface DictionaryState {
+  status: LookupStatus
+  data: DictionaryEntry[] | null
+  error: LookupError | null
+}
+
+export function useDictionary(
+  word: string,
+  sourceLang = 'en',
+  targetLang = 'en'
+): DictionaryState {
+  const [state, setState] = useState<DictionaryState>({
     status: word ? 'loading' : 'idle',
     data: null,
     error: null,
@@ -17,12 +29,12 @@ export function useDictionary(word) {
     let cancelled = false
     setState({ status: 'loading', data: null, error: null })
 
-    lookupWord(word)
+    lookupWord(word, sourceLang, targetLang)
       .then((data) => {
         if (cancelled) return
         setState({ status: 'success', data, error: null })
       })
-      .catch((error) => {
+      .catch((error: LookupError) => {
         if (cancelled) return
         setState({ status: 'error', data: null, error })
       })
@@ -30,7 +42,7 @@ export function useDictionary(word) {
     return () => {
       cancelled = true
     }
-  }, [word])
+  }, [word, sourceLang, targetLang])
 
   return state
 }

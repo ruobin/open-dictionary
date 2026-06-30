@@ -1,12 +1,12 @@
 import { useRef } from 'react'
 
-export default function AudioButton({ label, src }) {
-  const audioRef = useRef(null)
+export default function AudioButton({ label, src }: { label: string; src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null)
 
   function play() {
     if (!audioRef.current) return
     audioRef.current.currentTime = 0
-    audioRef.current.play().catch(() => {})
+    void audioRef.current.play().catch(() => {})
   }
 
   return (

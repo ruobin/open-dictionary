@@ -1,11 +1,13 @@
 import { useEffect } from 'react'
-import { Route, Routes, useParams } from 'react-router-dom'
-import Header from './components/Header.jsx'
-import SearchBar from './components/SearchBar.jsx'
-import Sidebar from './components/Sidebar.jsx'
-import WordEntry from './components/WordEntry.jsx'
-import { useDictionary } from './hooks/useDictionary.js'
-import { useUserData } from './hooks/useUserData.js'
+import { Route, Routes, useParams, useSearchParams } from 'react-router-dom'
+import Header from './components/Header'
+import SearchBar from './components/SearchBar'
+import Sidebar from './components/Sidebar'
+import WordEntry from './components/WordEntry'
+import { useDictionary } from './hooks/useDictionary'
+import { useUserData } from './hooks/useUserData'
+import { useFavorites } from './hooks/useFavorites'
+import type { FavoriteKey } from '../shared/favorites'
 
 function Home() {
   return (
@@ -19,28 +21,43 @@ function Home() {
   )
 }
 
-function WordPage({ userData }) {
+function WordPage({
+  userData,
+  favorites,
+}: {
+  userData: ReturnType<typeof useUserData>
+  favorites: ReturnType<typeof useFavorites>
+}) {
   const { term } = useParams()
+  const [searchParams] = useSearchParams()
   const word = (term || '').toLowerCase()
-  const { status, data, error } = useDictionary(word)
+  const sourceLang = searchParams.get('from') || 'en'
+  const targetLang = searchParams.get('to') || 'en'
+  const { status, data, error } = useDictionary(word, sourceLang, targetLang)
+
+  const favKey: FavoriteKey = { word, sourceLang, targetLang }
 
   useEffect(() => {
     if (status === 'success' && word) {
       userData.addToHistory(word)
     }
-  }, [status, word, userData])
+  }, [status, word, userData.addToHistory])
 
   return (
     <div className="word-page">
       <div className="word-page-search">
-        <SearchBar initialValue={word} />
+        <SearchBar
+          initialValue={word}
+          initialSourceLang={sourceLang}
+          initialTargetLang={targetLang}
+        />
       </div>
 
       {status === 'loading' && <p className="state-msg">Loading…</p>}
 
       {status === 'error' && error?.code === 'not_found' && (
         <div className="state-msg state-error">
-          <h2>We couldn't find "{word}"</h2>
+          <h2>We couldn't find &quot;{word}&quot;</h2>
           <p>Check the spelling or try a different word.</p>
         </div>
       )}
@@ -59,18 +76,20 @@ function WordPage({ userData }) {
         </div>
       )}
 
-      {status === 'error' && !['not_found', 'timeout', 'network'].includes(error?.code) && (
-        <div className="state-msg state-error">
-          <h2>Something went wrong</h2>
-          <p>Please try again in a moment.</p>
-        </div>
-      )}
+      {status === 'error' &&
+        error !== null &&
+        !['not_found', 'timeout', 'network'].includes(error.code) && (
+          <div className="state-msg state-error">
+            <h2>Something went wrong</h2>
+            <p>Please try again in a moment.</p>
+          </div>
+        )}
 
       {status === 'success' && data && data.length > 0 && (
         <WordEntry
           entry={data[0]}
-          isFavorite={userData.isFavorite(word)}
-          onToggleFavorite={() => userData.toggleFavorite(word)}
+          isFavorite={favorites.isFavorite(favKey)}
+          onToggleFavorite={() => favorites.toggle(favKey)}
         />
       )}
     </div>
@@ -79,6 +98,7 @@ function WordPage({ userData }) {
 
 export default function App() {
   const userData = useUserData()
+  const favorites = useFavorites()
 
   return (
     <div className="app-shell">
@@ -87,10 +107,13 @@ export default function App() {
         <div className="content">
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/word/:term" element={<WordPage userData={userData} />} />
+            <Route
+              path="/word/:term"
+              element={<WordPage userData={userData} favorites={favorites} />}
+            />
           </Routes>
         </div>
-        <Sidebar history={userData.history} favorites={userData.favorites} />
+        <Sidebar history={userData.history} favorites={favorites.favorites} />
       </main>
     </div>
   )

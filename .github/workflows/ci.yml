@@ -20,6 +20,9 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Build frontend
         run: npm run build
 
@@ -29,7 +32,7 @@ jobs:
           AUTH0_AUDIENCE=https://example \
           AUTH0_MGMT_CLIENT_ID=cid \
           AUTH0_MGMT_CLIENT_SECRET=secret \
-          PORT=3001 node server/index.js &
+          PORT=3001 npx tsx server/index.ts &
           SERVER_PID=$!
           sleep 2
           curl -fsS http://localhost:3001/health

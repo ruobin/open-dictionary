@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import AuthButton from './AuthButton.jsx'
+import AuthButton from './AuthButton'
 
 export default function Header() {
   return (
