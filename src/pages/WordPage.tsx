@@ -3,11 +3,17 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import SearchBar from '../components/SearchBar'
 import WordEntry from '../components/WordEntry'
 import { useDictionary } from '../hooks/useDictionary'
-import { useUserData } from '../hooks/useUserData'
-import { useFavorites } from '../hooks/useFavorites'
 import type { FavoriteKey } from '../../shared/favorites'
+import type { useUserData } from '../hooks/useUserData'
+import type { useFavorites } from '../hooks/useFavorites'
 
-export default function WordPage() {
+export default function WordPage({
+  userData,
+  favorites,
+}: {
+  userData: ReturnType<typeof useUserData>
+  favorites: ReturnType<typeof useFavorites>
+}) {
   const { term } = useParams()
   const [searchParams] = useSearchParams()
   const word = (term || '').toLowerCase()
@@ -15,16 +21,13 @@ export default function WordPage() {
   const targetLang = searchParams.get('to') || 'en'
   const { status, data, error } = useDictionary(word, sourceLang, targetLang)
 
-  const userData = useUserData()
-  const favorites = useFavorites()
-
   const favKey: FavoriteKey = { word, sourceLang, targetLang }
 
   useEffect(() => {
     if (status === 'success' && word) {
-      userData.addToHistory(word)
+      userData.addToHistory(word, sourceLang, targetLang)
     }
-  }, [status, word, userData.addToHistory])
+  }, [status, word, sourceLang, targetLang, userData.addToHistory])
 
   return (
     <div className="word-page">

@@ -18,6 +18,7 @@ import { createFavoritesRouter } from './favorites'
 import type { LlmProvider } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
+import type { FavoriteKey } from '../shared/favorites'
 
 export interface AppDeps {
   llmProvider: LlmProvider | null
@@ -36,17 +37,21 @@ function userIdFromReq(req: Request): string | undefined {
   return payload?.sub
 }
 
-function sanitizeWordList(list: unknown, max: number): string[] {
+function sanitizeHistoryList(list: unknown, max: number): FavoriteKey[] {
   if (!Array.isArray(list)) return []
   const seen = new Set<string>()
-  const out: string[] = []
-  for (const w of list) {
-    if (typeof w !== 'string') continue
-    const trimmed = w.trim().toLowerCase()
-    if (!trimmed || trimmed.length > 64) continue
-    if (seen.has(trimmed)) continue
-    seen.add(trimmed)
-    out.push(trimmed)
+  const out: FavoriteKey[] = []
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue
+    const e = entry as Record<string, unknown>
+    const word = typeof e.word === 'string' ? e.word.trim().toLowerCase() : ''
+    const sourceLang = typeof e.sourceLang === 'string' ? e.sourceLang.trim().toLowerCase() : ''
+    const targetLang = typeof e.targetLang === 'string' ? e.targetLang.trim().toLowerCase() : ''
+    if (!word || !sourceLang || !targetLang || word.length > 256) continue
+    const key = `${sourceLang}:${targetLang}:${word}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ word, sourceLang, targetLang })
     if (out.length >= max) break
   }
   return out
@@ -146,7 +151,7 @@ export function createApp({ llmProvider, dictionaryProvider, translationCache }:
           return
         }
         const body = (req.body ?? {}) as { history?: unknown }
-        const history = sanitizeWordList(body.history, MAX_HISTORY)
+        const history = sanitizeHistoryList(body.history, MAX_HISTORY)
         await mgmt.users.update({ id: userId }, { user_metadata: { history } })
         res.json({ history })
       } catch (err) {

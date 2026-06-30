@@ -17,7 +17,10 @@ export default function App() {
         <div className="content">
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/word/:term" element={<WordPage />} />
+            <Route
+              path="/word/:term"
+              element={<WordPage userData={userData} favorites={favorites} />}
+            />
           </Routes>
         </div>
         <Sidebar history={userData.history} favorites={favorites.favorites} />

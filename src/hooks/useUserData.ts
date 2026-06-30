@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import { loadUserData, saveUserData } from '../api/userData'
+import type { FavoriteKey } from '../../shared/favorites'
 
 const MAX_HISTORY = 30
 const SAVE_DEBOUNCE_MS = 500
 
 export function useUserData() {
   const { isAuthenticated, isLoading, getAccessTokenSilently, user } = useAuth0()
-  const [history, setHistory] = useState<string[]>([])
+  const [history, setHistory] = useState<FavoriteKey[]>([])
   const [loaded, setLoaded] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const skipNextSave = useRef(true)
@@ -44,11 +45,24 @@ export function useUserData() {
     }
   }, [history, loaded, isAuthenticated, getAccessToken])
 
-  const addToHistory = useCallback((word: string) => {
-    const w = word.trim().toLowerCase()
-    if (!w) return
-    setHistory((prev) => [w, ...prev.filter((x) => x !== w)].slice(0, MAX_HISTORY))
-  }, [])
+  const addToHistory = useCallback(
+    (word: string, sourceLang: string, targetLang: string) => {
+      const w = word.trim().toLowerCase()
+      const s = (sourceLang || 'en').toLowerCase()
+      const t = (targetLang || 'en').toLowerCase()
+      if (!w) return
+      setHistory((prev) => {
+        const filtered = prev.filter(
+          (x) => !(x.word === w && x.sourceLang === s && x.targetLang === t)
+        )
+        return [{ word: w, sourceLang: s, targetLang: t }, ...filtered].slice(
+          0,
+          MAX_HISTORY
+        )
+      })
+    },
+    []
+  )
 
   return { history, addToHistory }
 }

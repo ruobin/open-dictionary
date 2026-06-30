@@ -54,10 +54,10 @@ function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
     '  "translation"?: string,        // best short translation into the target language; omit when defining in the same language',
     '  "partOfSpeech"?: string,       // e.g. "noun", "verb"',
     '  "phonetic"?: string,           // IPA transcription when known',
-    '  "meanings"?: [{ "definition": string, "example"?: string }],  // 1-3 concise senses',
+    '  "meanings"?: [{ "definition": string, "example"?: string }],  // 1-3 concise senses; definition in targetLang, example in sourceLang',
     '  "examples"?: string[]          // extra usage examples',
     '}',
-    `Write "definition" and "example" text in ${targetName}. Keep it concise and accurate.`,
+    `Write "definition" text in ${targetName} and "example" sentences in ${sourceName}. Keep it concise and accurate.`,
   ].join('\n')
 
   return [

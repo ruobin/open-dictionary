@@ -38,28 +38,43 @@ function WordList({
   )
 }
 
-export default function Sidebar({
-  history,
-  favorites,
-}: {
-  history: string[]
-  favorites: FavoriteKey[]
-}) {
-  const historyItems: SidebarItem[] = history
-    .slice(0, 15)
-    .map((w) => ({ key: w, to: `/word/${encodeURIComponent(w)}`, label: w }))
+function historyItems(entries: FavoriteKey[]): SidebarItem[] {
+  return entries.map((e) => ({
+    key: `${e.word}|${e.sourceLang}|${e.targetLang}`,
+    to: `/word/${encodeURIComponent(e.word)}?from=${e.sourceLang}&to=${e.targetLang}`,
+    label: e.word,
+    sub: `${e.sourceLang}\u2192${e.targetLang}`,
+  }))
+}
 
-  const favoriteItems: SidebarItem[] = favorites.map((f) => ({
+function favoriteItems(entries: FavoriteKey[]): SidebarItem[] {
+  return entries.map((f) => ({
     key: `${f.word}|${f.sourceLang}|${f.targetLang}`,
     to: `/word/${encodeURIComponent(f.word)}?from=${f.sourceLang}&to=${f.targetLang}`,
     label: f.word,
     sub: `${f.sourceLang}\u2192${f.targetLang}`,
   }))
+}
 
+export default function Sidebar({
+  history,
+  favorites,
+}: {
+  history: FavoriteKey[]
+  favorites: FavoriteKey[]
+}) {
   return (
     <aside className="sidebar">
-      <WordList title="Favorites" items={favoriteItems} emptyText="Star a translation to save it here." />
-      <WordList title="Recent" items={historyItems} emptyText="Search a word to get started." />
+      <WordList
+        title="Favorites"
+        items={favoriteItems(favorites)}
+        emptyText="Star a translation to save it here."
+      />
+      <WordList
+        title="Recent"
+        items={historyItems(history.slice(0, 15))}
+        emptyText="Search a word to get started."
+      />
     </aside>
   )
 }
