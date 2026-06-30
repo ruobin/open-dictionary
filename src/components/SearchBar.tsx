@@ -6,6 +6,50 @@ import {
   LANGUAGES,
 } from '../../shared/languages'
 
+const LAST_LANGS_KEY = 'lang:last'
+
+interface LastLangs {
+  sourceLang: string
+  targetLang: string
+}
+
+function readLastLangs(): LastLangs | null {
+  try {
+    const raw = localStorage.getItem(LAST_LANGS_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as LastLangs).sourceLang === 'string' &&
+      typeof (parsed as LastLangs).targetLang === 'string'
+    ) {
+      return parsed as LastLangs
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeLastLangs(src: string, tgt: string): void {
+  try {
+    localStorage.setItem(LAST_LANGS_KEY, JSON.stringify({ sourceLang: src, targetLang: tgt }))
+  } catch {
+    // ignore
+  }
+}
+
+function initialLang(prop: string | undefined, fallback: string): string {
+  if (prop !== undefined) return prop
+  return readLastLangs()?.sourceLang ?? fallback
+}
+
+function initialTarget(prop: string | undefined, fallback: string): string {
+  if (prop !== undefined) return prop
+  return readLastLangs()?.targetLang ?? fallback
+}
+
 interface SearchBarProps {
   initialValue?: string
   initialSourceLang?: string
@@ -14,18 +58,22 @@ interface SearchBarProps {
 
 export default function SearchBar({
   initialValue = '',
-  initialSourceLang = DEFAULT_SOURCE_LANG,
-  initialTargetLang = DEFAULT_TARGET_LANG,
+  initialSourceLang,
+  initialTargetLang,
 }: SearchBarProps) {
   const [value, setValue] = useState(initialValue)
-  const [sourceLang, setSourceLang] = useState(initialSourceLang)
-  const [targetLang, setTargetLang] = useState(initialTargetLang)
+  const [sourceLang, setSourceLang] = useState(() =>
+    initialLang(initialSourceLang, DEFAULT_SOURCE_LANG)
+  )
+  const [targetLang, setTargetLang] = useState(() =>
+    initialTarget(initialTargetLang, DEFAULT_TARGET_LANG)
+  )
   const navigate = useNavigate()
 
   useEffect(() => {
     setValue(initialValue)
-    setSourceLang(initialSourceLang)
-    setTargetLang(initialTargetLang)
+    if (initialSourceLang !== undefined) setSourceLang(initialSourceLang)
+    if (initialTargetLang !== undefined) setTargetLang(initialTargetLang)
   }, [initialValue, initialSourceLang, initialTargetLang])
 
   function submit(e: FormEvent) {
@@ -33,8 +81,8 @@ export default function SearchBar({
     const w = value.trim()
     if (!w) return
 
-    // Only add query params when they differ from the defaults, so a plain
-    // English lookup keeps a clean URL (e.g. /word/serendipity).
+    writeLastLangs(sourceLang, targetLang)
+
     const qs = new URLSearchParams()
     if (sourceLang !== DEFAULT_SOURCE_LANG) qs.set('from', sourceLang)
     if (targetLang !== DEFAULT_TARGET_LANG) qs.set('to', targetLang)
