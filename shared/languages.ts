@@ -28,6 +28,7 @@ export const LANGUAGES: readonly Language[] = [
   { code: 'pl', name: 'Polish' },
   { code: 'pt', name: 'Portuguese' },
   { code: 'ru', name: 'Russian' },
+  { code: 'ta', name: 'Tamil' },
   { code: 'th', name: 'Thai' },
   { code: 'tl', name: 'Filipino' },
   { code: 'tr', name: 'Turkish' },
