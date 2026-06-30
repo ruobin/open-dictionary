@@ -36,7 +36,8 @@ export const DEFAULT_TARGET_LANG = 'en'
 
 const NAME_BY_CODE = new Map<string, string>(LANGUAGES.map((l) => [l.code, l.name]))
 
-/** Returns the human-readable name for a BCP-47 code, falling back to the code. */
+/** Returns the human-readable name for a BCP-47 code (case-insensitive),
+ *  falling back to the raw code when unknown. */
 export function languageName(code: string): string {
-  return NAME_BY_CODE.get(code) ?? code
+  return NAME_BY_CODE.get(code.toLowerCase()) ?? code
 }

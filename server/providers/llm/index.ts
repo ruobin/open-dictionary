@@ -1,5 +1,6 @@
 import { createGlmProvider } from './glm'
 import { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter'
+import { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 import { LlmProviderError, type LlmProvider } from './types'
 
 export type {
@@ -15,6 +16,8 @@ export { createGlmProvider } from './glm'
 export type { GlmProviderConfig } from './glm'
 export { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter'
 export type { OpenRouterProviderConfig } from './openrouter'
+export { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
+export type { DeepSeekProviderConfig } from './deepseek'
 
 export type LlmRegistryStatus = 'active' | 'disabled' | 'misconfigured'
 
@@ -24,8 +27,8 @@ export interface LlmRegistryResult {
   message: string
 }
 
-const DEFAULT_VENDOR = 'openrouter'
-const SUPPORTED_VENDORS = 'openrouter, glm, none'
+const DEFAULT_VENDOR = 'deepseek'
+const SUPPORTED_VENDORS = 'deepseek, openrouter, glm, none'
 
 function parsePositiveInt(value: string | undefined): number | undefined {
   if (!value) return undefined
@@ -38,23 +41,6 @@ function truthyString(value: string | undefined): string | undefined {
   return t ? t : undefined
 }
 
-/**
- * Builds the active LLM provider from environment variables. OpenRouter is the
- * default vendor; GLM is the alternative.
- *
- * Lenient by design: a missing API key does NOT crash the app — it returns
- * status "misconfigured" with a null provider so the app still boots and the
- * dictionary fallback tier can serve requests (design doc §5, §11).
- *
- * Env vars:
- *   LLM_VENDOR                 openrouter (default) | glm | none
- *   LLM_REQUEST_TIMEOUT_MS     per-request timeout in ms (optional, default 15000)
- *
- *   OpenRouter: OPENROUTER_API_KEY, OPENROUTER_MODEL (default minimax/minimax-m3),
- *               OPENROUTER_BASE_URL, OPENROUTER_REFERER, OPENROUTER_TITLE
- *   GLM:        ZAI_API_KEY, GLM_MODEL (fallback LLM_MODEL, default glm-5.2),
- *               GLM_BASE_URL (fallback LLM_BASE_URL)
- */
 export function createLlmProviderFromEnv(): LlmRegistryResult {
   const vendor = process.env.LLM_VENDOR?.trim().toLowerCase() || DEFAULT_VENDOR
   const timeoutMs = parsePositiveInt(process.env.LLM_REQUEST_TIMEOUT_MS)
@@ -68,6 +54,30 @@ export function createLlmProviderFromEnv(): LlmRegistryResult {
   }
 
   switch (vendor) {
+    case 'deepseek': {
+      const apiKey = truthyString(process.env.DEEPSEEK_API_KEY)
+      const model = truthyString(process.env.DEEPSEEK_MODEL) ?? DEFAULT_DEEPSEEK_MODEL
+      if (!apiKey) {
+        return {
+          provider: null,
+          status: 'misconfigured',
+          message: `LLM_VENDOR=deepseek but DEEPSEEK_API_KEY is missing — set it to enable the DeepSeek (${model}) provider`,
+        }
+      }
+      try {
+        const provider = createDeepSeekProvider({
+          apiKey,
+          model,
+          baseUrl: truthyString(process.env.DEEPSEEK_BASE_URL),
+          timeoutMs,
+        })
+        return { provider, status: 'active', message: `DeepSeek provider active (${provider.id})` }
+      } catch (err) {
+        const detail = err instanceof LlmProviderError ? err.message : String(err)
+        return { provider: null, status: 'misconfigured', message: `DeepSeek provider not built: ${detail}` }
+      }
+    }
+
     case 'openrouter': {
       const apiKey = truthyString(process.env.OPENROUTER_API_KEY)
       const model = truthyString(process.env.OPENROUTER_MODEL) ?? DEFAULT_OPENROUTER_MODEL

@@ -1,6 +1,6 @@
 # open-dictionary
 
-A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (OpenRouter / Z.AI GLM), with the Free Dictionary API as a fallback. Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. Per-user favorites (lanugage-scoped) live in MongoDB; history stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated).
+A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Free Dictionary API as a fallback. Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. Per-user favorites (lanugage-scoped) live in MongoDB; history stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated).
 
 ## Stack
 
@@ -9,7 +9,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 - Express API (run directly with `tsx` — no compile step needed)
 - MongoDB (translation cache + favorites)
 - Auth0 (`@auth0/auth0-react` + Management SDK) for SSO and cross-device history sync
-- LLM tier (vendor-agnostic): **OpenRouter** (default, MiniMax M3) or **Z.AI GLM-5.2**; both are OpenAI‑compatible behind a shared adapter
+- LLM tier (vendor-agnostic): **DeepSeek** (default, `deepseek-v4-flash`), OpenRouter, or Z.AI GLM-5.2; all OpenAI‑compatible behind a shared adapter
 - `helmet`, per‑route `express-rate-limit`, CORS allowlist
 
 See [docs/design-translation-cache.md](docs/design-translation-cache.md) for the full caching and LLM‑provider design.
@@ -113,11 +113,19 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `FREE_DICTIONARY_API_BASE` | no | `https://api.dictionaryapi.dev` | Fallback dict API |
 | `MONGODB_URI` | no | — | e.g. `mongodb://localhost:27017` |
 | `MONGODB_DB` | no | `open-dictionary` | |
-| `LLM_VENDOR` | no | `openrouter` | `openrouter` / `glm` / `none` |
+| `LLM_VENDOR` | no | `deepseek` | `deepseek` / `openrouter` / `glm` / `none` |
 | `LLM_REQUEST_TIMEOUT_MS` | no | `15000` | Per‑request LLM timeout (ms) |
 | `LLM_DEBUG` | no | off | `true` prints full prompts and response bodies |
 
-#### OpenRouter (default)
+#### DeepSeek (default)
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `DEEPSEEK_API_KEY` | if vendor=deepseek | — | Key from [deepseek.com](https://deepseek.com) |
+| `DEEPSEEK_MODEL` | no | `deepseek‑v4‑flash` | |
+| `DEEPSEEK_BASE_URL` | no | `https://api.deepseek.com` | |
+
+#### OpenRouter (alternative)
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -139,10 +147,11 @@ Set `LLM_VENDOR=none` to run with only the dictionary fallback (no LLM calls).
 
 ## LLM providers
 
-Both OpenRouter and Z.AI GLM expose an OpenAI‑compatible Chat Completions API and share a single adapter (`server/providers/llm/openaiCompat.ts`). Swapping or adding a vendor requires a small wrapper (~20 lines) and a new registry case — no changes to the cache, route, or UI.
+All three vendors expose an OpenAI‑compatible Chat Completions API and share a single adapter (`server/providers/llm/openaiCompat.ts`). Swapping or adding a vendor requires a small wrapper (~30 lines) and a new registry case — no changes to the cache, route, or UI.
 
-- **OpenRouter** (default) — access to many models through one API key. Default model is **MiniMax M3** (`minimax/minimax‑m3`).
-- **GLM / Z.AI** — direct Z.AI API (general or coding‑plan endpoints). Default model **glm‑5.2**.
+- **DeepSeek** (default) — model `deepseek-v4-flash`. Endpoint `https://api.deepseek.com`.
+- **OpenRouter** — access to many models through one API key. Default model MiniMax M3 (`minimax/minimax‑m3`).
+- **GLM / Z.AI** — direct Z.AI API (general or coding‑plan endpoints). Default model `glm‑5.2`.
 
 Set `LLM_DEBUG=true` to log every LLM request URL, the full prompt, response status/body, and elapsed time — useful for debugging timeouts or response quality.
 
@@ -154,15 +163,19 @@ src/
   components/     SearchBar, WordEntry, PosSection, AudioButton,
                   Sidebar, Header, AuthButton, ErrorBoundary
   hooks/          useDictionary, useUserData, useFavorites
-  i18n/           (removed — languages live in shared/)
+  pages/          Home.tsx, WordPage.tsx
   styles/         app.css
   vite‑env.d.ts   Vite / import.meta.env typings
 public/           favicon.svg, robots.txt
+scripts/
+  llm‑ping.ts     Smoke‑test the active LLM provider
 shared/
   languages.ts    Language list + code‑to‑name helper
   favorites.ts    FavoriteKey interface
 server/
-  index.ts        API entrypoint (routes, Mongo connect, config)
+  index.ts        Boot: connect Mongo, create providers, listen + shutdown
+  config.ts       Env reading + validation (loaded by both index and app)
+  app.ts          Express app factory (middleware, routes, error handling)
   translate.ts    /api/translate handler + read‑through cache orchestrator
   favorites.ts    /api/favorites (Mongo‑backed)
   db.ts           Mongo connection + index provisioning
@@ -172,10 +185,10 @@ server/
     llm/
       types.ts          LlmProvider interface + error types
       openaiCompat.ts   Shared OpenAI‑compatible adapter
-      glm.ts            Z.AI GLM wrapper
+      deepseek.ts       DeepSeek wrapper
       openrouter.ts     OpenRouter wrapper
+      glm.ts            Z.AI GLM wrapper
       index.ts          Registry + env‑driven factory
-      ping.ts           Smoke‑test script (npm run llm:ping)
     dictionary.ts       Free Dictionary API provider
     errors.ts           Shared ProviderError
 docs/
@@ -194,7 +207,7 @@ Dockerfile              Production API image
 | `npm run dev:all` | Web + API concurrently |
 | `npm run build` | Typecheck then Vite production build |
 | `npm run typecheck` | `tsc --noEmit` only (no emit) |
-| `npm run llm:ping` | Test the active LLM provider with a sample word |
+| `npm run llm:ping` | Test the active LLM provider (via `scripts/llm‑ping.ts`) |
 | `npm start` | Production server start |
 
 ## Production deployment

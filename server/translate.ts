@@ -53,12 +53,12 @@ export const translateLimiter = rateLimit({
   message: { error: 'rate_limited' },
 })
 
-function normalizeText(raw: string): string {
+export function normalizeText(raw: string): string {
   return raw.trim().toLowerCase().normalize('NFC').replace(/\s+/g, ' ').slice(0, MAX_TEXT_LENGTH)
 }
 
 /** Maps the LLM's structured content into the dictionary-entry render shape. */
-function adaptLlm(content: LlmTranslationContent): DictionaryEntry[] {
+export function adaptLlm(content: LlmTranslationContent): DictionaryEntry[] {
   const meanings: Meaning[] = []
   if (Array.isArray(content.meanings) && content.meanings.length > 0) {
     meanings.push({

@@ -343,4 +343,5 @@ The code as landed differs from the above design in a few places:
 | History stored alongside favorites in Auth0/localStorage (§1) | History left in Auth0/localStorage, word-only | Only favorites were requested for MongoDB migration. |
 | Per-provider tiered cache with stale-while-revalidate (§7) | Single-slot cache with read-through; no stale-while-revalidate (yet) | Kept the implementation tractable; add when provider SLOs are known. |
 | Cache TTL = 1 year (§6) | Same — 1-year TTL index | Verified in `server/db.ts` ensureIndexes. |
+| DeepSeek added as default LLM provider | — | `LLM_VENDOR` defaults to `deepseek` (model `deepseek-v4-flash`, base `https://api.deepseek.com`); OpenRouter and GLM are alternatives. Three OpenAI‑compatible providers share `openaiCompat.ts`. |
 

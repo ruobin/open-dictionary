@@ -8,7 +8,7 @@ interface FavoriteDoc extends FavoriteKey {
   createdAt: Date
 }
 
-function normalizeFavorite(body: unknown): FavoriteKey | null {
+export function normalizeFavorite(body: unknown): FavoriteKey | null {
   if (!body || typeof body !== 'object') return null
   const b = body as Record<string, unknown>
   const word = typeof b.word === 'string' ? b.word.trim().toLowerCase() : ''

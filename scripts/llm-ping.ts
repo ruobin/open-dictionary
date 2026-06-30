@@ -3,23 +3,18 @@
  *   npm run llm:ping                 # pings "serendipity" en->en
  *   npm run llm:ping -- huevos       # custom term
  *   LLM_PING_TARGET_LANG=es npm run llm:ping -- serendipity
- *
- * Exits 0 on success, 1 if no provider is configured or the call fails.
- * Useful to confirm the GLM-5.2 / Z.AI key and wiring work before the full
- * translate route + cache are built.
  */
 import 'dotenv/config'
 import { config as loadEnvFile } from 'dotenv'
-import { createLlmProviderFromEnv, LlmProviderError } from './index'
+import { createLlmProviderFromEnv, LlmProviderError } from '../server/providers/llm'
 
-// Pick up server-only secrets from server/.env too (additive, no override).
 loadEnvFile({ path: 'server/.env' })
 
 async function main(): Promise<void> {
   const { provider, status, message } = createLlmProviderFromEnv()
   console.log(`[llm:ping] ${status} — ${message}`)
   if (!provider) {
-    console.error('[llm:ping] No provider configured. Set LLM_VENDOR=glm and ZAI_API_KEY.')
+    console.error('[llm:ping] No provider configured. Set LLM_VENDOR and a vendor API key.')
     process.exit(1)
   }
 
