@@ -12,23 +12,28 @@ export interface Language {
 }
 
 export const LANGUAGES: readonly Language[] = [
+  { code: 'ar', name: 'Arabic' },
+  { code: 'bn', name: 'Bengali' },
+  { code: 'de', name: 'German' },
   { code: 'en', name: 'English' },
   { code: 'es', name: 'Spanish' },
   { code: 'fr', name: 'French' },
-  { code: 'de', name: 'German' },
-  { code: 'it', name: 'Italian' },
-  { code: 'pt', name: 'Portuguese' },
-  { code: 'nl', name: 'Dutch' },
-  { code: 'ru', name: 'Russian' },
-  { code: 'pl', name: 'Polish' },
-  { code: 'tr', name: 'Turkish' },
-  { code: 'ar', name: 'Arabic' },
   { code: 'hi', name: 'Hindi' },
-  { code: 'zh', name: 'Chinese' },
+  { code: 'id', name: 'Indonesian' },
+  { code: 'it', name: 'Italian' },
   { code: 'ja', name: 'Japanese' },
   { code: 'ko', name: 'Korean' },
+  { code: 'ms', name: 'Malay' },
+  { code: 'nl', name: 'Dutch' },
+  { code: 'pl', name: 'Polish' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'th', name: 'Thai' },
+  { code: 'tl', name: 'Filipino' },
+  { code: 'tr', name: 'Turkish' },
+  { code: 'ur', name: 'Urdu' },
   { code: 'vi', name: 'Vietnamese' },
-  { code: 'id', name: 'Indonesian' },
+  { code: 'zh', name: 'Chinese' },
 ] as const
 
 export const DEFAULT_SOURCE_LANG = 'en'
