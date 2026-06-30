@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit'
 import type { LlmDefinition, LlmProvider, LlmTranslationContent } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
+import { TRANSLATE_RATE_LIMIT_RPM } from './config'
 
 /**
  * HTTP response shape. Mirrors the frontend `DictionaryEntry`
@@ -47,7 +48,7 @@ const LLM_DEBUG = /^(1|true|yes|on)$/i.test(process.env.LLM_DEBUG ?? '')
 
 export const translateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 120,
+  max: TRANSLATE_RATE_LIMIT_RPM,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limited' },

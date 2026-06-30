@@ -12,6 +12,7 @@ import {
   ALLOWED_ORIGINS,
   IS_PROD,
   TRUST_PROXY,
+  USERDATA_RATE_LIMIT_RPM,
 } from './config'
 import { createTranslateRouter } from './translate'
 import { createFavoritesRouter } from './favorites'
@@ -90,7 +91,7 @@ export function createApp({ llmProvider, dictionaryProvider, translationCache }:
 
   const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 60,
+    max: USERDATA_RATE_LIMIT_RPM,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'rate_limited' },

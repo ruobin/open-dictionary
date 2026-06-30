@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import type { FavoriteKey } from '../shared/favorites'
+import { FAVORITES_RATE_LIMIT_RPM } from './config'
 
 interface FavoriteDoc extends FavoriteKey {
   userKey: string
@@ -28,7 +29,7 @@ function collection() {
 
 const favoritesLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 120,
+  max: FAVORITES_RATE_LIMIT_RPM,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limited' },
