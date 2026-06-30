@@ -5,7 +5,7 @@
 **Scope:** A read-through cache that persists translations/explanations of words/expressions fetched from external providers so identical future requests are served from the database instead of re-calling the provider.
 
 **Provider model (v2 change):**
-- **Primary tier = LLM**, and the LLM layer is **vendor-agnostic** (OpenAI / Anthropic / Gemini / … behind one interface; swap by config, no code change).
+- **Primary tier = LLM**, and the LLM layer is **vendor-agnostic** (DeepSeek / OpenRouter / GLM / … behind one interface; swap by config, no code change).
 - **Fallback tier = Free Dictionary API**, invoked **only when the LLM fails**.
 
 ---
@@ -265,7 +265,7 @@ Startup validation (extends `server/index.ts` hard-fail idiom): if `CACHE_ENABLE
 
 - **Provider keys move server-side** (LLM + dictionary), never `VITE_`-prefixed. Today's browser-direct model would otherwise expose any key.
 - **Input validation on `:text`:** trim + lowercase + NFC + collapse whitespace, reject if empty or length > 256. Reuses the spirit of `sanitizeWordList` (`server/index.ts`).
-- **Rate limiting:** dedicated limiter for `/api/translate` (e.g. 120/min/IP) alongside the existing global 60/min (`server/index.ts`). Translate stays **unauthenticated** (public data) but **rate-limited**.
+- **Rate limiting:** a dedicated limiter for `/api/translate` (20 req/min by default, configurable via `TRANSLATE_RATE_LIMIT_RPM`) alongside the existing global 60/min (`server/index.ts`). Translate stays **unauthenticated** (public data) but **rate-limited**.
 - **No injection surface:** Mongo writes use field values (never operator-shaped user keys); the hashed `_id` (§6) neutralizes `.`/`$` in `text`. Do not log `result.content` at info level in prod.
 
 ---
@@ -299,7 +299,7 @@ Structured logs + counters (no metrics infra today):
 3. **Dictionary fallback caching scope** — caching fallback answers (under their own slot) is correct for outage resilience; accept the minor storage overhead, or evict dictionary-slot entries when the LLM slot for the same word later fills? (Recommend: leave them; cheap.)
 4. **Stale-while-revalidate default** — keep OFF for v1; revisit with provider SLOs.
 5. **`provider=` override** — expose for ops warm-up/forced-tier? Not in v1.
-6. **Testing** — the project has no test framework; add `vitest` (matches Vite) and cover `cacheKey.ts` (pure) and `TranslateService` with a fake `LlmProvider` + fake dictionary provider + `mongodb-memory-server`.
+6. **Testing** — vitest is set up (5 files, 28 tests: `languageName`, `normalizeText`, `adaptLlm`, `normalizeFavorite`, `ProviderError`, `LlmProviderError`). Integration tests with a real DB / `mongodb-memory-server` remain a follow‑up.
 
 ---
 
@@ -336,12 +336,13 @@ The code as landed differs from the above design in a few places:
 | Design doc | Implementation | Rationale |
 |---|---|---|
 | Dict cache key = `(text, src, tgt, provider)` — per-provider slots (§5) | Key = `(word, src, tgt)` only; provider stored as metadata, not in the key | Simpler single-slot model; a later provider switch won't auto-refresh the cache, but the tier that created it is logged (`source: 'llm'\|\'dict'`). |
-| LLM providers listed as future work (§4.2 "future") | OpenRouter (default) + Z.AI GLM both implemented; they share `openaiCompat.ts` | Both are OpenAI-compatible; adding another vendor is ~20 lines. |
+| LLM providers listed in §4.2 | DeepSeek (default), OpenRouter, and Z.AI GLM all implemented; they share `openaiCompat.ts` | All three are OpenAI‑compatible; adding a vendor is ~30 lines. |
 | Anonymous favorites stored in `localStorage` (§1) | Anonymous favoriting disabled — prompts login via Auth0; a `sessionStorage` pending-favorite is applied post-login | Moves anon favorites off the client entirely; the pending-favorite flow gives a smooth login→favorite UX. |
 | Favorites in Auth0 `user_metadata` (§1) | Favorites moved to MongoDB, keyed by `(userKey, word, src, tgt)` | MongoDB is the single source for favorites now (the design doc didn't address favorites storage directly). |
 | Favorites JWT-enforced per docs /user-data pattern | Soft `X-User-Key` header (Auth0 `sub` for authed users) — no JWT verification on favorites endpoints | MVP simplification; auth hardening is a documented follow‑up. |
-| History stored alongside favorites in Auth0/localStorage (§1) | History left in Auth0/localStorage, word-only | Only favorites were requested for MongoDB migration. |
+| History stored alongside favorites in Auth0/localStorage (§1) | History left in Auth0/localStorage, now carries source/target language (FavoriteKey shape: `{word, sourceLang, targetLang}`). Legacy bare strings are coerced (en→en default). | Only favorites were requested for MongoDB migration; history entries were upgraded to the same shape for consistency. |
 | Per-provider tiered cache with stale-while-revalidate (§7) | Single-slot cache with read-through; no stale-while-revalidate (yet) | Kept the implementation tractable; add when provider SLOs are known. |
 | Cache TTL = 1 year (§6) | Same — 1-year TTL index | Verified in `server/db.ts` ensureIndexes. |
+| Rate limits (§10) | Configurable via env: `TRANSLATE_RATE_LIMIT_RPM` (default 20), `FAVORITES_RATE_LIMIT_RPM` (120), `USERDATA_RATE_LIMIT_RPM` (60). | Makes per‑deployment tuning trivial. |
 | DeepSeek added as default LLM provider | — | `LLM_VENDOR` defaults to `deepseek` (model `deepseek-v4-flash`, base `https://api.deepseek.com`); OpenRouter and GLM are alternatives. Three OpenAI‑compatible providers share `openaiCompat.ts`. |
 

@@ -1,6 +1,6 @@
 # open-dictionary
 
-A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Free Dictionary API as a fallback. Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. Per-user favorites (lanugage-scoped) live in MongoDB; history stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated).
+A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Free Dictionary API as a fallback. Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. Per-user favorites (**language**-scoped) live in MongoDB; history (now also language-scoped, `{word, sourceLang, targetLang}` shape) stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated). Anonymous users are prompted to log in before favoriting — a pending favorite is stashed in `sessionStorage` and applied on return. The last‑used source/target language pair is persisted in `localStorage` so the pickers survive refreshes.
 
 ## Stack
 
@@ -30,7 +30,7 @@ browser  →  localStorage L1  →  GET /api/translate/:word?from=&to=
 
 Favorites: `GET/POST/DELETE /api/favorites`, keyed by **(user, word, sourceLang, targetLang)**. Authenticated users use their Auth0 `sub`; anonymous users are prompted to log in before favoriting.
 
-History: `GET/PUT /api/user-data` — stays word‑only in `user_metadata` (authed) or `localStorage` (anon).
+History: `GET/PUT /api/user-data` — entries carry **source and target language** (FavoriteKey shape: `{word, sourceLang, targetLang}`), persisted in `user_metadata` (authed) or `localStorage` (anon). Legacy bare strings are coerced (defaulted to en→en).
 
 ## Local development
 
@@ -206,7 +206,8 @@ Dockerfile              Production API image
 | `npm run server` | API server with `tsx watch` (hot reload) |
 | `npm run dev:all` | Web + API concurrently |
 | `npm run build` | Typecheck then Vite production build |
-| `npm run typecheck` | `tsc --noEmit` only (no emit) |
+| `npm run test` | Run unit tests (vitest) |
+| `npm run test:watch` | Tests in watch mode |
 | `npm run llm:ping` | Test the active LLM provider (via `scripts/llm‑ping.ts`) |
 | `npm start` | Production server start |
 
