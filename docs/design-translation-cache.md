@@ -6,7 +6,7 @@
 
 **Provider model (v2 change):**
 - **Primary tier = LLM**, and the LLM layer is **vendor-agnostic** (DeepSeek / OpenRouter / GLM / … behind one interface; swap by config, no code change).
-- **Fallback tier = Free Dictionary API**, invoked **only when the LLM fails**.
+- **Fallback tier = Merriam-Webster Collegiate API**, invoked **only when the LLM fails**. English-only; pronunciation audio URLs from MW are also merged into LLM-produced entries (best-effort, when sourceLang=en) and cached alongside.
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Premise | Reality today | Source |
 |---|---|---|
-| "Translation API / LLM" | Not present. The only external content source is the **Free Dictionary API** (`api.dictionaryapi.dev`), called **directly from the browser**. The Express server never sees dictionary traffic. | `src/api/dictionary.ts:88` ; server has only `/health` + `/api/user-data` (`server/index.ts:108,130`) |
+| "Translation API / LLM" | Not present. The only external content source is the **Merriam-Webster Collegiate API** (`dictionaryapi.com`), called **server-side** by `server/providers/dictionary.ts`. The Express server now sees dictionary traffic (alongside `/health`, `/api/user-data`, `/api/favorites`). | `server/providers/dictionary.ts` |
 | "Cache into db" | The only cache is **per-browser `localStorage`**: key `dict:v1:{word}`, value `{ data, fetchedAt }`, 30-day TTL. No shared/cross-user cache; no server-side persistence of any kind. | `src/api/dictionary.ts:1-29` |
 | DB driver | None installed. | `package.json` |
 
@@ -75,7 +75,7 @@ Express server  (server/index.ts + server/translate.ts + server/cache/ + server/
         │     ├── 1c. success → cache.set(llmKey, result) ────►  MongoDB ; return
         │     └── 1d. LLM error → fall through to Tier 2
         │
-        ├── TIER 2 — Free Dictionary API (fallback, only on LLM failure)
+        ├── TIER 2 — Merriam-Webster Collegiate API (English-only, fallback only on LLM failure)
         │     ├── 2a. cache.get(dictKey)
         │     │        hit? → return result.content
         │     ├── 2b. miss → dictionaryProvider.translate(req)
@@ -253,8 +253,10 @@ OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
 
-# --- Dictionary fallback ---
-FREE_DICTIONARY_API_BASE=https://api.dictionaryapi.dev
+# --- Dictionary fallback (Merriam-Webster Collegiate, English-only) ---
+MERRIAM_WEBSTER_API_KEY=your-key-from-dictionaryapi.com
+# Override the API base URL (optional; default https://www.dictionaryapi.com/api/v3)
+# DICTIONARY_API_BASE=https://www.dictionaryapi.com/api/v3
 ```
 
 Startup validation (extends `server/index.ts` hard-fail idiom): if `CACHE_ENABLED=true && !MONGODB_URI` → exit 1. If `!LLM_VENDOR || !<vendor>_API_KEY` → exit 1. With `CACHE_ENABLED=false` the server still boots (degraded pass-through).
@@ -345,4 +347,5 @@ The code as landed differs from the above design in a few places:
 | Cache TTL = 1 year (§6) | Same — 1-year TTL index | Verified in `server/db.ts` ensureIndexes. |
 | Rate limits (§10) | Configurable via env: `TRANSLATE_RATE_LIMIT_RPM` (default 20), `FAVORITES_RATE_LIMIT_RPM` (120), `USERDATA_RATE_LIMIT_RPM` (60). | Makes per‑deployment tuning trivial. |
 | DeepSeek added as default LLM provider | — | `LLM_VENDOR` defaults to `deepseek` (model `deepseek-v4-flash`, base `https://api.deepseek.com`); OpenRouter and GLM are alternatives. Three OpenAI‑compatible providers share `openaiCompat.ts`. |
+| Free Dictionary API replaced by Merriam-Webster Collegiate (§4.2, §6) | `server/providers/dictionary.ts` now calls `https://www.dictionaryapi.com/api/v3/references/collegiate/json/{word}?key=…` (English-only). Definitions are parsed from MW's `shortdef` (mapped to a single meaning with `partOfSpeech`). Audio URLs are constructed from MW's `sound.audio` token using `https://media.merriam-webster.com/audio/prons/en/us/mp3/{subdir}/{audio}.mp3` where `{subdir}` follows MW's rule: `bix`/`gg`/`number`/first-letter of the filename. | The 30-day browser localStorage L1 still uses the Free Dictionary cache key prefix `dict:v1:` (stale naming, harmless). |
 

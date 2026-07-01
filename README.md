@@ -1,6 +1,6 @@
 # open-dictionary
 
-A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Free Dictionary API as a fallback. Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. Per-user favorites (**language**-scoped) live in MongoDB; history (now also language-scoped, `{word, sourceLang, targetLang}` shape) stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated). Anonymous users are prompted to log in before favoriting — a pending favorite is stashed in `sessionStorage` and applied on return. The last‑used source/target language pair is persisted in `localStorage` so the pickers survive refreshes.
+A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Merriam-Webster Collegiate API as a fallback (English-only). Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. After the LLM produces an entry, pronunciation audio URLs are best-effort merged from Merriam-Webster (English source) and cached with the entry. Per-user favorites (**language**-scoped) live in MongoDB; history (now also language-scoped, `{word, sourceLang, targetLang}` shape) stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated). Anonymous users are prompted to log in before favoriting — a pending favorite is stashed in `sessionStorage` and applied on return. The last‑used source/target language pair is persisted in `localStorage` so the pickers survive refreshes.
 
 ## Stack
 
@@ -23,7 +23,7 @@ browser  →  localStorage L1  →  GET /api/translate/:word?from=&to=
    │                           │        miss ↓
    │                           │   [LLM tier] (primary)
    │                           │        error ↓
-   │                           │   [Free Dictionary] (fallback only on LLM failure)
+   │                           │   [Merriam-Webster] (English-only, fallback only on LLM failure)
    │                           │
    │←── normalized DictionaryEntry[] JSON ─── (cached for 1 year)
 ```
@@ -190,7 +190,7 @@ server/
       openrouter.ts     OpenRouter wrapper
       glm.ts            Z.AI GLM wrapper
       index.ts          Registry + env‑driven factory
-    dictionary.ts       Free Dictionary API provider
+    dictionary.ts       Merriam-Webster Collegiate provider (English-only)
     errors.ts           Shared ProviderError
 docs/
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
