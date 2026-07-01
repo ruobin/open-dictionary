@@ -6,7 +6,7 @@
 
 **Provider model (v2 change):**
 - **Primary tier = LLM**, and the LLM layer is **vendor-agnostic** (DeepSeek / OpenRouter / GLM / … behind one interface; swap by config, no code change).
-- **Fallback tier = Merriam-Webster Collegiate API**, invoked **only when the LLM fails**. English-only; pronunciation audio URLs from MW are also merged into LLM-produced entries (best-effort, when sourceLang=en) and cached alongside.
+- **Fallback tier = Merriam-Webster Collegiate API**, invoked **only when the LLM fails**. English-only; pronunciation audio URLs from MW are also merged into LLM-produced entries (best-effort, when sourceLang=en) and cached alongside. **Audio playback is therefore only available for English source words** — non-English lookups have no audio button in the UI.
 
 ---
 
