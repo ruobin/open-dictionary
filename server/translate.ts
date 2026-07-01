@@ -1,9 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
-import type { LlmDefinition, LlmProvider, LlmTranslationContent } from './providers/llm'
+import type { LlmDefinitions, LlmProvider, LlmTranslationContent } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
+import { LANGUAGES } from '../shared/languages'
 
 /**
  * HTTP response shape. Mirrors the frontend `DictionaryEntry`
@@ -44,6 +45,12 @@ export interface TranslateOutcome {
 
 const MAX_TEXT_LENGTH = 256
 
+// Whitelist of accepted language codes. Rejecting unknown `from`/`to` values
+// bounds the cache cardinality and prevents LLM-cost abuse (every distinct
+// (word, sourceLang, targetLang) tuple would otherwise create a cache doc +
+// trigger a paid LLM call).
+const LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code))
+
 const LLM_DEBUG = /^(1|true|yes|on)$/i.test(process.env.LLM_DEBUG ?? '')
 
 export const translateLimiter = rateLimit({
@@ -55,7 +62,21 @@ export const translateLimiter = rateLimit({
 })
 
 export function normalizeText(raw: string): string {
-  return raw.trim().toLowerCase().normalize('NFC').replace(/\s+/g, ' ').slice(0, MAX_TEXT_LENGTH)
+  return raw
+    .trim()
+    .toLowerCase()
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, '') // strip non-whitespace control chars (log/cache integrity)
+    .slice(0, MAX_TEXT_LENGTH)
+}
+
+/** Returns the validated lowercase language code, or `null` if not in the
+ *  supported set. An undefined value resolves to `fallback` (a known code). */
+function normalizeLang(value: string | undefined, fallback: string): string | null {
+  if (value === undefined || value.trim() === '') return fallback
+  const code = value.trim().toLowerCase()
+  return LANGUAGE_CODES.has(code) ? code : null
 }
 
 /** Maps the LLM's structured content into the dictionary-entry render shape. */
@@ -216,8 +237,18 @@ export function createTranslateRouter(
           res.status(404).json({ error: 'not_found' })
           return
         }
-        const sourceLang = typeof req.query.from === 'string' ? req.query.from.toLowerCase() : 'en'
-        const targetLang = typeof req.query.to === 'string' ? req.query.to.toLowerCase() : 'en'
+        const sourceLang = normalizeLang(
+          typeof req.query.from === 'string' ? req.query.from : undefined,
+          'en'
+        )
+        const targetLang = normalizeLang(
+          typeof req.query.to === 'string' ? req.query.to : undefined,
+          'en'
+        )
+        if (sourceLang === null || targetLang === null) {
+          res.status(400).json({ error: 'invalid_language' })
+          return
+        }
 
         const llm = (req.app.locals.llm as LlmProvider | null) ?? null
         const outcome = await translate({ text, sourceLang, targetLang }, llm, dictionary, cache)

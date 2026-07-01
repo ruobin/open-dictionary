@@ -1,12 +1,50 @@
+# Production stack for open-dictionary.
+#
+#   mongo  MongoDB 7 — translation cache + favorites. Internal only (NOT
+#          published): reachable solely on the private compose network.
+#   api    Express API (built from ./Dockerfile). Published to 127.0.0.1:3002
+#          so the host nginx edge proxy for https://dict.ai-dictionary.org can
+#          reach it exactly as its existing /api proxy expects.
+#
+# The Vite SPA is built separately via Dockerfile.web and served as static
+# files by the host nginx (it owns TLS for the domain), so it is not an
+# always-on service in this file.
+
 services:
   mongo:
     image: mongo:7
     container_name: open-dictionary-mongo
     restart: unless-stopped
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: open-dictionary-api
+    restart: unless-stopped
+    env_file:
+      - server/.env
+    environment:
+      # Overrides for the in-stack topology (these win over server/.env).
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB: open-dictionary
+      PORT: "3001"
+      NODE_ENV: production
+      TRUST_PROXY: "1"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      # Host nginx proxies /api -> 127.0.0.1:3002; bind to localhost only.
+      - "127.0.0.1:3002:3001"
 
 volumes:
   mongo_data:

@@ -1,4 +1,4 @@
-import { Router, type Request, type Response, type NextFunction } from 'express'
+import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import type { FavoriteKey } from '../shared/favorites'
@@ -8,6 +8,14 @@ interface FavoriteDoc extends FavoriteKey {
   userKey: string
   createdAt: Date
 }
+
+interface Auth0Payload {
+  sub?: string
+}
+
+// Auth0 subs look like "auth0|...", "google-oauth2|...", "email|...". Cap well
+// above any real value to bound storage while never rejecting a legit identity.
+const MAX_USER_KEY_LEN = 128
 
 export function normalizeFavorite(body: unknown): FavoriteKey | null {
   if (!body || typeof body !== 'object') return null
@@ -19,8 +27,16 @@ export function normalizeFavorite(body: unknown): FavoriteKey | null {
   return { word, sourceLang, targetLang }
 }
 
+/**
+ * Derives the caller's identity from the VERIFIED Auth0 JWT (`req.auth.payload.sub`).
+ * A client-supplied identity header must never be trusted — it is trivially
+ * spoofable and would let anyone read/mutate another user's favorites (IDOR).
+ */
 function userKeyFromReq(req: Request): string | undefined {
-  return req.header('x-user-key')?.trim() || undefined
+  const payload = (req as unknown as { auth?: { payload?: Auth0Payload } }).auth?.payload
+  const sub = payload?.sub?.trim()
+  if (!sub || sub.length > MAX_USER_KEY_LEN) return undefined
+  return sub
 }
 
 function collection() {
@@ -36,20 +52,21 @@ const favoritesLimiter = rateLimit({
 })
 
 /**
- * Favorites API (MongoDB-backed). Identity is a soft `X-User-Key` header
- * (the authed user's sub, or a client-generated anon id) — favorites are
- * low-sensitivity; harden with JWT verification for production.
- *
- * Keyed by (userKey, word, sourceLang, targetLang).
+ * Favorites API (MongoDB-backed). Every route requires a valid Auth0 access
+ * token (audience = AUTH0_AUDIENCE); the caller's identity is the JWT `sub`,
+ * so a user can only ever read/mutate their own favorites. Keyed by
+ * (userKey, word, sourceLang, targetLang).
  */
-export function createFavoritesRouter(): Router {
+export function createFavoritesRouter(checkJwt: RequestHandler): Router {
   const router = Router()
+  // Reject every request without a valid access token before any handler runs.
+  router.use(checkJwt)
 
   router.get('/favorites', favoritesLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userKey = userKeyFromReq(req)
       if (!userKey) {
-        res.status(400).json({ error: 'missing_user_key' })
+        res.status(401).json({ error: 'unauthorized' })
         return
       }
       const col = collection()
@@ -73,7 +90,7 @@ export function createFavoritesRouter(): Router {
     try {
       const userKey = userKeyFromReq(req)
       if (!userKey) {
-        res.status(400).json({ error: 'missing_user_key' })
+        res.status(401).json({ error: 'unauthorized' })
         return
       }
       const fav = normalizeFavorite(req.body)
@@ -99,7 +116,7 @@ export function createFavoritesRouter(): Router {
     try {
       const userKey = userKeyFromReq(req)
       if (!userKey) {
-        res.status(400).json({ error: 'missing_user_key' })
+        res.status(401).json({ error: 'unauthorized' })
         return
       }
       const fav = normalizeFavorite({

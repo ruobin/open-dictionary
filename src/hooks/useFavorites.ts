@@ -42,13 +42,14 @@ function parseStoredFavorite(raw: string): FavoriteKey | null {
  * list is (re)loaded.
  */
 export function useFavorites() {
-  const { user, isAuthenticated, isLoading, loginWithRedirect } = useAuth0()
+  const { user, isAuthenticated, isLoading, loginWithRedirect, getAccessTokenSilently } = useAuth0()
   const [favorites, setFavorites] = useState<FavoriteKey[]>([])
+  const getAccessToken = useCallback(() => getAccessTokenSilently(), [getAccessTokenSilently])
 
   useEffect(() => {
     if (isLoading || !isAuthenticated || !user?.sub) return
     let cancelled = false
-    const sub = user.sub
+    const auth = { getAccessToken }
 
     let pending: FavoriteKey | null = null
     try {
@@ -62,7 +63,7 @@ export function useFavorites() {
     }
 
     const load = (): void => {
-      listFavorites(sub)
+      listFavorites(auth)
         .then((favs) => {
           if (!cancelled) setFavorites(favs)
         })
@@ -72,7 +73,7 @@ export function useFavorites() {
     }
 
     if (pending) {
-      addFavorite(sub, pending).finally(load)
+      addFavorite(auth, pending).finally(load)
     } else {
       load()
     }
@@ -80,7 +81,7 @@ export function useFavorites() {
     return () => {
       cancelled = true
     }
-  }, [isAuthenticated, isLoading, user?.sub])
+  }, [isAuthenticated, isLoading, user?.sub, getAccessToken])
 
   const isFavorite = useCallback(
     (fav: FavoriteKey) => favorites.some((f) => sameFavorite(f, normalize(fav))),
@@ -102,19 +103,19 @@ export function useFavorites() {
         return
       }
       if (!user?.sub) return
-      const sub = user.sub
+      const auth = { getAccessToken }
       const key = normalize(fav)
       setFavorites((prev) => {
         const exists = prev.some((f) => sameFavorite(f, key))
         if (exists) {
-          void removeFavorite(sub, key).catch(() => {})
+          void removeFavorite(auth, key).catch(() => {})
           return prev.filter((f) => !sameFavorite(f, key))
         }
-        void addFavorite(sub, key).catch(() => {})
+        void addFavorite(auth, key).catch(() => {})
         return [...prev, key]
       })
     },
-    [isAuthenticated, user?.sub, loginWithRedirect]
+    [isAuthenticated, user?.sub, getAccessToken, loginWithRedirect]
   )
 
   return { favorites, isFavorite, toggle }

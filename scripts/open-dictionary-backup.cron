@@ -1,0 +1,12 @@
+# open-dictionary — weekly MongoDB backup.
+#
+# Runs Monday 02:00 UTC, which is Monday morning across APAC:
+#   07:00 IST · 09:00 ICT (Bangkok/Jakarta) · 10:00 SGT/HKT/CST · 11:00 JST/KST
+#
+# Retention: the script keeps only the single most-recent successful dump.
+#
+# Install: sudo cp scripts/open-dictionary-backup.cron /etc/cron.d/open-dictionary-backup
+#          sudo chmod 644 /etc/cron.d/open-dictionary-backup
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 2 * * 1 root /usr/local/bin/open-dictionary-backup.sh >> /var/log/open-dictionary-backup.log 2>&1

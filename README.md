@@ -28,7 +28,7 @@ browser  →  localStorage L1  →  GET /api/translate/:word?from=&to=
    │←── normalized DictionaryEntry[] JSON ─── (cached for 1 year)
 ```
 
-Favorites: `GET/POST/DELETE /api/favorites`, keyed by **(user, word, sourceLang, targetLang)**. Authenticated users use their Auth0 `sub`; anonymous users are prompted to log in before favoriting.
+Favorites: `GET/POST/DELETE /api/favorites`, keyed by **(user, word, sourceLang, targetLang)**. **All favorites routes require a valid Auth0 access token**; the caller's identity is the verified JWT `sub` (never a client-supplied identity header, which would be spoofable). Anonymous users are prompted to log in before favoriting.
 
 History: `GET/PUT /api/user-data` — entries carry **source and target language** (FavoriteKey shape: `{word, sourceLang, targetLang}`), persisted in `user_metadata` (authed) or `localStorage` (anon). Legacy bare strings are coerced (defaulted to en→en).
 
@@ -170,6 +170,8 @@ src/
 public/           favicon.svg, robots.txt
 scripts/
   llm‑ping.ts     Smoke‑test the active LLM provider
+  mongodb‑backup.sh          Weekly mongodump; keeps only the latest backup
+  open‑dictionary‑backup.cron  Cron schedule (Monday 02:00 UTC = APAC Mon morning)
 shared/
   languages.ts    Language list + code‑to‑name helper
   favorites.ts    FavoriteKey interface
@@ -194,6 +196,7 @@ server/
     errors.ts           Shared ProviderError
 docs/
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
+  security.md                   Threat model, findings & mitigations, hardening
 docker‑compose.yml      MongoDB (local dev only)
 Dockerfile              Production API image
 .github/workflows/      CI (build + typecheck + smoke‑start)
@@ -211,6 +214,13 @@ Dockerfile              Production API image
 | `npm run test:watch` | Tests in watch mode |
 | `npm run llm:ping` | Test the active LLM provider (via `scripts/llm‑ping.ts`) |
 | `npm start` | Production server start |
+
+Non-npm operational scripts (not run via npm):
+
+| File | What it does |
+|---|---|
+| `scripts/mongodb-backup.sh` | Dump the DB to a gzip archive; keep only the latest backup |
+| `scripts/open-dictionary-backup.cron` | Cron schedule — Monday 02:00 UTC (APAC Monday morning) |
 
 ## Production deployment
 
@@ -238,8 +248,39 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 
 ### Operational notes
 
-- Per‑IP rate limits (configurable via env): `/api/translate` 20 req/min, `/api/favorites` 120 req/min, `/api/user-data` 60 req/min. Set `TRANSLATE_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM` in `server/.env`.
+- Per‑IP rate limits (configurable via env): `/api/translate` 20 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min. Set `TRANSLATE_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM` in `server/.env`.
 - Request body limit is 64 KB.
 - Stack traces are only served in `NODE_ENV=development`.
 - Lookup results are cached in MongoDB for **1 year** (TTL index); subsequent lookups of the same (word, sourceLang, targetLang) skip the LLM entirely.
 - Auth0 Management API writes are debounced 500 ms on the client to stay well under Auth0 rate limits.
+
+### Backups
+
+`scripts/mongodb-backup.sh` dumps the `open-dictionary` database from the running `open-dictionary-mongo` container (`mongodump --archive --gzip`) and **keeps only the single most-recent successful backup** — every prior archive in the backup directory is deleted once the new dump completes.
+
+- **Schedule:** `scripts/open-dictionary-backup.cron` runs it **every Monday 02:00 UTC** = Monday morning APAC (07:00 IST · 09:00 ICT · 10:00 SGT/HKT/CST · 11:00 JST/KST).
+- **Install on the host:**
+  ```bash
+  sudo install -m 0755 scripts/mongodb-backup.sh          /usr/local/bin/open-dictionary-backup.sh
+  sudo install -m 0644 scripts/open-dictionary-backup.cron /etc/cron.d/open-dictionary-backup
+  sudo touch /var/log/open-dictionary-backup.log && sudo chmod 640 /var/log/open-dictionary-backup.log
+  ```
+- **Run by hand** (writes to `/var/backups/open-dictionary-mongodb/`): `sudo /usr/local/bin/open-dictionary-backup.sh`
+- **Restore:**
+  ```bash
+  docker exec -i open-dictionary-mongo mongorestore --archive --gzip --drop \
+    < /var/backups/open-dictionary-mongodb/open-dictionary-*.archive.gz
+  ```
+- **Tune** with env vars: `MONGO_CONTAINER`, `MONGO_DB`, `BACKUP_DIR`. Retention (one backup) is handled inside the script — change the `find … -delete` line to retain more if you ever need point-in-time history.
+
+## Security
+
+See [docs/security.md](docs/security.md) for the full threat model. Highlights:
+
+- **Identity is always the verified Auth0 JWT `sub`** — favorites and user-data routes require a valid access token and operate only on the caller's own data. A client-supplied identity header is never trusted (would be an IDOR).
+- **Translate input is constrained** — `from`/`to` are validated against the supported language list (bounds cache cardinality and prevents LLM-cost abuse); lookup text is length-capped and control chars are stripped.
+- **No stored XSS** — no `dangerouslySetInnerHTML`; React escapes all LLM/dictionary output.
+- **Security headers + strict CSP** on the SPA at the edge nginx; `helmet` on every API response; HSTS with `includeSubDomains`.
+- **Dependencies** — keep `npm audit` at 0 vulnerabilities.
+
+Recommended operational hardening (rotate any keys handled during setup, enable MongoDB auth for shared hosts, source secrets from a secrets manager) is listed in [docs/security.md](docs/security.md#operational-hardening-recommendations).

@@ -15,6 +15,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --chown=app:nodejs package.json ./
 COPY --chown=app:nodejs tsconfig.json ./
 COPY --chown=app:nodejs server ./server
+# server/providers/llm/openaiCompat.ts has a runtime import from ../shared/languages
+COPY --chown=app:nodejs shared ./shared
 USER app
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

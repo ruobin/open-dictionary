@@ -116,7 +116,7 @@ export function createApp({ llmProvider, dictionaryProvider, translationCache }:
   })
 
   app.use('/api', createTranslateRouter(dictionaryProvider, translationCache))
-  app.use('/api', createFavoritesRouter())
+  app.use('/api', createFavoritesRouter(checkJwt))
 
   app.get(
     '/api/user-data',
