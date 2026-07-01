@@ -112,16 +112,39 @@ async function mergeAudioFromDictionary(
   if (req.sourceLang.toLowerCase() !== 'en') return entries
   try {
     const raw = await dictionary.define({ text: req.text, sourceLang: req.sourceLang })
-    if (!Array.isArray(raw) || raw.length === 0) return entries
+    if (!Array.isArray(raw) || raw.length === 0) {
+      if (LLM_DEBUG) {
+        console.log(`[dict-audio] no entries from dictionary for "${req.text}" (sourceLang=${req.sourceLang})`)
+      }
+      return entries
+    }
     const dictPhonetics = (raw[0] as DictionaryEntry)?.phonetics ?? []
+    if (dictPhonetics.length === 0) {
+      if (LLM_DEBUG) {
+        console.log(`[dict-audio] dictionary entry for "${req.text}" has no phonetics field`)
+      }
+      return entries
+    }
     const audioPhonetics = dictPhonetics.filter((p) => Boolean(p.audio))
-    if (audioPhonetics.length === 0) return entries
+    if (audioPhonetics.length === 0) {
+      if (LLM_DEBUG) {
+        console.log(`[dict-audio] dictionary returned ${dictPhonetics.length} phonetics for "${req.text}" but none have audio URLs`)
+      }
+      return entries
+    }
+    if (LLM_DEBUG) {
+      console.log(`[dict-audio] merged ${audioPhonetics.length} audio URL(s) into "${req.text}"`)
+    }
     return entries.map((entry, i) =>
       i === 0
         ? { ...entry, phonetics: [...(entry.phonetics ?? []), ...audioPhonetics] }
         : entry
     )
-  } catch {
+  } catch (err) {
+    if (LLM_DEBUG) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.log(`[dict-audio] dictionary call failed for "${req.text}": ${message}`)
+    }
     return entries
   }
 }
