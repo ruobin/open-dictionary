@@ -100,6 +100,32 @@ async function cacheSetSafe(
   }
 }
 
+/** Best-effort: fetch audio URLs from the Free Dictionary API and merge into the
+ *  LLM-produced entries. Only attempts for English source words (the dict API is
+ *  English-only). Failures are silently ignored — the entry just has no audio.
+ *  The merged result is cached so future lookups include the audio. */
+async function mergeAudioFromDictionary(
+  req: TranslateRequest,
+  entries: DictionaryEntry[],
+  dictionary: DictionaryProvider
+): Promise<DictionaryEntry[]> {
+  if (req.sourceLang.toLowerCase() !== 'en') return entries
+  try {
+    const raw = await dictionary.define({ text: req.text, sourceLang: req.sourceLang })
+    if (!Array.isArray(raw) || raw.length === 0) return entries
+    const dictPhonetics = (raw[0] as DictionaryEntry)?.phonetics ?? []
+    const audioPhonetics = dictPhonetics.filter((p) => Boolean(p.audio))
+    if (audioPhonetics.length === 0) return entries
+    return entries.map((entry, i) =>
+      i === 0
+        ? { ...entry, phonetics: [...(entry.phonetics ?? []), ...audioPhonetics] }
+        : entry
+    )
+  } catch {
+    return entries
+  }
+}
+
 /**
  * Read-through, tiered lookup: Mongo cache → LLM (primary) → dictionary
  * (fallback only on LLM failure/absence). Results are cached keyed by
@@ -126,8 +152,9 @@ export async function translate(
     try {
       const result = await llm.translate(req)
       const content = result.content as LlmTranslationContent
-      const entries = adaptLlm(content)
+      let entries = adaptLlm(content)
       if (entries.some((e) => e.word || e.meanings.length > 0)) {
+        entries = await mergeAudioFromDictionary(req, entries, dictionary)
         await cacheSetSafe(cache, req, entries, 'llm')
         return { entries, tier: 'llm' }
       }
