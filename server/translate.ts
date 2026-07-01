@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
-import type { LlmDefinitions, LlmProvider, LlmTranslationContent } from './providers/llm'
+import type { LlmDefinition, LlmProvider, LlmTranslationContent } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'

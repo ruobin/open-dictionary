@@ -13,6 +13,9 @@ COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
 COPY public ./public
 COPY shared ./shared
+# tsconfig includes server/, so tsc --noEmit typechecks it too — copy it so the
+# build fails on server type errors (matches CI) instead of silently skipping.
+COPY server ./server
 RUN npm run build
 
 # ---- Stage 2: nginx serving the static bundle (optional fully-containerized deploy) ----
