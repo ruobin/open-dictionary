@@ -1,5 +1,6 @@
 import {
-  FREE_DICTIONARY_API_BASE,
+  DICTIONARY_API_BASE,
+  MERRIAM_WEBSTER_API_KEY,
   MONGODB_DB,
   MONGODB_URI,
   PORT,
@@ -11,7 +12,8 @@ import { createTranslationCache, type TranslationDoc } from './cache/translation
 import { createApp } from './app'
 
 const dictionaryProvider = createDictionaryProvider({
-  baseUrl: FREE_DICTIONARY_API_BASE || undefined,
+  baseUrl: DICTIONARY_API_BASE || undefined,
+  apiKey: MERRIAM_WEBSTER_API_KEY || undefined,
 })
 
 const llmRegistry = createLlmProviderFromEnv()

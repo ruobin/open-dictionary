@@ -110,7 +110,8 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `NODE_ENV` | no | `development` | `production` hides stack traces |
 | `TRUST_PROXY` | no | `0` | Number of reverse‑proxy hops |
 | `PORT` | no | `3001` | |
-| `FREE_DICTIONARY_API_BASE` | no | `https://api.dictionaryapi.dev` | Fallback dict API |
+| `MERRIAM_WEBSTER_API_KEY` | no (but audio/fallback need it) | — | Key from [dictionaryapi.com](https://www.dictionaryapi.com/) |
+| `DICTIONARY_API_BASE` | no | `https://www.dictionaryapi.com/api/v3` | Merriam-Webster fallback API |
 | `MONGODB_URI` | no | — | e.g. `mongodb://localhost:27017` |
 | `MONGODB_DB` | no | `open-dictionary` | |
 | `LLM_VENDOR` | no | `deepseek` | `deepseek` / `openrouter` / `glm` / `none` |
