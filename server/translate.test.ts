@@ -72,4 +72,31 @@ describe('adaptLlm', () => {
     const [entry] = adaptLlm(content)
     expect(entry.word).toBe('b')
   })
+
+  it('passes through a typo suggestion (with explanation)', () => {
+    const content: LlmTranslationContent = {
+      headword: 'helo',
+      typo: { suggestion: 'hello', explanation: 'Did you mean “hello”?' },
+    }
+    const [entry] = adaptLlm(content)
+    expect(entry.word).toBe('helo')
+    expect(entry.typo).toEqual({ suggestion: 'hello', explanation: 'Did you mean “hello”?' })
+    expect(entry.meanings).toEqual([])
+    expect(entry.phonetics).toEqual([])
+  })
+
+  it('passes through a typo suggestion (without explanation)', () => {
+    const content: LlmTranslationContent = {
+      headword: 'teh',
+      typo: { suggestion: 'the' },
+    }
+    const [entry] = adaptLlm(content)
+    expect(entry.typo).toEqual({ suggestion: 'the' })
+  })
+
+  it('omits the typo field when not present', () => {
+    const content: LlmTranslationContent = { headword: 'hello' }
+    const [entry] = adaptLlm(content)
+    expect(entry.typo).toBeUndefined()
+  })
 })

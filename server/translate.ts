@@ -24,12 +24,20 @@ interface Meaning {
   partOfSpeech: string
   definitions: Definition[]
 }
+export interface TypoSuggestion {
+  /** The likely intended word. */
+  suggestion: string
+  /** Short human-readable note for the user. */
+  explanation?: string
+}
 export interface DictionaryEntry {
   word: string
   phonetic?: string
   phonetics: Phonetic[]
   meanings: Meaning[]
   sourceUrls?: string[]
+  /** Present only when the LLM judged the input to be an obvious typo. */
+  typo?: TypoSuggestion
 }
 
 interface TranslateRequest {
@@ -100,6 +108,11 @@ export function adaptLlm(content: LlmTranslationContent): DictionaryEntry[] {
     meanings,
   }
   if (content.phonetic) entry.phonetic = content.phonetic
+  if (content.typo) {
+    entry.typo = content.typo.explanation
+      ? { suggestion: content.typo.suggestion, explanation: content.typo.explanation }
+      : { suggestion: content.typo.suggestion }
+  }
 
   // NOTE: content.translation and content.examples are produced by the LLM but
   // have no slot in the current dictionary UI; they'll be surfaced when the UI
@@ -197,8 +210,11 @@ export async function translate(
       const result = await llm.translate(req)
       const content = result.content as LlmTranslationContent
       let entries = adaptLlm(content)
+      const isTypoResponse = entries.some((e) => Boolean(e.typo?.suggestion))
       if (entries.some((e) => e.word || e.meanings.length > 0)) {
-        entries = await mergeAudioFromDictionary(req, entries, dictionary)
+        if (!isTypoResponse) {
+          entries = await mergeAudioFromDictionary(req, entries, dictionary)
+        }
         await cacheSetSafe(cache, req, entries, 'llm')
         return { entries, tier: 'llm' }
       }

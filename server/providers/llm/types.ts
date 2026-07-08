@@ -29,8 +29,20 @@ export interface LlmDefinition {
  * Structured payload returned by the LLM and cached verbatim under
  * `LlmTranslationResult.content`.
  */
+export interface LlmTranslationSuggestion {
+  /** The likely intended word. */
+  suggestion: string
+  /** Short human-readable note (rendered to the user, in targetLang). */
+  explanation?: string
+}
+
+/**
+ * When present, the input was judged to be an obvious typo. The LLM
+ * intentionally omits translation/partOfSpeech/phonetic/meanings/examples in
+ * this case — the entry is only a correction nudge.
+ */
 export interface LlmTranslationContent {
-  /** The queried term, echoed back. */
+  /** The queried term, echoed back (the original input as typed, even if a typo). */
   headword: string
   /** Best short translation into targetLang (omitted in same-language definition mode). */
   translation?: string
@@ -40,6 +52,8 @@ export interface LlmTranslationContent {
   meanings?: LlmDefinition[]
   /** Extra usage examples. */
   examples?: string[]
+  /** Typo correction: present only when the input is an obvious typo. */
+  typo?: LlmTranslationSuggestion
 }
 
 export interface LlmTranslationResult {

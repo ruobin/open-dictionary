@@ -71,7 +71,33 @@ export default function WordPage({
           </div>
         )}
 
-      {status === 'success' && data && data.length > 0 && (
+      {status === 'success' && data && data.length > 0 && data[0].typo?.suggestion && (
+        <div className="state-msg typo-msg">
+          <h2>
+            &quot;{data[0].word}&quot; looks like a typo
+          </h2>
+          {data[0].typo.explanation && <p className="typo-explanation">{data[0].typo.explanation}</p>}
+          <p>
+            Did you mean{' '}
+            <a
+              className="typo-suggestion"
+              href={`/word/${encodeURIComponent(data[0].typo.suggestion.toLowerCase())}${
+                sourceLang !== 'en' || targetLang !== 'en'
+                  ? `?${new URLSearchParams({
+                      ...(sourceLang !== 'en' ? { from: sourceLang } : {}),
+                      ...(targetLang !== 'en' ? { to: targetLang } : {}),
+                    }).toString()}`
+                  : ''
+              }`}
+            >
+              {data[0].typo.suggestion}
+            </a>
+            ?
+          </p>
+        </div>
+      )}
+
+      {status === 'success' && data && data.length > 0 && !data[0].typo?.suggestion && (
         <WordEntry
           entry={data[0]}
           isFavorite={favorites.isFavorite(favKey)}

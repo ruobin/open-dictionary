@@ -55,9 +55,19 @@ function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
     '  "partOfSpeech"?: string,       // e.g. "noun", "verb"',
     '  "phonetic"?: string,           // IPA transcription when known',
     '  "meanings"?: [{ "definition": string, "example"?: string }],  // 1-3 concise senses; definition in targetLang, example in sourceLang',
-    '  "examples"?: string[]          // extra usage examples',
+    '  "examples"?: string[],         // extra usage examples',
+    '  "typo"?: { "suggestion": string, "explanation"?: string }  // only present when the input is an obvious typo',
     '}',
     `Write "definition" text in ${targetName} and "example" sentences in ${sourceName}. Keep it concise and accurate.`,
+    '',
+    'TYPO DETECTION: Before answering, check whether the input is an OBVIOUS typo of a real',
+    `${sourceName} word — e.g. missing letters ("helo" → "hello"), transposed letters ("teh" → "the"),`,
+    'or a single common misspelling. If it is, return ONLY:',
+    `  { "headword": <the original input>, "typo": { "suggestion": <the corrected word>, "explanation": <a short note in ${targetName}, e.g. "Did you mean …?"> } }`,
+    'Omit translation, partOfSpeech, phonetic, meanings, and examples in this case.',
+    `Do NOT flag dialectal variants (e.g. "colour" vs "color"), proper nouns, brand names, abbreviations,`,
+    `rare or technical terms, slang, code identifiers, or words from a language other than ${sourceName} as typos.`,
+    'When in doubt, translate normally.',
   ].join('\n')
 
   return [
@@ -107,6 +117,16 @@ function parseContent(vendor: string, raw: string): LlmTranslationContent {
     ? obj.examples.filter((e): e is string => typeof e === 'string')
     : undefined
 
+  let typo: LlmTranslationContent['typo']
+  if (obj.typo && typeof obj.typo === 'object') {
+    const t = obj.typo as Record<string, unknown>
+    const suggestion = asString(t.suggestion)?.trim()
+    if (suggestion) {
+      const explanation = asString(t.explanation)?.trim()
+      typo = explanation ? { suggestion, explanation } : { suggestion }
+    }
+  }
+
   return {
     headword: asString(obj.headword) ?? '',
     translation: asString(obj.translation),
@@ -114,6 +134,7 @@ function parseContent(vendor: string, raw: string): LlmTranslationContent {
     phonetic: asString(obj.phonetic),
     meanings,
     examples,
+    ...(typo ? { typo } : {}),
   }
 }
 

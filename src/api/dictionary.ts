@@ -23,6 +23,13 @@ export interface Meaning {
   antonyms?: string[]
 }
 
+export interface TypoSuggestion {
+  /** The likely intended word. */
+  suggestion: string
+  /** Short human-readable note for the user. */
+  explanation?: string
+}
+
 export interface DictionaryEntry {
   word: string
   phonetic?: string
@@ -30,6 +37,8 @@ export interface DictionaryEntry {
   origin?: string
   meanings?: Meaning[]
   sourceUrls?: string[]
+  /** Present only when the LLM judged the input to be an obvious typo. */
+  typo?: TypoSuggestion
 }
 
 export type LookupErrorCode = 'not_found' | 'timeout' | 'network' | 'api_error'
