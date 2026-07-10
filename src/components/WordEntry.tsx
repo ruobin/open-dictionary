@@ -1,6 +1,8 @@
+import { Link } from 'react-router-dom'
 import AudioButton from './AudioButton'
 import PosSection from './PosSection'
 import ReportButton from './ReportButton'
+import { wordHref } from '../../shared/wordLink'
 import type { DictionaryEntry, Phonetic } from '../api/dictionary'
 
 type PhoneticWithAudio = Phonetic & { audio: string }
@@ -78,14 +80,41 @@ export default function WordEntry({
         ))}
       </div>
 
-      {entry.examples && entry.examples.length > 0 && (
-        <section className="more-examples">
-          <h3 className="more-examples-label">More examples</h3>
-          <ul className="more-examples-list">
-            {entry.examples.map((ex, i) => (
-              <li key={i}>&quot;{ex}&quot;</li>
+      {entry.commonMistakes && entry.commonMistakes.length > 0 && (
+        <section className="common-mistakes">
+          <h3 className="common-mistakes-label">Common mistakes</h3>
+          <ul className="common-mistakes-list">
+            {entry.commonMistakes.map((m, i) => (
+              <li key={i}>
+                <span className="mistake-wrong">{m.wrong}</span>
+                <span className="mistake-arrow" aria-hidden="true">→</span>
+                <span className="mistake-right">{m.right}</span>
+                {m.note && <p className="mistake-note">{m.note}</p>}
+              </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {entry.collocations && entry.collocations.length > 0 && (
+        <section className="chips-section">
+          <h3 className="chips-label">Collocations</h3>
+          <div className="chips">
+            {entry.collocations.map((c, i) => (
+              <Link key={i} className="chip" to={wordHref(c)}>{c}</Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {entry.wordFamily && entry.wordFamily.length > 0 && (
+        <section className="chips-section">
+          <h3 className="chips-label">Word family</h3>
+          <div className="chips">
+            {entry.wordFamily.map((w, i) => (
+              <Link key={i} className="chip" to={wordHref(w)}>{w}</Link>
+            ))}
+          </div>
         </section>
       )}
 

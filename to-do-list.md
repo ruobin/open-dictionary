@@ -52,32 +52,51 @@ Cambridge's moat is entry *depth*. Current schema (`server/providers/llm/types.t
 `LlmTranslationContent`) is flat: one `partOfSpeech`, 1–3 definitions, maybe one example each.
 Upgrade the prompt + schema + UI to produce:
 
-- [ ] **Multiple parts of speech per word.** `adaptLlm()` currently collapses everything into a
+- [x] **Multiple parts of speech per word.** `adaptLlm()` currently collapses everything into a
       single `partOfSpeech`. "run" (verb) and "run" (noun) must be separate `Meaning` sections.
-      Change `LlmTranslationContent.meanings` to be grouped by POS.
-- [ ] **CEFR level per sense and per example (A1–C2).** Cambridge tags these; learners rely on them.
+      Change `LlmTranslationContent.meanings` to be grouped by POS. (New `meaningGroups` field,
+      each with its own `partOfSpeech` + `senses[]`; verified live with "run" and "bank" — separate
+      colored POS sections render correctly.)
+- [x] **CEFR level per sense and per example (A1–C2).** Cambridge tags these; learners rely on them.
       LLMs estimate CEFR reasonably well. Render as a small badge (e.g. `B2`) next to each sense.
-- [ ] **Grammar labels.** countable/uncountable, transitive/intransitive, `[+ that clause]`,
+      (Color-coded badge: green A, amber B, red C.)
+- [x] **Grammar labels.** countable/uncountable, transitive/intransitive, `[+ that clause]`,
       irregular forms (go → went → gone), plural forms. Learners search dictionaries specifically
       for this.
-- [ ] **Register / usage labels.** formal, informal, slang, dated, offensive, UK vs US usage.
-- [ ] **"Common mistakes" notes** (learner-corpus style) — e.g. *"make a photo" → say "take a
+- [x] **Register / usage labels.** formal, informal, slang, dated, offensive, UK vs US usage.
+- [x] **"Common mistakes" notes** (learner-corpus style) — e.g. *"make a photo" → say "take a
       photo"*. This is where an LLM can genuinely beat a static dictionary; Cambridge charges for
       similar content (English Grammar Today boxes).
-- [ ] **Collocations.** "heavy rain (not ~~strong rain~~)", "commit a crime". Render as chips that
-      link to their own entries — internal linking helps engagement *and* SEO (§5).
-- [ ] **Word family.** run → runner, running, rerun; happy → happiness, unhappily. Also rendered as
+- [x] **Collocations.** "heavy rain (not ~~strong rain~~)", "commit a crime". Render as chips that
+      link to their own entries — internal linking helps engagement *and* SEO (§5). (Verified the
+      internal link loop end-to-end: clicking a chip navigates to `/word/:term` and generates a
+      fresh entry. Had to add a defensive `cleanLinkTerm()`/`wordHref()` helper (`shared/wordLink.ts`)
+      after the model initially returned annotated items like "runner (noun)" — the annotation is
+      still shown, but stripped from the link target.)
+- [x] **Word family.** run → runner, running, rerun; happy → happiness, unhappily. Also rendered as
       internal links.
-- [ ] **Graded example sentences — the core pitch.** 2–3 examples per sense at *different* CEFR
+- [x] **Graded example sentences — the core pitch.** 2–3 examples per sense at *different* CEFR
       levels (one simple, one intermediate, one advanced), each tagged with its level.
 - [ ] **"More examples like this" button** — follow-up LLM call that regenerates examples
       constrained by topic ("about football", "business context") and/or the user's level. Cache
-      each variant under its own key (word + sense + constraint).
-- [ ] Update `buildMessages()` prompt + `parseContent()` validation for the richer schema; bump
-      `promptVersion` (§2).
-- [ ] Update `PosSection.tsx` / `WordEntry.tsx` to render the new fields.
+      each variant under its own key (word + sense + constraint). **Deferred** — scoped out of this
+      pass as a separate interactive feature (new endpoint + its own caching scheme) rather than part
+      of the core schema upgrade.
+- [x] Update `buildMessages()` prompt + `parseContent()` validation for the richer schema; bump
+      `promptVersion` (§2). (`CACHE_VERSION` bumped `v2` → `v3`.)
+- [x] Update `PosSection.tsx` / `WordEntry.tsx` to render the new fields.
 
 **Effort:** 1–2 weeks, mostly prompt iteration. Depends on §2.
+
+**Notes from implementation:** the first live test surfaced two real prompt-reliability bugs, both
+fixed and verified against the live LLM: (1) the model sometimes included a `translation` field even
+in same-language define mode (harmless in the prompt's wording, but the client renders it whenever
+truthy, so it would visibly mis-render) — fixed with a stronger prompt instruction *and* a defensive
+strip in `openaiCompat.ts` when `sourceLang === targetLang`; (2) collocations/word-family items
+sometimes came back with parenthetical POS annotations or slash-alternatives (e.g. "runner (noun)",
+"run for president/mayor"), which would have produced broken link targets — fixed with a stronger
+prompt instruction plus the `cleanLinkTerm()` defensive fallback above. Both are the kind of thing
+the to-do's "eval harness" (§4) would catch systematically going forward.
 
 ---
 

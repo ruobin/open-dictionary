@@ -55,7 +55,7 @@ function makeEntry(overrides: Partial<DictionaryEntry> = {}): DictionaryEntry {
     meanings: [
       {
         partOfSpeech: 'interjection',
-        definitions: [{ definition: 'A greeting', example: 'Hello there!' }],
+        definitions: [{ definition: 'A greeting', examples: [{ text: 'Hello there!', cefr: 'A1' }] }],
       },
     ],
     ...overrides,
@@ -91,13 +91,32 @@ describe('renderWordPage', () => {
     expect(page.bodyHtml).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
-  it('renders the "more examples" section only when examples exist', () => {
-    const withExamples = renderWordPage(makeEntry({ examples: ['One more.'] }), 'https://example.com')
-    expect(withExamples.bodyHtml).toContain('More examples')
-    expect(withExamples.bodyHtml).toContain('One more.')
+  it('renders graded examples with their CEFR badge', () => {
+    const page = renderWordPage(makeEntry(), 'https://example.com')
+    expect(page.bodyHtml).toContain('Hello there!')
+    expect(page.bodyHtml).toContain('data-level="A1"')
+  })
+
+  it('renders common mistakes, collocations, and word family only when present', () => {
+    const withExtras = renderWordPage(
+      makeEntry({
+        commonMistakes: [{ wrong: 'make a photo', right: 'take a photo' }],
+        collocations: ['heavy rain'],
+        wordFamily: ['runner'],
+      }),
+      'https://example.com'
+    )
+    expect(withExtras.bodyHtml).toContain('Common mistakes')
+    expect(withExtras.bodyHtml).toContain('make a photo')
+    expect(withExtras.bodyHtml).toContain('Collocations')
+    expect(withExtras.bodyHtml).toContain('href="/word/heavy%20rain"')
+    expect(withExtras.bodyHtml).toContain('Word family')
+    expect(withExtras.bodyHtml).toContain('href="/word/runner"')
 
     const without = renderWordPage(makeEntry(), 'https://example.com')
-    expect(without.bodyHtml).not.toContain('More examples')
+    expect(without.bodyHtml).not.toContain('Common mistakes')
+    expect(without.bodyHtml).not.toContain('Collocations')
+    expect(without.bodyHtml).not.toContain('Word family')
   })
 
   it('percent-encodes the word in the canonical URL', () => {

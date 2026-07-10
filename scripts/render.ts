@@ -1,5 +1,6 @@
 import type { DictionaryEntry } from '../server/translate'
 import { buildWordDescription, buildWordTitle } from '../shared/seo'
+import { wordHref } from '../shared/wordLink'
 
 /**
  * Pure HTML-building helpers for scripts/prerender.ts. Kept dependency-free
@@ -48,8 +49,16 @@ export interface RenderedPage {
   noindex?: boolean
 }
 
-/** Server-rendered content mirroring src/components/WordEntry.tsx, minus the
- *  client-only bits (favorite/audio/report buttons) that need JS/auth anyway. */
+function renderChips(items: string[] | undefined): string {
+  if (!items || items.length === 0) return ''
+  return `<div class="chips">${items
+    .map((item) => `<a class="chip" href="${escapeHtml(wordHref(item))}">${escapeHtml(item)}</a>`)
+    .join('')}</div>`
+}
+
+/** Server-rendered content mirroring src/components/WordEntry.tsx +
+ *  PosSection.tsx, minus the client-only bits (favorite/audio/report
+ *  buttons) that need JS/auth anyway. */
 export function renderWordPage(entry: DictionaryEntry, publicBaseUrl: string): RenderedPage {
   const canonical = `${publicBaseUrl}/word/${encodeURIComponent(entry.word)}`
   const description = buildWordDescription(pickFirstDefinition(entry), entry.word)
@@ -65,8 +74,25 @@ export function renderWordPage(entry: DictionaryEntry, publicBaseUrl: string): R
             .map(
               (d) => `
           <li class="def-item">
-            <p class="def-text">${escapeHtml(d.definition)}</p>
-            ${d.example ? `<p class="def-example">&quot;${escapeHtml(d.example)}&quot;</p>` : ''}
+            <div class="def-head">
+              <p class="def-text">${escapeHtml(d.definition)}</p>
+              ${d.cefr ? `<span class="cefr-badge" data-level="${d.cefr}">${d.cefr}</span>` : ''}
+            </div>
+            ${
+              d.grammar || d.register
+                ? `<p class="def-labels">${d.grammar ? `<span class="def-label">${escapeHtml(d.grammar)}</span>` : ''}${d.register ? `<span class="def-label">${escapeHtml(d.register)}</span>` : ''}</p>`
+                : ''
+            }
+            ${
+              d.examples && d.examples.length > 0
+                ? `<ul class="def-examples">${d.examples
+                    .map(
+                      (ex) =>
+                        `<li class="def-example">&quot;${escapeHtml(ex.text)}&quot;${ex.cefr ? `<span class="cefr-badge cefr-badge-sm" data-level="${ex.cefr}">${ex.cefr}</span>` : ''}</li>`
+                    )
+                    .join('')}</ul>`
+                : ''
+            }
           </li>`
             )
             .join('')}
@@ -75,15 +101,30 @@ export function renderWordPage(entry: DictionaryEntry, publicBaseUrl: string): R
     )
     .join('')
 
-  const examplesHtml =
-    entry.examples && entry.examples.length > 0
+  const commonMistakesHtml =
+    entry.commonMistakes && entry.commonMistakes.length > 0
       ? `
-      <section class="more-examples">
-        <h3 class="more-examples-label">More examples</h3>
-        <ul class="more-examples-list">
-          ${entry.examples.map((ex) => `<li>&quot;${escapeHtml(ex)}&quot;</li>`).join('')}
+      <section class="common-mistakes">
+        <h3 class="common-mistakes-label">Common mistakes</h3>
+        <ul class="common-mistakes-list">
+          ${entry.commonMistakes
+            .map(
+              (m) =>
+                `<li><span class="mistake-wrong">${escapeHtml(m.wrong)}</span><span class="mistake-arrow">→</span><span class="mistake-right">${escapeHtml(m.right)}</span>${m.note ? `<p class="mistake-note">${escapeHtml(m.note)}</p>` : ''}</li>`
+            )
+            .join('')}
         </ul>
       </section>`
+      : ''
+
+  const collocationsHtml =
+    entry.collocations && entry.collocations.length > 0
+      ? `<section class="chips-section"><h3 class="chips-label">Collocations</h3>${renderChips(entry.collocations)}</section>`
+      : ''
+
+  const wordFamilyHtml =
+    entry.wordFamily && entry.wordFamily.length > 0
+      ? `<section class="chips-section"><h3 class="chips-label">Word family</h3>${renderChips(entry.wordFamily)}</section>`
       : ''
 
   const bodyHtml = `
@@ -96,7 +137,9 @@ export function renderWordPage(entry: DictionaryEntry, publicBaseUrl: string): R
         </div>
       </header>
       <div class="meanings">${meaningsHtml}</div>
-      ${examplesHtml}
+      ${commonMistakesHtml}
+      ${collocationsHtml}
+      ${wordFamilyHtml}
     </article>`
 
   return {

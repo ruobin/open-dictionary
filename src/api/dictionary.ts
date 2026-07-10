@@ -9,9 +9,25 @@ export interface Phonetic {
   audio?: string
 }
 
+/** CEFR proficiency level (A1 easiest – C2 hardest). */
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
+
+export interface GradedExample {
+  text: string
+  /** Difficulty level of this specific example sentence. */
+  cefr?: CefrLevel
+}
+
 export interface Definition {
   definition: string
-  example?: string
+  /** Difficulty level of this sense itself. */
+  cefr?: CefrLevel
+  /** e.g. "countable", "transitive", "[+ that clause]", "irregular: go, went, gone". */
+  grammar?: string
+  /** e.g. "formal", "informal", "slang", "dated", "UK", "US". */
+  register?: string
+  /** 1-3 example sentences at different CEFR levels — the core learner pitch. */
+  examples?: GradedExample[]
   synonyms?: string[]
   antonyms?: string[]
 }
@@ -21,6 +37,14 @@ export interface Meaning {
   definitions: Definition[]
   synonyms?: string[]
   antonyms?: string[]
+}
+
+export interface CommonMistake {
+  /** What learners often say/write incorrectly. */
+  wrong: string
+  /** The correct alternative. */
+  right: string
+  note?: string
 }
 
 export interface TypoSuggestion {
@@ -35,12 +59,17 @@ export interface DictionaryEntry {
   phonetic?: string
   phonetics?: Phonetic[]
   origin?: string
+  /** Grouped by part of speech — "run" (verb) and "run" (noun) are separate entries. */
   meanings?: Meaning[]
   sourceUrls?: string[]
   /** Best short translation into targetLang; only present when sourceLang !== targetLang. */
   translation?: string
-  /** Extra usage examples beyond the one per-definition example. */
-  examples?: string[]
+  /** Learner-corpus-style corrections, e.g. "make a photo" → "take a photo". */
+  commonMistakes?: CommonMistake[]
+  /** Fixed expressions this word commonly appears in, e.g. "heavy rain". */
+  collocations?: string[]
+  /** Related words, e.g. run → runner, running, rerun. */
+  wordFamily?: string[]
   /** Present only when the LLM judged the input to be an obvious typo. */
   typo?: TypoSuggestion
 }

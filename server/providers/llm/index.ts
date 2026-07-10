@@ -4,9 +4,13 @@ import { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 import { LlmProviderError, type LlmProvider } from './types'
 
 export type {
-  LlmDefinition,
+  CefrLevel,
+  LlmCommonMistake,
   LlmErrorCode,
+  LlmGradedExample,
+  LlmMeaningGroup,
   LlmProvider,
+  LlmSense,
   LlmTranslationContent,
   LlmTranslationRequest,
   LlmTranslationResult,

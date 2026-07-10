@@ -1,6 +1,12 @@
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
-import type { LlmDefinition, LlmProvider, LlmTranslationContent } from './providers/llm'
+import type {
+  CefrLevel,
+  LlmGradedExample,
+  LlmProvider,
+  LlmSense,
+  LlmTranslationContent,
+} from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
@@ -16,13 +22,26 @@ interface Phonetic {
   text?: string
   audio?: string
 }
+export interface GradedExample {
+  text: string
+  cefr?: CefrLevel
+}
 interface Definition {
   definition: string
-  example?: string
+  cefr?: CefrLevel
+  grammar?: string
+  register?: string
+  /** 1-3 example sentences at different CEFR levels — the core learner pitch (to-do §3). */
+  examples?: GradedExample[]
 }
 interface Meaning {
   partOfSpeech: string
   definitions: Definition[]
+}
+export interface CommonMistake {
+  wrong: string
+  right: string
+  note?: string
 }
 export interface TypoSuggestion {
   /** The likely intended word. */
@@ -34,12 +53,17 @@ export interface DictionaryEntry {
   word: string
   phonetic?: string
   phonetics: Phonetic[]
+  /** Grouped by part of speech — "run" (verb) and "run" (noun) are separate entries. */
   meanings: Meaning[]
   sourceUrls?: string[]
   /** Best short translation into targetLang; only present when sourceLang !== targetLang. */
   translation?: string
-  /** Extra usage examples beyond the one per-definition example. */
-  examples?: string[]
+  /** Learner-corpus-style corrections, e.g. "make a photo" → "take a photo". */
+  commonMistakes?: CommonMistake[]
+  /** Fixed expressions this word commonly appears in, e.g. "heavy rain". */
+  collocations?: string[]
+  /** Related words, e.g. run → runner, running, rerun. */
+  wordFamily?: string[]
   /** Present only when the LLM judged the input to be an obvious typo. */
   typo?: TypoSuggestion
 }
@@ -74,7 +98,7 @@ const LLM_DEBUG = /^(1|true|yes|on)$/i.test(process.env.LLM_DEBUG ?? '')
  * Old-version cache docs are left to TTL-expire rather than eagerly purged
  * (see docs/design-translation-cache.md §2).
  */
-export const CACHE_VERSION = 'v2'
+export const CACHE_VERSION = 'v3'
 
 export const translateLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -102,18 +126,27 @@ function normalizeLang(value: string | undefined, fallback: string): string | nu
   return LANGUAGE_CODES.has(code) ? code : null
 }
 
+function adaptGradedExample(e: LlmGradedExample): GradedExample {
+  return e.cefr ? { text: e.text, cefr: e.cefr } : { text: e.text }
+}
+
+function adaptSense(s: LlmSense): Definition {
+  const def: Definition = { definition: s.definition }
+  if (s.cefr) def.cefr = s.cefr
+  if (s.grammar) def.grammar = s.grammar
+  if (s.register) def.register = s.register
+  if (s.examples && s.examples.length > 0) def.examples = s.examples.map(adaptGradedExample)
+  return def
+}
+
 /** Maps the LLM's structured content into the dictionary-entry render shape. */
 export function adaptLlm(content: LlmTranslationContent): DictionaryEntry[] {
-  const meanings: Meaning[] = []
-  if (Array.isArray(content.meanings) && content.meanings.length > 0) {
-    meanings.push({
-      partOfSpeech: content.partOfSpeech || '',
-      definitions: content.meanings.map((m: LlmDefinition) => ({
-        definition: m.definition,
-        ...(m.example ? { example: m.example } : {}),
-      })),
-    })
-  }
+  const meanings: Meaning[] = Array.isArray(content.meaningGroups)
+    ? content.meaningGroups.map((g) => ({
+        partOfSpeech: g.partOfSpeech,
+        definitions: g.senses.map(adaptSense),
+      }))
+    : []
 
   const phonetics: Phonetic[] = content.phonetic ? [{ text: content.phonetic }] : []
 
@@ -124,9 +157,11 @@ export function adaptLlm(content: LlmTranslationContent): DictionaryEntry[] {
   }
   if (content.phonetic) entry.phonetic = content.phonetic
   if (content.translation) entry.translation = content.translation
-  if (Array.isArray(content.examples) && content.examples.length > 0) {
-    entry.examples = content.examples
+  if (content.commonMistakes && content.commonMistakes.length > 0) {
+    entry.commonMistakes = content.commonMistakes
   }
+  if (content.collocations && content.collocations.length > 0) entry.collocations = content.collocations
+  if (content.wordFamily && content.wordFamily.length > 0) entry.wordFamily = content.wordFamily
   if (content.typo) {
     entry.typo = content.typo.explanation
       ? { suggestion: content.typo.suggestion, explanation: content.typo.explanation }

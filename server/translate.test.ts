@@ -37,13 +37,25 @@ describe('adaptLlm', () => {
     expect(entry.phonetics).toEqual([{ text: '/həˈloʊ/' }])
   })
 
-  it('maps meanings → definitions with part of speech', () => {
+  it('maps a meaning group → one Meaning per part of speech, with graded fields', () => {
     const content: LlmTranslationContent = {
       headword: 'hello',
-      partOfSpeech: 'interjection',
-      meanings: [
-        { definition: 'A greeting', example: 'Hello there!' },
-        { definition: 'An exclamation of surprise' },
+      meaningGroups: [
+        {
+          partOfSpeech: 'interjection',
+          senses: [
+            {
+              definition: 'A greeting',
+              cefr: 'A1',
+              register: 'informal',
+              examples: [
+                { text: 'Hello there!', cefr: 'A1' },
+                { text: 'A cheery hello rang out across the room.', cefr: 'B2' },
+              ],
+            },
+            { definition: 'An exclamation of surprise' },
+          ],
+        },
       ],
     }
     const [entry] = adaptLlm(content)
@@ -51,8 +63,30 @@ describe('adaptLlm', () => {
     const m = entry.meanings[0]
     expect(m.partOfSpeech).toBe('interjection')
     expect(m.definitions).toHaveLength(2)
-    expect(m.definitions[0]).toEqual({ definition: 'A greeting', example: 'Hello there!' })
+    expect(m.definitions[0]).toEqual({
+      definition: 'A greeting',
+      cefr: 'A1',
+      register: 'informal',
+      examples: [
+        { text: 'Hello there!', cefr: 'A1' },
+        { text: 'A cheery hello rang out across the room.', cefr: 'B2' },
+      ],
+    })
     expect(m.definitions[1]).toEqual({ definition: 'An exclamation of surprise' })
+  })
+
+  it('keeps separate parts of speech as separate Meaning entries', () => {
+    const content: LlmTranslationContent = {
+      headword: 'run',
+      meaningGroups: [
+        { partOfSpeech: 'verb', senses: [{ definition: 'To move fast on foot' }] },
+        { partOfSpeech: 'noun', senses: [{ definition: 'An act of running' }] },
+      ],
+    }
+    const [entry] = adaptLlm(content)
+    expect(entry.meanings).toHaveLength(2)
+    expect(entry.meanings[0].partOfSpeech).toBe('verb')
+    expect(entry.meanings[1].partOfSpeech).toBe('noun')
   })
 
   it('returns empty phonetics and meanings when none are provided', () => {
@@ -62,8 +96,8 @@ describe('adaptLlm', () => {
     expect(entry.meanings).toEqual([])
   })
 
-  it('skips meanings when the array is empty', () => {
-    const content: LlmTranslationContent = { headword: 'a', meanings: [] }
+  it('skips meanings when meaningGroups is empty', () => {
+    const content: LlmTranslationContent = { headword: 'a', meaningGroups: [] }
     const [entry] = adaptLlm(content)
     expect(entry.meanings).toEqual([])
   })
@@ -101,22 +135,35 @@ describe('adaptLlm', () => {
     expect(entry.typo).toBeUndefined()
   })
 
-  it('maps translation and examples through', () => {
+  it('maps translation, commonMistakes, collocations, and wordFamily through', () => {
     const content: LlmTranslationContent = {
-      headword: 'hello',
-      translation: 'hola',
-      examples: ['Hello, how are you?', 'She said hello.'],
+      headword: 'photo',
+      translation: 'foto',
+      commonMistakes: [{ wrong: 'make a photo', right: 'take a photo', note: 'Use "take", not "make".' }],
+      collocations: ['take a photo', 'photo album'],
+      wordFamily: ['photography', 'photographer'],
     }
     const [entry] = adaptLlm(content)
-    expect(entry.translation).toBe('hola')
-    expect(entry.examples).toEqual(['Hello, how are you?', 'She said hello.'])
+    expect(entry.translation).toBe('foto')
+    expect(entry.commonMistakes).toEqual([
+      { wrong: 'make a photo', right: 'take a photo', note: 'Use "take", not "make".' },
+    ])
+    expect(entry.collocations).toEqual(['take a photo', 'photo album'])
+    expect(entry.wordFamily).toEqual(['photography', 'photographer'])
   })
 
-  it('omits translation and examples when absent or empty', () => {
-    const content: LlmTranslationContent = { headword: 'hello', examples: [] }
+  it('omits translation/commonMistakes/collocations/wordFamily when absent or empty', () => {
+    const content: LlmTranslationContent = {
+      headword: 'hello',
+      commonMistakes: [],
+      collocations: [],
+      wordFamily: [],
+    }
     const [entry] = adaptLlm(content)
     expect(entry.translation).toBeUndefined()
-    expect(entry.examples).toBeUndefined()
+    expect(entry.commonMistakes).toBeUndefined()
+    expect(entry.collocations).toBeUndefined()
+    expect(entry.wordFamily).toBeUndefined()
   })
 })
 
@@ -128,7 +175,7 @@ describe('translate — in-flight dedup', () => {
       async translate() {
         calls += 1
         await new Promise((resolve) => setTimeout(resolve, 10))
-        return { content: { headword: 'hello', meanings: [{ definition: 'A greeting' }] } }
+        return { content: { headword: 'hello', meaningGroups: [{ partOfSpeech: 'interjection', senses: [{ definition: 'A greeting' }] }] } }
       },
     }
     const dictionary: DictionaryProvider = { id: 'dict:test', define: vi.fn(async () => []) }
@@ -151,7 +198,7 @@ describe('translate — in-flight dedup', () => {
       id: 'llm:test:test',
       async translate() {
         calls += 1
-        return { content: { headword: 'hello', meanings: [{ definition: 'A greeting' }] } }
+        return { content: { headword: 'hello', meaningGroups: [{ partOfSpeech: 'interjection', senses: [{ definition: 'A greeting' }] }] } }
       },
     }
     const dictionary: DictionaryProvider = { id: 'dict:test', define: vi.fn(async () => []) }

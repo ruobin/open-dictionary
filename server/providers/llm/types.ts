@@ -20,9 +20,42 @@ export interface LlmTranslationRequest {
   targetLang: string
 }
 
-export interface LlmDefinition {
+/** CEFR proficiency level (A1 easiest – C2 hardest), per to-do §3. */
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
+
+export interface LlmGradedExample {
+  text: string
+  /** Difficulty level of this specific example sentence. */
+  cefr?: CefrLevel
+}
+
+/** One sense (definition) within a part-of-speech group. */
+export interface LlmSense {
   definition: string
-  example?: string
+  /** Difficulty level of this sense itself. */
+  cefr?: CefrLevel
+  /** e.g. "countable", "transitive", "[+ that clause]", "irregular: go, went, gone". */
+  grammar?: string
+  /** e.g. "formal", "informal", "slang", "dated", "UK", "US". */
+  register?: string
+  /** 1-3 example sentences at different CEFR levels — the core learner pitch. */
+  examples?: LlmGradedExample[]
+}
+
+/** All senses sharing one part of speech, e.g. "run" (verb) vs "run" (noun)
+ *  are separate groups rather than being collapsed together. */
+export interface LlmMeaningGroup {
+  partOfSpeech: string
+  senses: LlmSense[]
+}
+
+export interface LlmCommonMistake {
+  /** What learners often say/write incorrectly. */
+  wrong: string
+  /** The correct alternative. */
+  right: string
+  /** Short explanation, in targetLang. */
+  note?: string
 }
 
 /**
@@ -38,20 +71,24 @@ export interface LlmTranslationSuggestion {
 
 /**
  * When present, the input was judged to be an obvious typo. The LLM
- * intentionally omits translation/partOfSpeech/phonetic/meanings/examples in
- * this case — the entry is only a correction nudge.
+ * intentionally omits every other field in this case — the entry is only a
+ * correction nudge.
  */
 export interface LlmTranslationContent {
   /** The queried term, echoed back (the original input as typed, even if a typo). */
   headword: string
   /** Best short translation into targetLang (omitted in same-language definition mode). */
   translation?: string
-  partOfSpeech?: string
   /** IPA transcription when known. */
   phonetic?: string
-  meanings?: LlmDefinition[]
-  /** Extra usage examples. */
-  examples?: string[]
+  /** Senses grouped by part of speech — "run" (verb) and "run" (noun) are separate groups. */
+  meaningGroups?: LlmMeaningGroup[]
+  /** Learner-corpus-style corrections, e.g. "make a photo" → "take a photo". */
+  commonMistakes?: LlmCommonMistake[]
+  /** Fixed expressions this word commonly appears in, e.g. "heavy rain", "commit a crime". */
+  collocations?: string[]
+  /** Related words, e.g. run → runner, running, rerun. */
+  wordFamily?: string[]
   /** Typo correction: present only when the input is an obvious typo. */
   typo?: LlmTranslationSuggestion
 }
