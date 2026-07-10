@@ -18,6 +18,8 @@ import { createTranslateRouter } from './translate'
 import { createFavoritesRouter } from './favorites'
 import { createSuggestRouter } from './suggest'
 import { createReportRouter } from './report'
+import { createWordOfDayRouter } from './wordOfDay'
+import { createMoreExamplesRouter } from './moreExamples'
 import type { LlmProvider } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
@@ -120,10 +122,13 @@ export function createApp({ llmProvider, dictionaryProvider, translationCache }:
   // Public routers first: createFavoritesRouter applies `checkJwt` via
   // `router.use()`, which runs unconditionally for every path that reaches
   // that router — mounting it before these would 401 unauthenticated
-  // requests to /suggest and /report before they ever reach these handlers.
+  // requests to /suggest, /report, /word-of-day, and /more-examples before
+  // they ever reach these handlers.
   app.use('/api', createTranslateRouter(dictionaryProvider, translationCache))
   app.use('/api', createSuggestRouter())
   app.use('/api', createReportRouter())
+  app.use('/api', createWordOfDayRouter())
+  app.use('/api', createMoreExamplesRouter())
   app.use('/api', createFavoritesRouter(checkJwt))
 
   app.get(

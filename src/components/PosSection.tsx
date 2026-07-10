@@ -1,6 +1,17 @@
 import type { Meaning } from '../api/dictionary'
+import MoreExamplesButton from './MoreExamplesButton'
 
-export default function PosSection({ meaning }: { meaning: Meaning }) {
+export default function PosSection({
+  meaning,
+  word,
+  sourceLang,
+  targetLang,
+}: {
+  meaning: Meaning
+  word: string
+  sourceLang: string
+  targetLang: string
+}) {
   const { partOfSpeech, definitions = [], synonyms = [] } = meaning
 
   return (
@@ -37,6 +48,13 @@ export default function PosSection({ meaning }: { meaning: Meaning }) {
                 ))}
               </ul>
             )}
+            <MoreExamplesButton
+              word={word}
+              sourceLang={sourceLang}
+              targetLang={targetLang}
+              definition={d.definition}
+              cefr={d.cefr}
+            />
           </li>
         ))}
       </ol>

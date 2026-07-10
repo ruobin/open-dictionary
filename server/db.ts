@@ -4,6 +4,7 @@ let client: MongoClient | null = null
 let database: Db | null = null
 
 const TRANSLATION_TTL_SECONDS = 365 * 24 * 60 * 60 // 1 year (design doc §6)
+const MORE_EXAMPLES_TTL_SECONDS = 90 * 24 * 60 * 60 // 90 days — more speculative/long-tail than the main cache
 
 /** Connects to MongoDB and ensures required indexes (idempotent). */
 export async function connectMongo(uri: string, dbName = 'open-dictionary'): Promise<Db> {
@@ -59,4 +60,12 @@ async function ensureIndexes(db: Db): Promise<void> {
     { name: 'reports_word' }
   )
   await reports.createIndex({ createdAt: -1 }, { name: 'reports_recent' })
+
+  // "More examples like this" (to-do §3): _id is already the cache-key hash
+  // (word + sense + constraints), so only a TTL index is needed.
+  const moreExamples = db.collection('more_examples')
+  await moreExamples.createIndex(
+    { fetchedAt: 1 },
+    { expireAfterSeconds: MORE_EXAMPLES_TTL_SECONDS, name: 'more_examples_ttl' }
+  )
 }

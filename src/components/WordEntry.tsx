@@ -76,7 +76,7 @@ export default function WordEntry({
 
       <div className="meanings">
         {(entry.meanings ?? []).map((m, i) => (
-          <PosSection key={i} meaning={m} />
+          <PosSection key={i} meaning={m} word={entry.word} sourceLang={sourceLang} targetLang={targetLang} />
         ))}
       </div>
 

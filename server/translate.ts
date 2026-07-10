@@ -11,6 +11,13 @@ import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
 import { LANGUAGES } from '../shared/languages'
+import {
+  recordDictError,
+  recordDictFallbackUsed,
+  recordLlmError,
+  recordLlmLatency,
+  recordOutcome,
+} from './metrics'
 
 /**
  * HTTP response shape. Mirrors the frontend `DictionaryEntry`
@@ -261,9 +268,14 @@ export function translate(
   const existing = inFlight.get(key)
   if (existing) return existing
 
-  const promise = doTranslate(req, llm, dictionary, cache).finally(() => {
-    inFlight.delete(key)
-  })
+  const promise = doTranslate(req, llm, dictionary, cache)
+    .then((outcome) => {
+      recordOutcome(outcome.tier)
+      return outcome
+    })
+    .finally(() => {
+      inFlight.delete(key)
+    })
   inFlight.set(key, promise)
   return promise
 }
@@ -286,8 +298,10 @@ async function doTranslate(
 
   // Tier 1 — LLM (primary)
   if (llm) {
+    const started = Date.now()
     try {
       const result = await llm.translate(req)
+      recordLlmLatency(llm.id, Date.now() - started)
       const content = result.content as LlmTranslationContent
       let entries = adaptLlm(content)
       const isTypoResponse = entries.some((e) => Boolean(e.typo?.suggestion))
@@ -300,6 +314,8 @@ async function doTranslate(
       }
     } catch (err) {
       const e = err as Error & { code?: string; status?: number }
+      recordLlmError(llm.id, e?.code ?? e?.name ?? 'unknown')
+      recordDictFallbackUsed()
       console.warn(
         `[translate] LLM tier failed (${e?.name || 'Error'}${e?.code ? `/${e.code}` : ''}${
           e?.status ? ` ${e.status}` : ''
@@ -310,7 +326,13 @@ async function doTranslate(
   }
 
   // Tier 2 — dictionary (fallback)
-  const raw = await dictionary.define({ text: req.text, sourceLang: req.sourceLang })
+  let raw: unknown
+  try {
+    raw = await dictionary.define({ text: req.text, sourceLang: req.sourceLang })
+  } catch (err) {
+    recordDictError()
+    throw err
+  }
   const entries = raw as DictionaryEntry[]
   await cacheSetSafe(cache, req, entries, 'dict')
   return { entries, tier: 'dictionary' }
@@ -347,14 +369,20 @@ export function createTranslateRouter(
         }
 
         const llm = (req.app.locals.llm as LlmProvider | null) ?? null
+        const started = Date.now()
         const outcome = await translate({ text, sourceLang, targetLang }, llm, dictionary, cache)
+        const latencyMs = Date.now() - started
 
         if (outcome.entries.length === 0) {
           res.status(404).json({ error: 'not_found' })
           return
         }
 
-        console.log(`[translate] "${text}" (${sourceLang}->${targetLang}) via ${outcome.tier}`)
+        // Structured per-request log (design doc §12) — textLength, never text.
+        console.log(
+          '[translate]',
+          JSON.stringify({ tier: outcome.tier, sourceLang, targetLang, textLength: text.length, latencyMs })
+        )
         res.json(outcome.entries)
       } catch (err) {
         if ((err as { code?: string })?.code === 'not_found') {

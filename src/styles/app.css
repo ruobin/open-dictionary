@@ -123,6 +123,30 @@ button { font-family: inherit; cursor: pointer; }
   margin: 0 0 32px;
 }
 
+.word-of-day {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.word-of-day-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+.word-of-day-word {
+  display: block;
+  font-family: var(--serif);
+  font-size: 28px;
+  color: var(--ink);
+}
+.word-of-day-word:hover { color: var(--red); }
+.word-of-day-def {
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+}
+
 /* Search */
 .search-bar-wrap { position: relative; max-width: 640px; }
 .search-bar {
@@ -357,6 +381,47 @@ button { font-family: inherit; cursor: pointer; }
 .cefr-badge[data-level^="B"] { background: #b8860b; }
 .cefr-badge[data-level^="C"] { background: var(--red); }
 .cefr-badge-sm { font-size: 10px; padding: 0 5px; min-width: 18px; }
+
+.more-examples-toggle {
+  margin-top: 8px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.more-examples-toggle:hover { color: var(--red); }
+.more-examples-widget { margin-top: 8px; }
+.more-examples-form {
+  display: flex;
+  gap: 8px;
+  max-width: 360px;
+}
+.more-examples-form input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.more-examples-form button {
+  background: var(--ink);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.more-examples-form button:hover { background: var(--red); }
+.more-examples-form button:disabled { opacity: 0.6; cursor: default; }
+.more-examples-error { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+.more-examples-results { margin-top: 8px; }
+
 .synonyms {
   margin-top: 12px;
   font-size: 14px;

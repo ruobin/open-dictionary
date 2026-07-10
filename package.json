@@ -17,6 +17,7 @@
     "start": "tsx server/index.ts",
     "llm:ping": "tsx scripts/llm-ping.ts",
     "prerender": "tsx scripts/prerender.ts",
+    "eval": "tsx scripts/eval-harness.ts",
     "dev:all": "concurrently -n web,api -c blue,magenta \"npm:dev\" \"npm:server\""
   },
   "dependencies": {

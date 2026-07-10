@@ -77,11 +77,16 @@ Upgrade the prompt + schema + UI to produce:
       internal links.
 - [x] **Graded example sentences — the core pitch.** 2–3 examples per sense at *different* CEFR
       levels (one simple, one intermediate, one advanced), each tagged with its level.
-- [ ] **"More examples like this" button** — follow-up LLM call that regenerates examples
+- [x] **"More examples like this" button** — follow-up LLM call that regenerates examples
       constrained by topic ("about football", "business context") and/or the user's level. Cache
-      each variant under its own key (word + sense + constraint). **Deferred** — scoped out of this
-      pass as a separate interactive feature (new endpoint + its own caching scheme) rather than part
-      of the core schema upgrade.
+      each variant under its own key (word + sense + constraint). (Implemented in a later pass:
+      `LlmProvider.moreExamples()` (shared across all vendors via `openaiCompat.ts`), `GET
+      /api/more-examples` backed by its own `more_examples` Mongo collection — separate from the
+      main translation cache, 90-day TTL rather than 1 year since it's more speculative/long-tail —
+      keyed by a hash of word + sense definition text + topic + CEFR. `MoreExamplesButton.tsx` adds
+      an inline "More examples like this" toggle under each sense with an optional topic field.
+      Verified live: correctly generates topic-constrained, CEFR-graded examples scoped to the right
+      sense, and repeat requests hit the cache (~30ms).)
 - [x] Update `buildMessages()` prompt + `parseContent()` validation for the richer schema; bump
       `promptVersion` (§2). (`CACHE_VERSION` bumped `v2` → `v3`.)
 - [x] Update `PosSection.tsx` / `WordEntry.tsx` to render the new fields.
@@ -107,6 +112,14 @@ A dictionary's product is *trust*, and each LLM answer is frozen in the cache fo
 - [ ] **Strict structured outputs.** Use `response_format: { type: "json_schema", … }` where the
       vendor supports it, instead of `json_object` + the regex JSON extraction in `parseContent()`
       (`server/providers/llm/openaiCompat.ts`). Fewer malformed entries entering the cache.
+      **Tested live, not currently doable as-is:** DeepSeek (the default `LLM_VENDOR`) rejects it
+      outright — `response_format: {type:"json_schema",...}` against `deepseek-v4-flash` returns
+      `400 {"message":"This response_format type is unavailable now"}`. GLM couldn't be verified
+      (account has insufficient balance, an unrelated billing issue, not a capability signal).
+      Since `openaiCompat.ts` is shared across all three vendors, switching modes unconditionally
+      would break the primary path. Doing this safely needs a per-vendor capability flag (attempt
+      `json_schema`, fall back to `json_object` on a 400) — worth adding once at least one
+      configured vendor is confirmed to support it.
 - [ ] **Pre-generate the head of the distribution with a stronger model.**
   - Source a frequency wordlist (e.g. top 10–20k lemmas per source language).
   - Offline batch job (new script under `scripts/`) generates entries with a *stronger/slower*
@@ -118,9 +131,15 @@ A dictionary's product is *trust*, and each LLM answer is frozen in the cache fo
       review picks it up). This is the only feedback loop into a corpus too large to review manually.
       (Implemented as its own `reports` collection — word/langs/cache-version/reason/timestamp — rather
       than a single overwritable flag on the cache doc, so every report is auditable.)
-- [ ] **Lightweight eval harness.** A fixed set of ~100 tricky words (polysemes, false friends,
+- [x] **Lightweight eval harness.** A fixed set of ~100 tricky words (polysemes, false friends,
       slang, inflected forms) with expected properties; run against a prompt/model change before
-      bumping `promptVersion`. Wire into CI as a manual job (LLM cost).
+      bumping `promptVersion`. Wire into CI as a manual job (LLM cost). (`npm run eval` —
+      `scripts/eval-harness.ts` + `scripts/eval-cases.ts`. Smaller set (11 words) than the ~100
+      suggested, covering the categories that matter: polysemes/multi-POS, irregular grammar, slang
+      register, typo-vs-not-typo edge cases. Structural checks, not semantic ones — an LLM's exact
+      wording varies run to run, so checks assert field presence/counts/substrings, not exact text.
+      Not wired into automatic CI, same reasoning as `llm:ping` — costs real LLM calls each run.
+      Ran live against the current prompt: 11/11 passed.)
 
 ---
 
@@ -206,8 +225,10 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
 - [ ] **Spaced-repetition review** of favorited words. LLM generates cloze/quiz questions from the
       cached entry (cacheable per word). Simple SM-2-style scheduling stored per user in Mongo
       (extend the favorites collection or a new `reviews` collection).
-- [ ] **Word of the day** — trivially generated from the pre-seeded wordlist, cached daily; good
-      for return visits and (later) email/push.
+- [x] **Word of the day** — trivially generated from the pre-seeded wordlist, cached daily; good
+      for return visits and (later) email/push. (No pre-seeded wordlist exists yet — picks a random
+      word from words already in the cache instead, persisted per UTC date in a `word_of_day`
+      collection so every visitor sees the same word all day. `GET /api/word-of-day`, shown on Home.)
 - [x] **History page** — a real page listing history with re-lookup links (data already exists in
       `useUserData`).
 - [ ] **User level setting (A1–C2)** in profile → used to pick which graded examples to show first
@@ -224,11 +245,16 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
 - [x] **Stampede protection.** Design doc defers it, but with SEO traffic a popular uncached word
       fans out into N simultaneous LLM calls. In-flight `Map<key, Promise>` dedup in
       `translate()` — ~15 lines.
-- [ ] **Metrics** per design doc §12: cache hit/miss by tier, LLM latency/error by vendor, fallback
-      rate. Even plain structured logs + a dashboard query is enough to start.
-- [ ] Backups: current policy keeps only the single latest weekly dump
+- [x] **Metrics** per design doc §12: cache hit/miss by tier, LLM latency/error by vendor, fallback
+      rate. Even plain structured logs + a dashboard query is enough to start. (`server/metrics.ts` —
+      in-memory counters + a structured JSON log line per request and a periodic 5-minute summary
+      line; no new infra. Adapted the design doc's per-tier cache hit/miss counters to the actually-
+      implemented single unified cache slot — see the comment in `metrics.ts` for why.)
+- [x] Backups: current policy keeps only the single latest weekly dump
       (`scripts/mongodb-backup.sh`). Once the cache represents real LLM spend, keep more history
-      (the pre-generated corpus is expensive to rebuild).
+      (the pre-generated corpus is expensive to rebuild). (Retention count is now configurable via
+      `BACKUP_KEEP_N` (default 1, unchanged behavior) — enables the policy change without deciding
+      *when* to flip it; that timing call is still yours.)
 
 ---
 
@@ -237,8 +263,12 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
 - [ ] **Check the Merriam-Webster API license.** Free MW API keys are for **non-commercial** use.
       If this becomes a real product, the MW fallback + audio merging need a commercial agreement
       or a replacement (e.g. Wiktionary/Wikidata extracts + TTS for audio).
-- [ ] **Never scrape Cambridge** (or copy their definitions into prompts). All content must be
-      LLM-original or from properly licensed sources.
+- [x] **Never scrape Cambridge** (or copy their definitions into prompts). All content must be
+      LLM-original or from properly licensed sources. (Verified: no scraping code or references to
+      `cambridge.org` anywhere in the codebase — the only two mentions are this to-do's own
+      competitive-reference link and one purely descriptive "Cambridge-style" phrase in the Home
+      page's meta description, `src/pages/Home.tsx`. An ongoing practice, not a one-time fix — worth
+      re-checking whenever a new content source is added.)
 - [ ] **Sustainability without ads.** The cache makes marginal cost per user tiny after warm-up, so
       a freemium model fits the existing architecture: free lookups for everyone; paid tier for
       learning features (unlimited regenerated examples, quizzes/SRS, sentence audio). Decide early

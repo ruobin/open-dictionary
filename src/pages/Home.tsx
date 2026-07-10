@@ -1,4 +1,5 @@
 import SearchBar from '../components/SearchBar'
+import WordOfDay from '../components/WordOfDay'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 
 export default function Home() {
@@ -16,6 +17,7 @@ export default function Home() {
       <div className="home-search">
         <SearchBar />
       </div>
+      <WordOfDay />
     </div>
   )
 }

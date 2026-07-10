@@ -10,6 +10,7 @@ import { createLlmProviderFromEnv } from './providers/llm'
 import { createDictionaryProvider } from './providers/dictionary'
 import { createTranslationCache, type TranslationDoc } from './cache/translationCache'
 import { createApp } from './app'
+import { logMetricsSummary } from './metrics'
 
 const dictionaryProvider = createDictionaryProvider({
   baseUrl: DICTIONARY_API_BASE || undefined,
@@ -42,6 +43,11 @@ const app = createApp({
 const server = app.listen(PORT, () => {
   console.log(`open-dictionary API listening on http://localhost:${PORT} (${process.env.NODE_ENV ?? 'development'})`)
 })
+
+// Periodic metrics summary (to-do §9, design doc §12) — plain structured
+// logs, queryable via whatever log aggregation is already in place; no new
+// metrics infra. unref() so this timer never keeps the process alive.
+setInterval(logMetricsSummary, 5 * 60 * 1000).unref()
 
 function shutdown(signal: string): void {
   console.log(`Received ${signal}, shutting down`)

@@ -177,6 +177,9 @@ describe('translate — in-flight dedup', () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
         return { content: { headword: 'hello', meaningGroups: [{ partOfSpeech: 'interjection', senses: [{ definition: 'A greeting' }] }] } }
       },
+      async moreExamples() {
+        return { examples: [] }
+      },
     }
     const dictionary: DictionaryProvider = { id: 'dict:test', define: vi.fn(async () => []) }
     const req = { text: 'hello', sourceLang: 'en', targetLang: 'en' }
@@ -199,6 +202,9 @@ describe('translate — in-flight dedup', () => {
       async translate() {
         calls += 1
         return { content: { headword: 'hello', meaningGroups: [{ partOfSpeech: 'interjection', senses: [{ definition: 'A greeting' }] }] } }
+      },
+      async moreExamples() {
+        return { examples: [] }
       },
     }
     const dictionary: DictionaryProvider = { id: 'dict:test', define: vi.fn(async () => []) }

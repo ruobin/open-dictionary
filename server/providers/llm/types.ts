@@ -98,6 +98,28 @@ export interface LlmTranslationResult {
   content: unknown
 }
 
+/**
+ * "More examples like this" (to-do §3) — a follow-up call scoped to one
+ * sense, optionally constrained by topic and/or level, rather than a full
+ * translate() request.
+ */
+export interface LlmMoreExamplesRequest {
+  word: string
+  sourceLang: string
+  targetLang: string
+  /** The sense's own definition text, to disambiguate which sense (a word
+   *  can have several) the new examples should illustrate. */
+  senseDefinition: string
+  /** e.g. "football", "business meetings". */
+  topic?: string
+  /** Constrain generated examples to roughly this level. */
+  cefr?: CefrLevel
+}
+
+export interface LlmMoreExamplesResult {
+  examples: LlmGradedExample[]
+}
+
 export type LlmErrorCode =
   | 'timeout'
   | 'network'
@@ -125,4 +147,5 @@ export interface LlmProvider {
   /** Stable cache-key id, e.g. "llm:glm:glm-5.2". */
   readonly id: string
   translate(req: LlmTranslationRequest): Promise<LlmTranslationResult>
+  moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult>
 }

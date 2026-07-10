@@ -4,6 +4,8 @@ import {
   type LlmCommonMistake,
   type LlmGradedExample,
   type LlmMeaningGroup,
+  type LlmMoreExamplesRequest,
+  type LlmMoreExamplesResult,
   type LlmProvider,
   type LlmSense,
   type LlmTranslationContent,
@@ -103,6 +105,63 @@ function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
     { role: 'system', content: system },
     { role: 'user', content: task },
   ]
+}
+
+function buildMoreExamplesMessages(req: LlmMoreExamplesRequest): ChatMessage[] {
+  const { word, sourceLang, targetLang, senseDefinition, topic, cefr } = req
+  const sourceName = languageName(sourceLang)
+  const targetName = languageName(targetLang)
+
+  const constraints: string[] = []
+  if (topic) constraints.push(`about the topic "${topic}"`)
+  if (cefr) constraints.push(`at approximately CEFR level ${cefr}`)
+  const constraintText = constraints.length > 0 ? ` ${constraints.join(' and ')}` : ''
+
+  const task =
+    `Give 3 NEW example sentences in ${sourceName} for the ${sourceName} word or expression "${word}", ` +
+    `specifically for the sense defined (in ${targetName}) as: "${senseDefinition}".${constraintText} ` +
+    'Do not reuse generic textbook examples — vary the sentences from each other and from what a dictionary would show by default.'
+
+  const system = [
+    'You are a precise multilingual dictionary and translation engine built for language learners.',
+    'Respond with ONE value: a single JSON object (no markdown fences, no commentary) matching this shape:',
+    '{',
+    '  "examples": [{ "text": string, "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2" }]',
+    '}',
+    'Return exactly 3 examples, each a complete natural sentence using the word/expression as given, matching the specified sense only.',
+    cefr
+      ? `All 3 examples should be roughly at CEFR level ${cefr}.`
+      : 'Vary the CEFR level across the 3 examples (e.g. one easier, one harder).',
+  ].join('\n')
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: task },
+  ]
+}
+
+function parseMoreExamplesContent(vendor: string, raw: string): LlmGradedExample[] {
+  const stripped = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  const start = stripped.indexOf('{')
+  const end = stripped.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    throw new LlmProviderError('bad_response', `${vendor} response did not contain a JSON object`)
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stripped.slice(start, end + 1))
+  } catch {
+    throw new LlmProviderError('bad_response', `${vendor} response was not valid JSON`)
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    throw new LlmProviderError('bad_response', `${vendor} response JSON was not an object`)
+  }
+
+  const obj = parsed as Record<string, unknown>
+  return Array.isArray(obj.examples)
+    ? obj.examples.map(parseGradedExample).filter((e): e is LlmGradedExample => Boolean(e))
+    : []
 }
 
 interface ChatChoice {
@@ -258,71 +317,79 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
 
   if (!apiKey) throw new LlmProviderError('not_configured', `${vendor} API key is not set`)
 
+  /** Shared POST /chat/completions + timeout/error handling for both
+   *  translate() and moreExamples() — only the message-building and
+   *  response-parsing differ between them. */
+  async function callChat(messages: ChatMessage[], logLabel: string): Promise<string> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const started = Date.now()
+    const url = `${baseUrl}/chat/completions`
+    dbg(
+      `→ POST ${url} model=${model} timeout=${timeoutMs}ms ${logLabel}\n` +
+        messages.map((m) => `--- [${m.role}] ---\n${m.content}`).join('\n')
+    )
+
+    const requestBody: Record<string, unknown> = { model, messages, temperature }
+    if (jsonMode) requestBody.response_format = { type: 'json_object' }
+
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(headers ?? {}),
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      })
+    } catch (err) {
+      const elapsed = Date.now() - started
+      if (err instanceof Error && err.name === 'AbortError') {
+        dbg(`← TIMEOUT after ${elapsed}ms — no response received from ${url}`)
+        throw new LlmProviderError(
+          'timeout',
+          `${vendor} request to ${url} timed out after ${elapsed}ms (limit ${timeoutMs}ms) — no response received`
+        )
+      }
+      dbg(`← NETWORK ERROR after ${elapsed}ms:`, err)
+      throw new LlmProviderError(
+        'network',
+        `Could not reach the ${vendor} API at ${url}: ${(err as Error)?.message ?? err}`
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const elapsed = Date.now() - started
+    dbg(`← ${res.status} in ${elapsed}ms`)
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      dbg(`← error body: ${detail.slice(0, 500)}`)
+      throw new LlmProviderError(
+        'api_error',
+        `${vendor} API error: ${res.status} ${detail.slice(0, 200)}`.trimEnd(),
+        res.status
+      )
+    }
+
+    const responseBody = (await res.json()) as ChatResponseBody
+    const content = responseBody?.choices?.[0]?.message?.content
+    if (typeof content !== 'string' || !content.trim()) {
+      dbg(`← no message content; body: ${JSON.stringify(responseBody).slice(0, 500)}`)
+      throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
+    }
+    return content
+  }
+
   return {
     id,
     async translate(req: LlmTranslationRequest): Promise<LlmTranslationResult> {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), timeoutMs)
-      const started = Date.now()
-      const url = `${baseUrl}/chat/completions`
       const messages = buildMessages(req)
-      dbg(
-        `→ POST ${url} model=${model} timeout=${timeoutMs}ms text="${req.text.slice(0, 60)}"\n` +
-          messages.map((m) => `--- [${m.role}] ---\n${m.content}`).join('\n')
-      )
-
-      const requestBody: Record<string, unknown> = { model, messages, temperature }
-      if (jsonMode) requestBody.response_format = { type: 'json_object' }
-
-      let res: Response
-      try {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            ...(headers ?? {}),
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        })
-      } catch (err) {
-        const elapsed = Date.now() - started
-        if (err instanceof Error && err.name === 'AbortError') {
-          dbg(`← TIMEOUT after ${elapsed}ms — no response received from ${url}`)
-          throw new LlmProviderError(
-            'timeout',
-            `${vendor} request to ${url} timed out after ${elapsed}ms (limit ${timeoutMs}ms) — no response received`
-          )
-        }
-        dbg(`← NETWORK ERROR after ${elapsed}ms:`, err)
-        throw new LlmProviderError(
-          'network',
-          `Could not reach the ${vendor} API at ${url}: ${(err as Error)?.message ?? err}`
-        )
-      } finally {
-        clearTimeout(timer)
-      }
-
-      const elapsed = Date.now() - started
-      dbg(`← ${res.status} in ${elapsed}ms`)
-
-      if (!res.ok) {
-        const detail = await res.text().catch(() => '')
-        dbg(`← error body: ${detail.slice(0, 500)}`)
-        throw new LlmProviderError(
-          'api_error',
-          `${vendor} API error: ${res.status} ${detail.slice(0, 200)}`.trimEnd(),
-          res.status
-        )
-      }
-
-      const responseBody = (await res.json()) as ChatResponseBody
-      const content = responseBody?.choices?.[0]?.message?.content
-      if (typeof content !== 'string' || !content.trim()) {
-        dbg(`← no message content; body: ${JSON.stringify(responseBody).slice(0, 500)}`)
-        throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
-      }
+      const content = await callChat(messages, `text="${req.text.slice(0, 60)}"`)
       const parsed = parseContent(vendor, content)
       // Defensive: the model occasionally includes a "translation" even in
       // same-language define mode despite the prompt saying to omit it. The
@@ -332,6 +399,11 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
         delete parsed.translation
       }
       return { content: parsed }
+    },
+    async moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
+      const messages = buildMoreExamplesMessages(req)
+      const content = await callChat(messages, `moreExamples word="${req.word.slice(0, 60)}"`)
+      return { examples: parseMoreExamplesContent(vendor, content) }
     },
   }
 }
