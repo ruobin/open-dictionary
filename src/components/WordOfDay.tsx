@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchWordOfDay } from '../api/wordOfDay'
 import { lookupWord, type DictionaryEntry } from '../api/dictionary'
+import { useI18n } from '../i18n/I18nContext'
 
 export default function WordOfDay() {
+  const { t } = useI18n()
   const [entry, setEntry] = useState<DictionaryEntry | null>(null)
 
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function WordOfDay() {
 
   return (
     <section className="word-of-day">
-      <h2 className="word-of-day-label">Word of the day</h2>
+      <h2 className="word-of-day-label">{t('home.wordOfDay')}</h2>
       <Link to={`/word/${encodeURIComponent(entry.word)}`} className="word-of-day-word">
         {entry.word}
       </Link>

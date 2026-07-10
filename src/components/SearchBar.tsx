@@ -6,6 +6,7 @@ import {
   LANGUAGES,
 } from '../../shared/languages'
 import { fetchSuggestions } from '../api/suggest'
+import { useI18n } from '../i18n/I18nContext'
 
 const LAST_LANGS_KEY = 'lang:last'
 const SUGGEST_DEBOUNCE_MS = 150
@@ -74,6 +75,7 @@ export default function SearchBar({
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const navigate = useNavigate()
+  const { t } = useI18n()
   // Only show suggestions in response to the user actually typing — not on
   // mount/route-navigation, which sets `value` programmatically via the
   // effect below and would otherwise pop the dropdown open on page load.
@@ -151,11 +153,11 @@ export default function SearchBar({
     <div className="search-box">
       <div className="lang-controls">
         <label className="lang-field">
-          <span className="lang-label">From</span>
+          <span className="lang-label">{t('search.from')}</span>
           <select
             value={sourceLang}
             onChange={(e) => setSourceLang(e.target.value)}
-            aria-label="Source language"
+            aria-label={t('search.sourceLang')}
           >
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -166,11 +168,11 @@ export default function SearchBar({
         </label>
         <span className="lang-arrow" aria-hidden="true">→</span>
         <label className="lang-field">
-          <span className="lang-label">To</span>
+          <span className="lang-label">{t('search.to')}</span>
           <select
             value={targetLang}
             onChange={(e) => setTargetLang(e.target.value)}
-            aria-label="Target language"
+            aria-label={t('search.targetLang')}
           >
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -185,7 +187,7 @@ export default function SearchBar({
         <div className="search-bar">
           <input
             type="text"
-            placeholder="Search a word"
+            placeholder={t('search.placeholder')}
             value={value}
             onChange={(e) => {
               userTypedRef.current = true
@@ -201,7 +203,7 @@ export default function SearchBar({
             aria-autocomplete="list"
             autoComplete="off"
           />
-          <button type="submit" aria-label="Search">
+          <button type="submit" aria-label={t('search.submit')}>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="7" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />

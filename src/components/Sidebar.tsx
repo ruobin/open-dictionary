@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useI18n } from '../i18n/I18nContext'
 import type { FavoriteKey } from '../../shared/favorites'
 
 interface SidebarItem {
@@ -13,18 +14,20 @@ function WordList({
   items,
   emptyText,
   seeAllTo,
+  seeAllLabel,
 }: {
   title: string
   items: SidebarItem[]
   emptyText: string
   seeAllTo?: string
+  seeAllLabel?: string
 }) {
   return (
     <section className="sidebar-section">
       <h4 className="sidebar-title">
         {title}
         {seeAllTo && items.length > 0 && (
-          <Link className="sidebar-see-all" to={seeAllTo}>See all</Link>
+          <Link className="sidebar-see-all" to={seeAllTo}>{seeAllLabel}</Link>
         )}
       </h4>
       {items.length === 0 ? (
@@ -70,18 +73,20 @@ export default function Sidebar({
   history: FavoriteKey[]
   favorites: FavoriteKey[]
 }) {
+  const { t } = useI18n()
   return (
     <aside className="sidebar">
       <WordList
-        title="Favorites"
+        title={t('sidebar.favorites')}
         items={favoriteItems(favorites)}
-        emptyText="Star a translation to save it here."
+        emptyText={t('sidebar.favoritesEmpty')}
       />
       <WordList
-        title="Recent"
+        title={t('sidebar.recent')}
         items={historyItems(history.slice(0, 15))}
-        emptyText="Search a word to get started."
+        emptyText={t('sidebar.recentEmpty')}
         seeAllTo="/history"
+        seeAllLabel={t('common.seeAll')}
       />
     </aside>
   )

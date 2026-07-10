@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { fetchMoreExamples } from '../api/moreExamples'
+import { useI18n } from '../i18n/I18nContext'
 import type { GradedExample } from '../api/dictionary'
 
 type Status = 'idle' | 'open' | 'loading' | 'done' | 'error'
@@ -20,6 +21,7 @@ export default function MoreExamplesButton({
   const [status, setStatus] = useState<Status>('idle')
   const [topic, setTopic] = useState('')
   const [results, setResults] = useState<GradedExample[]>([])
+  const { t } = useI18n()
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -43,7 +45,7 @@ export default function MoreExamplesButton({
   if (status === 'idle') {
     return (
       <button type="button" className="more-examples-toggle" onClick={() => setStatus('open')}>
-        More examples like this
+        {t('moreExamples.cta')}
       </button>
     )
   }
@@ -53,15 +55,15 @@ export default function MoreExamplesButton({
       <form className="more-examples-form" onSubmit={handleSubmit}>
         <input
           type="text"
-          placeholder="Topic (optional), e.g. football"
+          placeholder={t('moreExamples.topicPlaceholder')}
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
         />
         <button type="submit" disabled={status === 'loading'}>
-          {status === 'loading' ? 'Generating…' : 'Get examples'}
+          {status === 'loading' ? t('moreExamples.generating') : t('moreExamples.getExamples')}
         </button>
       </form>
-      {status === 'error' && <p className="more-examples-error">Couldn&apos;t generate examples — try again.</p>}
+      {status === 'error' && <p className="more-examples-error">{t('moreExamples.error')}</p>}
       {status === 'done' && (
         <ul className="def-examples more-examples-results">
           {results.map((ex, i) => (

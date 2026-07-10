@@ -1,14 +1,16 @@
 import { useAuth0 } from '@auth0/auth0-react'
+import { useI18n } from '../i18n/I18nContext'
 
 export default function AuthButton() {
   const { isAuthenticated, isLoading, user, loginWithRedirect, logout } = useAuth0()
+  const { t } = useI18n()
 
-  if (isLoading) return <span className="auth-status">…</span>
+  if (isLoading) return <span className="auth-status">{t('auth.loading')}</span>
 
   if (!isAuthenticated) {
     return (
       <button className="btn btn-primary" onClick={() => loginWithRedirect()}>
-        Log in
+        {t('auth.login')}
       </button>
     )
   }
@@ -21,7 +23,7 @@ export default function AuthButton() {
         className="btn btn-ghost"
         onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
       >
-        Log out
+        {t('auth.logout')}
       </button>
     </div>
   )

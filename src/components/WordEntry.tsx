@@ -3,6 +3,7 @@ import AudioButton from './AudioButton'
 import PosSection from './PosSection'
 import ReportButton from './ReportButton'
 import { wordHref } from '../../shared/wordLink'
+import { useI18n } from '../i18n/I18nContext'
 import type { DictionaryEntry, Phonetic } from '../api/dictionary'
 
 type PhoneticWithAudio = Phonetic & { audio: string }
@@ -45,6 +46,7 @@ export default function WordEntry({
   const phonetics = entry.phonetics ?? []
   const { uk, us, fallback } = pickAudio(phonetics)
   const phoneticText = pickPhoneticText(phonetics)
+  const { t } = useI18n()
 
   return (
     <article className="word-entry">
@@ -56,15 +58,15 @@ export default function WordEntry({
         </div>
         <div className="word-actions">
           <div className="audio-row">
-            {uk && <AudioButton label="UK" src={uk.audio} />}
-            {us && <AudioButton label="US" src={us.audio} />}
-            {fallback && <AudioButton label="Play" src={fallback.audio} />}
+            {uk && <AudioButton label={t('word.audioUk')} src={uk.audio} />}
+            {us && <AudioButton label={t('word.audioUs')} src={us.audio} />}
+            {fallback && <AudioButton label={t('word.audioPlay')} src={fallback.audio} />}
           </div>
           <button
             className={`fav-btn ${isFavorite ? 'is-fav' : ''}`}
             onClick={onToggleFavorite}
             aria-pressed={isFavorite}
-            aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+            aria-label={isFavorite ? t('word.favRemove') : t('word.favAdd')}
             type="button"
           >
             <svg viewBox="0 0 24 24" width="20" height="20" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
@@ -82,7 +84,7 @@ export default function WordEntry({
 
       {entry.commonMistakes && entry.commonMistakes.length > 0 && (
         <section className="common-mistakes">
-          <h3 className="common-mistakes-label">Common mistakes</h3>
+          <h3 className="common-mistakes-label">{t('word.commonMistakes')}</h3>
           <ul className="common-mistakes-list">
             {entry.commonMistakes.map((m, i) => (
               <li key={i}>
@@ -98,7 +100,7 @@ export default function WordEntry({
 
       {entry.collocations && entry.collocations.length > 0 && (
         <section className="chips-section">
-          <h3 className="chips-label">Collocations</h3>
+          <h3 className="chips-label">{t('word.collocations')}</h3>
           <div className="chips">
             {entry.collocations.map((c, i) => (
               <Link key={i} className="chip" to={wordHref(c)}>{c}</Link>
@@ -109,7 +111,7 @@ export default function WordEntry({
 
       {entry.wordFamily && entry.wordFamily.length > 0 && (
         <section className="chips-section">
-          <h3 className="chips-label">Word family</h3>
+          <h3 className="chips-label">{t('word.wordFamily')}</h3>
           <div className="chips">
             {entry.wordFamily.map((w, i) => (
               <Link key={i} className="chip" to={wordHref(w)}>{w}</Link>
@@ -120,7 +122,7 @@ export default function WordEntry({
 
       {entry.sourceUrls && entry.sourceUrls.length > 0 && (
         <footer className="word-footer">
-          Source:{' '}
+          {t('word.source')}{' '}
           {entry.sourceUrls.map((u, i) => (
             <a key={i} href={u} target="_blank" rel="noreferrer">{u}</a>
           ))}

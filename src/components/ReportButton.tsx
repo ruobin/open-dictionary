@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { reportEntry } from '../api/report'
+import { useI18n } from '../i18n/I18nContext'
 
 type ReportState = 'idle' | 'sending' | 'sent' | 'error'
 
@@ -13,6 +14,7 @@ export default function ReportButton({
   targetLang: string
 }) {
   const [state, setState] = useState<ReportState>('idle')
+  const { t } = useI18n()
 
   async function handleReport() {
     setState('sending')
@@ -21,7 +23,7 @@ export default function ReportButton({
   }
 
   if (state === 'sent') {
-    return <p className="report-status">Thanks — we'll take a look.</p>
+    return <p className="report-status">{t('report.thanks')}</p>
   }
 
   return (
@@ -32,10 +34,10 @@ export default function ReportButton({
       disabled={state === 'sending'}
     >
       {state === 'sending'
-        ? 'Reporting…'
+        ? t('report.sending')
         : state === 'error'
-          ? "Couldn't send — try again"
-          : 'Report this entry'}
+          ? t('report.error')
+          : t('report.cta')}
     </button>
   )
 }

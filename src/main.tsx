@@ -4,6 +4,7 @@ import { BrowserRouter, useNavigate } from 'react-router-dom'
 import { Auth0Provider, type AppState } from '@auth0/auth0-react'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
+import { I18nProvider } from './i18n/I18nContext'
 import './styles/app.css'
 
 const domain = import.meta.env.VITE_AUTH0_DOMAIN
@@ -64,9 +65,11 @@ if (!domain || !clientId) {
     <StrictMode>
       <ErrorBoundary>
         <BrowserRouter>
-          <Auth0ProviderWithNavigate>
-            <App />
-          </Auth0ProviderWithNavigate>
+          <I18nProvider>
+            <Auth0ProviderWithNavigate>
+              <App />
+            </Auth0ProviderWithNavigate>
+          </I18nProvider>
         </BrowserRouter>
       </ErrorBoundary>
     </StrictMode>

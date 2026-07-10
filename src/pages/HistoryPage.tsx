@@ -1,16 +1,18 @@
 import { Link } from 'react-router-dom'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
+import { useI18n } from '../i18n/I18nContext'
 import type { FavoriteKey } from '../../shared/favorites'
 
 export default function HistoryPage({ history }: { history: FavoriteKey[] }) {
+  const { t } = useI18n()
   // Per-browser and not useful to search engines — keep it out of the index.
-  useDocumentMeta({ title: 'History — Open Dictionary', noindex: true })
+  useDocumentMeta({ title: t('history.docTitle'), noindex: true })
 
   return (
     <div className="history-page">
-      <h1 className="page-title">History</h1>
+      <h1 className="page-title">{t('history.title')}</h1>
       {history.length === 0 ? (
-        <p className="state-msg">Search a word to get started.</p>
+        <p className="state-msg">{t('history.empty')}</p>
       ) : (
         <ul className="history-list">
           {history.map((e) => (

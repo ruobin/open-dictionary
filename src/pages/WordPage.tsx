@@ -8,6 +8,7 @@ import { buildWordDescription, buildWordTitle } from '../../shared/seo'
 import type { FavoriteKey } from '../../shared/favorites'
 import type { useUserData } from '../hooks/useUserData'
 import type { useFavorites } from '../hooks/useFavorites'
+import { useI18n } from '../i18n/I18nContext'
 
 export default function WordPage({
   userData,
@@ -16,6 +17,7 @@ export default function WordPage({
   userData: ReturnType<typeof useUserData>
   favorites: ReturnType<typeof useFavorites>
 }) {
+  const { t } = useI18n()
   const { term } = useParams()
   const [searchParams] = useSearchParams()
   const word = (term || '').toLowerCase()
@@ -43,7 +45,7 @@ export default function WordPage({
           canonical: `${window.location.origin}/word/${encodeURIComponent(entry.word)}`,
         }
       : {
-          title: word ? `${word} — Open Dictionary` : 'open-dictionary — English Dictionary',
+          title: word ? t('word.docTitleFallback', { word }) : t('home.docTitle'),
           noindex: true,
         }
   )
@@ -58,26 +60,26 @@ export default function WordPage({
         />
       </div>
 
-      {status === 'loading' && <p className="state-msg">Loading…</p>}
+      {status === 'loading' && <p className="state-msg">{t('word.loading')}</p>}
 
       {status === 'error' && error?.code === 'not_found' && (
         <div className="state-msg state-error">
-          <h2>We couldn't find &quot;{word}&quot;</h2>
-          <p>Check the spelling or try a different word.</p>
+          <h2>{t('word.notFoundTitle', { word })}</h2>
+          <p>{t('word.notFoundBody')}</p>
         </div>
       )}
 
       {status === 'error' && error?.code === 'timeout' && (
         <div className="state-msg state-error">
-          <h2>The lookup timed out</h2>
-          <p>The dictionary service is taking too long. Please try again.</p>
+          <h2>{t('word.timeoutTitle')}</h2>
+          <p>{t('word.timeoutBody')}</p>
         </div>
       )}
 
       {status === 'error' && error?.code === 'network' && (
         <div className="state-msg state-error">
-          <h2>Network problem</h2>
-          <p>Couldn't reach the dictionary service. Check your connection and try again.</p>
+          <h2>{t('word.networkTitle')}</h2>
+          <p>{t('word.networkBody')}</p>
         </div>
       )}
 
@@ -85,19 +87,19 @@ export default function WordPage({
         error !== null &&
         !['not_found', 'timeout', 'network'].includes(error.code) && (
           <div className="state-msg state-error">
-            <h2>Something went wrong</h2>
-            <p>Please try again in a moment.</p>
+            <h2>{t('word.errorTitle')}</h2>
+            <p>{t('word.errorBody')}</p>
           </div>
         )}
 
       {status === 'success' && data && data.length > 0 && data[0].typo?.suggestion && (
         <div className="state-msg typo-msg">
           <h2>
-            &quot;{data[0].word}&quot; looks like a typo
+            {t('word.typoTitle', { word: data[0].word })}
           </h2>
           {data[0].typo.explanation && <p className="typo-explanation">{data[0].typo.explanation}</p>}
           <p>
-            Did you mean{' '}
+            {t('word.typoDidYouMean')}{' '}
             <a
               className="typo-suggestion"
               href={`/word/${encodeURIComponent(data[0].typo.suggestion.toLowerCase())}${

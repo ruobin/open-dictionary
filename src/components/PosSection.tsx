@@ -1,5 +1,6 @@
 import type { Meaning } from '../api/dictionary'
 import MoreExamplesButton from './MoreExamplesButton'
+import { useI18n } from '../i18n/I18nContext'
 
 export default function PosSection({
   meaning,
@@ -13,6 +14,7 @@ export default function PosSection({
   targetLang: string
 }) {
   const { partOfSpeech, definitions = [], synonyms = [] } = meaning
+  const { t } = useI18n()
 
   return (
     <section className="pos-section">
@@ -60,7 +62,7 @@ export default function PosSection({
       </ol>
       {synonyms.length > 0 && (
         <p className="synonyms">
-          <span className="synonyms-label">Synonyms:</span>{' '}
+          <span className="synonyms-label">{t('word.synonyms')}</span>{' '}
           {synonyms.slice(0, 8).join(', ')}
         </p>
       )}

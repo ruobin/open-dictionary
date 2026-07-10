@@ -1,14 +1,49 @@
+/* Theme strategy: light is the warm/yellowish default on :root. Dark is
+   applied via [data-theme="dark"], or automatically when the OS prefers dark
+   AND the user hasn't explicitly chosen light ([data-theme="light"]). This
+   gives a no-FOUC system default without any inline boot script (the app's
+   CSP forbids inline scripts). */
 :root {
   --red: #b81b21;
   --red-dark: #8c1418;
-  --ink: #111;
-  --ink-soft: #444;
-  --muted: #777;
-  --line: #e6e6e6;
-  --bg: #fff;
-  --bg-soft: #f7f7f5;
+  --ink: #2a2620;
+  --ink-soft: #5c5448;
+  --muted: #8a8170;
+  --line: #e6dcc6;
+  --bg: #fbf8f0;
+  --bg-soft: #f4ecdb;
+  --on-accent: #fbf8f0;
   --serif: 'Georgia', 'Cambria', 'Times New Roman', serif;
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --red: #e0625f;
+    --red-dark: #b81b21;
+    --ink: #ecebe7;
+    --ink-soft: #b8b5ad;
+    --muted: #847f76;
+    --line: #31333c;
+    --bg: #17181c;
+    --bg-soft: #21232a;
+    --on-accent: #17181c;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --red: #e0625f;
+  --red-dark: #b81b21;
+  --ink: #ecebe7;
+  --ink-soft: #b8b5ad;
+  --muted: #847f76;
+  --line: #31333c;
+  --bg: #17181c;
+  --bg-soft: #21232a;
+  --on-accent: #17181c;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -21,7 +56,29 @@ html, body {
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color .25s ease, color .25s ease;
 }
+
+::selection { background: color-mix(in srgb, var(--red) 22%, transparent); }
+
+:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 a { color: var(--red); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -38,6 +95,9 @@ button { font-family: inherit; cursor: pointer; }
   padding: 14px 32px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -64,6 +124,35 @@ button { font-family: inherit; cursor: pointer; }
 .header-nav-link { color: var(--ink-soft); font-size: 14px; font-weight: 600; }
 .header-nav-link:hover { color: var(--red); }
 
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  transition: border-color .15s, color .15s, background .15s;
+}
+.icon-btn:hover { border-color: var(--ink-soft); color: var(--ink); }
+.icon-btn svg { display: block; }
+
+.lang-select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 14px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.lang-select:hover { border-color: var(--ink-soft); color: var(--ink); }
+.lang-select:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+.lang-select option { color: #111; }
+
 .app-main {
   flex: 1;
   display: grid;
@@ -88,7 +177,7 @@ button { font-family: inherit; cursor: pointer; }
   font-weight: 600;
   transition: background .15s, border-color .15s;
 }
-.btn-primary { background: var(--red); color: white; }
+.btn-primary { background: var(--red); color: var(--on-accent); }
 .btn-primary:hover { background: var(--red-dark); }
 .btn-ghost { background: transparent; color: var(--ink-soft); border-color: var(--line); }
 .btn-ghost:hover { border-color: var(--ink-soft); }
@@ -155,6 +244,12 @@ button { font-family: inherit; cursor: pointer; }
   border: 2px solid var(--ink);
   border-radius: 8px;
   overflow: hidden;
+  transition: border-color .2s ease, box-shadow .2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.search-bar:focus-within {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
 }
 .search-bar input {
   flex: 1;
@@ -167,7 +262,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .search-bar button {
   background: var(--ink);
-  color: white;
+  color: var(--bg);
   border: 0;
   padding: 0 18px;
   display: flex;
@@ -185,7 +280,7 @@ button { font-family: inherit; cursor: pointer; }
   margin: 0;
   padding: 6px;
   list-style: none;
-  background: #fff;
+  background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
@@ -228,7 +323,7 @@ button { font-family: inherit; cursor: pointer; }
   border-radius: 6px;
   padding: 6px 8px;
   font-size: 14px;
-  background: #fff;
+  background: var(--bg);
   color: var(--ink);
   cursor: pointer;
 }
@@ -409,7 +504,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .more-examples-form button {
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
   border: 0;
   border-radius: 6px;
   padding: 6px 12px;
@@ -635,7 +730,7 @@ button { font-family: inherit; cursor: pointer; }
   font-size: 13px;
   font-weight: 600;
 }
-.browse-letters a:hover { background: var(--red); color: #fff; }
+.browse-letters a:hover { background: var(--red); color: var(--on-accent); }
 .browse-word-list {
   list-style: none;
   margin: 0 0 24px;
@@ -677,4 +772,33 @@ button { font-family: inherit; cursor: pointer; }
   .home-title { font-size: 36px; }
   .word-header { flex-direction: column; }
   .word-actions { align-items: flex-start; }
+}
+
+/* --- Refinements: elegant, restrained polish --- */
+.brand-mark { transition: background .15s ease; letter-spacing: .01em; }
+.brand:hover .brand-mark { background: var(--red-dark); }
+
+.headword, .home-title, .page-title { text-wrap: balance; }
+
+.chip {
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .12s ease;
+}
+.chip:hover { background: var(--bg); transform: translateY(-1px); }
+
+.btn-primary { box-shadow: 0 1px 2px color-mix(in srgb, var(--red) 35%, transparent); }
+
+.word-of-day {
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-soft) 70%, transparent);
+}
+.word-of-day-label { margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
