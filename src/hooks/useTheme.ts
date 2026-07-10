@@ -61,10 +61,15 @@ export function useTheme() {
     }
   }, [choice])
 
-  // Cycle light -> dark -> system, GitHub-style.
+  // Cycle explicit themes only — skip system when it would be a visual no-op.
+  // From system, go straight to the opposite visual state. From explicit
+  // light/dark, toggle directly (never transition through system silently).
   const cycle = useCallback(() => {
-    setChoice((c) => (c === 'light' ? 'dark' : c === 'dark' ? 'system' : 'light'))
-  }, [])
+    setChoice((c) => {
+      if (c === 'system') return resolved === 'dark' ? 'light' : 'dark'
+      return c === 'light' ? 'dark' : 'light'
+    })
+  }, [resolved])
 
   return { choice, resolved, setChoice, cycle }
 }
