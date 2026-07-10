@@ -116,14 +116,14 @@ module tick.)
 
 | Token         | Light (warm) | Dark       |
 |---------------|--------------|------------|
-| `--bg`        | `#fbf8f0`    | `#17181c`  |
-| `--bg-soft`   | `#f4ecdb`    | `#21232a`  |
+| `--bg`        | `#fbf8f0`    | `#1e2432`  |
+| `--bg-soft`   | `#f4ecdb`    | `#262c3b`  |
 | `--ink`       | `#2a2620`    | `#ecebe7`  |
 | `--ink-soft`  | `#5c5448`    | `#b8b5ad`  |
-| `--muted`     | `#8a8170`    | `#847f76`  |
-| `--line`      | `#e6dcc6`    | `#31333c`  |
+| `--muted`     | `#8a8170`    | `#8891a0`  |
+| `--line`      | `#e6dcc6`    | `#343b4a`  |
 | `--red`       | `#b81b21`    | `#e0625f` (brighter for contrast) |
-| `--on-accent` | `#fbf8f0`    | `#17181c`  |
+| `--on-accent` | `#fbf8f0`    | `#1e2432`  |
 
 `--on-accent` is the text color on red/ink accent surfaces (badges, primary
 buttons) and flips with the theme for correct contrast.

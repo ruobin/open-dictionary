@@ -24,11 +24,11 @@
     --red-dark: #b81b21;
     --ink: #ecebe7;
     --ink-soft: #b8b5ad;
-    --muted: #847f76;
-    --line: #31333c;
-    --bg: #17181c;
-    --bg-soft: #21232a;
-    --on-accent: #17181c;
+    --muted: #8891a0;
+    --line: #343b4a;
+    --bg: #1e2432;
+    --bg-soft: #262c3b;
+    --on-accent: #1e2432;
     color-scheme: dark;
   }
 }
@@ -38,11 +38,11 @@
   --red-dark: #b81b21;
   --ink: #ecebe7;
   --ink-soft: #b8b5ad;
-  --muted: #847f76;
-  --line: #31333c;
-  --bg: #17181c;
-  --bg-soft: #21232a;
-  --on-accent: #17181c;
+  --muted: #8891a0;
+  --line: #343b4a;
+  --bg: #1e2432;
+  --bg-soft: #262c3b;
+  --on-accent: #1e2432;
   color-scheme: dark;
 }
 
