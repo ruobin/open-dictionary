@@ -206,6 +206,12 @@ button { font-family: inherit; cursor: pointer; }
   font-size: 18px;
   margin: 8px 0 0;
 }
+.translation {
+  color: var(--red);
+  font-weight: 600;
+  font-size: 20px;
+  margin: 8px 0 0;
+}
 .word-actions {
   display: flex;
   flex-direction: column;
@@ -285,6 +291,27 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--ink-soft);
 }
 .synonyms-label { font-weight: 600; color: var(--ink); }
+
+.more-examples { margin-top: 8px; }
+.more-examples-label {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--ink-soft);
+  margin: 0 0 10px;
+}
+.more-examples-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.more-examples-list li {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.more-examples-list li:first-child { border-top: 0; }
 
 .word-footer {
   margin-top: 24px;

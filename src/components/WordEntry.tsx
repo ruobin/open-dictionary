@@ -41,6 +41,7 @@ export default function WordEntry({ entry, isFavorite, onToggleFavorite }: WordE
         <div>
           <h1 className="headword">{entry.word}</h1>
           {phoneticText && <p className="phonetic">{phoneticText}</p>}
+          {entry.translation && <p className="translation">{entry.translation}</p>}
         </div>
         <div className="word-actions">
           <div className="audio-row">
@@ -67,6 +68,17 @@ export default function WordEntry({ entry, isFavorite, onToggleFavorite }: WordE
           <PosSection key={i} meaning={m} />
         ))}
       </div>
+
+      {entry.examples && entry.examples.length > 0 && (
+        <section className="more-examples">
+          <h3 className="more-examples-label">More examples</h3>
+          <ul className="more-examples-list">
+            {entry.examples.map((ex, i) => (
+              <li key={i}>&quot;{ex}&quot;</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {entry.sourceUrls && entry.sourceUrls.length > 0 && (
         <footer className="word-footer">

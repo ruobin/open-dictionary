@@ -37,6 +37,10 @@ export interface DictionaryEntry {
   origin?: string
   meanings?: Meaning[]
   sourceUrls?: string[]
+  /** Best short translation into targetLang; only present when sourceLang !== targetLang. */
+  translation?: string
+  /** Extra usage examples beyond the one per-definition example. */
+  examples?: string[]
   /** Present only when the LLM judged the input to be an obvious typo. */
   typo?: TypoSuggestion
 }

@@ -15,13 +15,13 @@ The LLM already returns `translation` and `examples`, we pay for them and cache 
 but the UI never renders them (see the NOTE in `server/translate.ts` `adaptLlm()` — "no slot in the
 current dictionary UI").
 
-- [ ] Extend the `DictionaryEntry` shape (`server/translate.ts` + `src/api/dictionary.ts`) with
+- [x] Extend the `DictionaryEntry` shape (`server/translate.ts` + `src/api/dictionary.ts`) with
       `translation?: string` and `examples?: string[]`.
-- [ ] Map `content.translation` and `content.examples` through `adaptLlm()` instead of dropping them.
-- [ ] Render them in `src/components/WordEntry.tsx`:
+- [x] Map `content.translation` and `content.examples` through `adaptLlm()` instead of dropping them.
+- [x] Render them in `src/components/WordEntry.tsx`:
   - Translation shown prominently under the headword when `sourceLang !== targetLang`.
   - "More examples" section under the meanings.
-- [ ] Note: already-cached entries (cached *before* this change) won't have these fields — handled
+- [x] Note: already-cached entries (cached *before* this change) won't have these fields — handled
       naturally by the cache-versioning task below.
 
 **Effort:** days. **Why first:** zero new cost, immediate visible value for learners.
@@ -34,13 +34,13 @@ The Mongo cache key is `(word, sourceLang, targetLang)` only — the design-doc 
 `provider` was dropped from the key. Consequence: any prompt/schema/model improvement will keep
 serving year-old frozen entries and we can never compare quality.
 
-- [ ] Add a `promptVersion` (or restore `provider:model`) component to the cache key in
-      `server/cache/translationCache.ts`.
-- [ ] Bump it whenever the prompt in `server/providers/llm/openaiCompat.ts` (`buildMessages`) or the
+- [x] Add a `promptVersion` (or restore `provider:model`) component to the cache key in
+      `server/cache/translationCache.ts`. (Implemented as `CACHE_VERSION` in `server/translate.ts`.)
+- [x] Bump it whenever the prompt in `server/providers/llm/openaiCompat.ts` (`buildMessages`) or the
       response schema changes.
-- [ ] Document the invalidation story in `docs/design-translation-cache.md` (replaces the manual
+- [x] Document the invalidation story in `docs/design-translation-cache.md` (replaces the manual
       `deleteMany` escape hatch for prompt changes).
-- [ ] Decide policy for old-version entries: leave to TTL-expire (recommended, cheap) vs eager purge.
+- [x] Decide policy for old-version entries: leave to TTL-expire (recommended, cheap) vs eager purge.
 
 **Effort:** small. **Why P0:** without it, every prompt improvement below is invisible for up to a year.
 
@@ -176,7 +176,7 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
 - [ ] **Streaming or optimistic UI for cache misses.** Worst case today is a 15 s spinner
       (`LLM_REQUEST_TIMEOUT_MS`). Either stream the LLM entry in progressively, or immediately show
       the dictionary-fallback result and swap in the LLM entry when ready.
-- [ ] **Stampede protection.** Design doc defers it, but with SEO traffic a popular uncached word
+- [x] **Stampede protection.** Design doc defers it, but with SEO traffic a popular uncached word
       fans out into N simultaneous LLM calls. In-flight `Map<key, Promise>` dedup in
       `translate()` — ~15 lines.
 - [ ] **Metrics** per design doc §12: cache hit/miss by tier, LLM latency/error by vendor, fallback

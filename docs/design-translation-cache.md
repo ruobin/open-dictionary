@@ -202,13 +202,23 @@ Consequences:
 - **Only successful results are cached** (never errors/transient failures) — mirrors the current cache that writes only after a successful `res.json()` (`dictionary.ts:61`).
 - **TTL via Mongo TTL index** (lazy background deletion ~60s granularity); the app only reads/writes.
 - **Stale-while-revalidate:** default OFF. When *both* tiers fail, a flag `CACHE_SERVE_STALE_ON_ERROR` may serve a just-expired doc from either slot. Off initially for predictable semantics.
-- **Stampede:** out of scope for v1 (duplicate provider calls on cold popular keys). Add an in-flight `Map<key, Promise>` dedup later if needed.
-- **LLM non-determinism:** an LLM is non-deterministic across calls; caching **freezes** the first response for the TTL. With a **1-year TTL** this is a strong freeze — acceptable for a reference dictionary (consistency is a feature), and *controllable* because bumping `LLM_VENDOR`/model refreshes the cache (§5).
+- **Stampede:** implemented — see Appendix (in-flight `Map<key, Promise>` dedup in `server/translate.ts`).
+- **LLM non-determinism:** an LLM is non-deterministic across calls; caching **freezes** the first response for the TTL. With a **1-year TTL** this is a strong freeze — acceptable for a reference dictionary (consistency is a feature), and *controllable* because bumping `LLM_VENDOR`/model refreshes the cache (§5), or bumping `CACHE_VERSION` (§7.1) refreshes it regardless of vendor.
 
 **Why a 1-year TTL**
 - Dictionary/translation content is essentially stable; longer TTL = fewer provider calls = lower cost and latency.
 - 1 year aligns with "cache once, serve forever-ish" for a low-churn reference dataset.
-- The downside (stale answers if the world changes) is mitigated by (a) vendor/model keying — bumping the model invalidates the whole LLM tier naturally, and (b) a manual invalidation escape hatch (`db.translations.deleteMany({ "key.provider": /^llm:/ })`) documented for operators.
+- The downside (stale answers if the world changes) is mitigated by (a) vendor/model keying — bumping the model invalidates the whole LLM tier naturally, and (b) `CACHE_VERSION` (§7.1) for prompt/schema changes that aren't a vendor/model swap.
+
+### 7.1 Cache-key versioning (`CACHE_VERSION`)
+
+**Problem:** the implemented cache key is `(word, sourceLang, targetLang)` only (see Appendix — `provider` was dropped from the key). With a 1-year TTL, any change to the LLM prompt (`buildMessages()`), response parsing (`parseContent()`), or the adapted output shape (`adaptLlm()`) would keep serving pre-change entries from Mongo for up to a year, and there would be no way to compare answer quality before/after the change.
+
+**Fix:** `server/translate.ts` exports a `CACHE_VERSION` string constant that is now part of the Mongo document key (`server/cache/translationCache.ts` hashes `sourceLang|targetLang|word|version` into `_id`; `server/db.ts`'s unique index is `(word, sourceLang, targetLang, version)`, replacing the old `translations_key` index).
+
+- **When to bump:** whenever `buildMessages()`/`parseContent()` in `server/providers/llm/openaiCompat.ts` changes in a way that would alter the result for the same input, or `adaptLlm()`'s output shape changes (e.g. the `translation`/`examples` fields added in to-do §1 — pre-bump cache entries lack them entirely, since the cache stores `adaptLlm()`'s *output*, not the raw LLM response).
+- **Old-version entries:** left to **TTL-expire** (recommended) rather than eagerly purged — cheap, requires no ops step, and old entries are simply unreachable (a different `_id`) so they can never be served once the version bumps. This replaces the manual `db.translations.deleteMany(...)` escape hatch as the invalidation mechanism for prompt/schema changes; that escape hatch remains available for emergency purges but shouldn't be routinely needed.
+- **Scope:** one global version, not per-tier — bumping it also cold-misses the dictionary-fallback slot for the same word even though MW parsing didn't change. Accepted: the fallback tier is rarely hit (LLM-primary) and one extra MW call per affected word is cheap.
 
 ---
 
@@ -345,6 +355,7 @@ The code as landed differs from the above design in a few places:
 | History stored alongside favorites in Auth0/localStorage (§1) | History left in Auth0/localStorage, now carries source/target language (FavoriteKey shape: `{word, sourceLang, targetLang}`). Legacy bare strings are coerced (en→en default). | Only favorites were requested for MongoDB migration; history entries were upgraded to the same shape for consistency. |
 | Per-provider tiered cache with stale-while-revalidate (§7) | Single-slot cache with read-through; no stale-while-revalidate (yet) | Kept the implementation tractable; add when provider SLOs are known. |
 | Cache TTL = 1 year (§6) | Same — 1-year TTL index | Verified in `server/db.ts` ensureIndexes. |
+| Stampede protection deferred (§7, §11) | Implemented: an in-flight `Map<key, Promise>` in `server/translate.ts` (`translate()`/`doTranslate()`) dedups concurrent calls for the same `(text, sourceLang, targetLang)` so a popular uncached word triggers one LLM/dictionary call, not N. | Cheap (~15 lines), no new infra; per-process only (doesn't dedup across multiple server instances, which is an acceptable gap at current scale). |
 | Rate limits (§10) | Configurable via env: `TRANSLATE_RATE_LIMIT_RPM` (default 20), `FAVORITES_RATE_LIMIT_RPM` (120), `USERDATA_RATE_LIMIT_RPM` (60). | Makes per‑deployment tuning trivial. |
 | DeepSeek added as default LLM provider | — | `LLM_VENDOR` defaults to `deepseek` (model `deepseek-v4-flash`, base `https://api.deepseek.com`); OpenRouter and GLM are alternatives. Three OpenAI‑compatible providers share `openaiCompat.ts`. |
 | Free Dictionary API replaced by Merriam-Webster Collegiate (§4.2, §6) | `server/providers/dictionary.ts` now calls `https://www.dictionaryapi.com/api/v3/references/collegiate/json/{word}?key=…` (English-only). Definitions are parsed from MW's `shortdef` (mapped to a single meaning with `partOfSpeech`). Audio URLs are constructed from MW's `sound.audio` token using `https://media.merriam-webster.com/audio/prons/en/us/mp3/{subdir}/{audio}.mp3` where `{subdir}` follows MW's rule: `bix`/`gg`/`number`/first-letter of the filename. | The 30-day browser localStorage L1 still uses the Free Dictionary cache key prefix `dict:v1:` (stale naming, harmless). |

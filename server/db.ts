@@ -20,11 +20,18 @@ export function getMongoDb(): Db | null {
 }
 
 async function ensureIndexes(db: Db): Promise<void> {
-  // Dict cache: unique per (word, sourceLang, targetLang) + TTL on fetchedAt.
+  // Dict cache: unique per (word, sourceLang, targetLang, version) + TTL on fetchedAt.
+  // `version` was added to the key (to-do §2) so prompt/schema bumps get a fresh
+  // cache slot instead of serving a frozen pre-bump entry for the full TTL.
   const translations = db.collection('translations')
+  try {
+    await translations.dropIndex('translations_key')
+  } catch (err) {
+    if ((err as { codeName?: string })?.codeName !== 'IndexNotFound') throw err
+  }
   await translations.createIndex(
-    { word: 1, sourceLang: 1, targetLang: 1 },
-    { unique: true, name: 'translations_key' }
+    { word: 1, sourceLang: 1, targetLang: 1, version: 1 },
+    { unique: true, name: 'translations_key_v2' }
   )
   await translations.createIndex(
     { fetchedAt: 1 },

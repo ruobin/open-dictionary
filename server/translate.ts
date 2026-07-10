@@ -36,6 +36,10 @@ export interface DictionaryEntry {
   phonetics: Phonetic[]
   meanings: Meaning[]
   sourceUrls?: string[]
+  /** Best short translation into targetLang; only present when sourceLang !== targetLang. */
+  translation?: string
+  /** Extra usage examples beyond the one per-definition example. */
+  examples?: string[]
   /** Present only when the LLM judged the input to be an obvious typo. */
   typo?: TypoSuggestion
 }
@@ -60,6 +64,17 @@ const MAX_TEXT_LENGTH = 256
 const LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code))
 
 const LLM_DEBUG = /^(1|true|yes|on)$/i.test(process.env.LLM_DEBUG ?? '')
+
+/**
+ * Cache-key version component (to-do §2). Bump whenever `adaptLlm()`'s output
+ * shape changes, or the LLM prompt/schema in
+ * `server/providers/llm/openaiCompat.ts` (`buildMessages`/`parseContent`)
+ * changes in a way that would produce a different cached result for the same
+ * input — otherwise the change is invisible for up to the 1-year cache TTL.
+ * Old-version cache docs are left to TTL-expire rather than eagerly purged
+ * (see docs/design-translation-cache.md §2).
+ */
+export const CACHE_VERSION = 'v2'
 
 export const translateLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -108,15 +123,16 @@ export function adaptLlm(content: LlmTranslationContent): DictionaryEntry[] {
     meanings,
   }
   if (content.phonetic) entry.phonetic = content.phonetic
+  if (content.translation) entry.translation = content.translation
+  if (Array.isArray(content.examples) && content.examples.length > 0) {
+    entry.examples = content.examples
+  }
   if (content.typo) {
     entry.typo = content.typo.explanation
       ? { suggestion: content.typo.suggestion, explanation: content.typo.explanation }
       : { suggestion: content.typo.suggestion }
   }
 
-  // NOTE: content.translation and content.examples are produced by the LLM but
-  // have no slot in the current dictionary UI; they'll be surfaced when the UI
-  // is extended for translations (separate task).
   return [entry]
 }
 
@@ -128,7 +144,7 @@ async function cacheSetSafe(
 ): Promise<void> {
   if (!cache) return
   try {
-    await cache.set(req.text, req.sourceLang, req.targetLang, entries, source)
+    await cache.set(req.text, req.sourceLang, req.targetLang, entries, source, CACHE_VERSION)
   } catch (err) {
     console.warn('[cache] write failed (non-fatal):', err)
   }
@@ -184,11 +200,40 @@ async function mergeAudioFromDictionary(
 }
 
 /**
+ * In-flight request dedup (to-do §9): concurrent lookups for the same
+ * (text, sourceLang, targetLang) share one underlying `doTranslate()` call
+ * instead of each fanning out to the cache/LLM/dictionary — protects a
+ * popular uncached word from a stampede of simultaneous LLM calls.
+ */
+const inFlight = new Map<string, Promise<TranslateOutcome>>()
+
+function inFlightKey(req: TranslateRequest): string {
+  return `${req.sourceLang}|${req.targetLang}|${req.text}`
+}
+
+/**
  * Read-through, tiered lookup: Mongo cache → LLM (primary) → dictionary
  * (fallback only on LLM failure/absence). Results are cached keyed by
- * (word, sourceLang, targetLang) (design doc §5, §6).
+ * (word, sourceLang, targetLang, version) (design doc §5, §6; to-do §2).
  */
-export async function translate(
+export function translate(
+  req: TranslateRequest,
+  llm: LlmProvider | null,
+  dictionary: DictionaryProvider,
+  cache?: TranslationCache | null
+): Promise<TranslateOutcome> {
+  const key = inFlightKey(req)
+  const existing = inFlight.get(key)
+  if (existing) return existing
+
+  const promise = doTranslate(req, llm, dictionary, cache).finally(() => {
+    inFlight.delete(key)
+  })
+  inFlight.set(key, promise)
+  return promise
+}
+
+async function doTranslate(
   req: TranslateRequest,
   llm: LlmProvider | null,
   dictionary: DictionaryProvider,
@@ -197,7 +242,7 @@ export async function translate(
   // Tier 0 — cache
   if (cache) {
     try {
-      const hit = await cache.get(req.text, req.sourceLang, req.targetLang)
+      const hit = await cache.get(req.text, req.sourceLang, req.targetLang, CACHE_VERSION)
       if (hit) return { entries: hit.entries, tier: 'cache' }
     } catch (err) {
       console.warn('[cache] read failed (continuing to providers):', err)
