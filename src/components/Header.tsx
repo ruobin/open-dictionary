@@ -8,7 +8,10 @@ export default function Header() {
         <span className="brand-mark">open</span>
         <span className="brand-name">·dictionary</span>
       </Link>
-      <AuthButton />
+      <nav className="header-nav">
+        <Link to="/about" className="header-nav-link">About</Link>
+        <AuthButton />
+      </nav>
     </header>
   )
 }

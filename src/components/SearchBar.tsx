@@ -1,12 +1,14 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   DEFAULT_SOURCE_LANG,
   DEFAULT_TARGET_LANG,
   LANGUAGES,
 } from '../../shared/languages'
+import { fetchSuggestions } from '../api/suggest'
 
 const LAST_LANGS_KEY = 'lang:last'
+const SUGGEST_DEBOUNCE_MS = 150
 
 interface LastLangs {
   sourceLang: string
@@ -68,20 +70,51 @@ export default function SearchBar({
   const [targetLang, setTargetLang] = useState(() =>
     initialTarget(initialTargetLang, DEFAULT_TARGET_LANG)
   )
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
   const navigate = useNavigate()
+  // Only show suggestions in response to the user actually typing — not on
+  // mount/route-navigation, which sets `value` programmatically via the
+  // effect below and would otherwise pop the dropdown open on page load.
+  const userTypedRef = useRef(false)
 
   useEffect(() => {
     setValue(initialValue)
     if (initialSourceLang !== undefined) setSourceLang(initialSourceLang)
     if (initialTargetLang !== undefined) setTargetLang(initialTargetLang)
+    userTypedRef.current = false
   }, [initialValue, initialSourceLang, initialTargetLang])
 
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    const w = value.trim()
-    if (!w) return
+  useEffect(() => {
+    if (!userTypedRef.current) return
+    const q = value.trim()
+    if (!q) {
+      setSuggestions([])
+      setOpen(false)
+      setActiveIndex(-1)
+      return
+    }
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      fetchSuggestions(q, sourceLang, controller.signal).then((words) => {
+        setSuggestions(words)
+        setOpen(words.length > 0)
+        setActiveIndex(-1)
+      })
+    }, SUGGEST_DEBOUNCE_MS)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [value, sourceLang])
 
+  function goToWord(word: string) {
+    const w = word.trim()
+    if (!w) return
     writeLastLangs(sourceLang, targetLang)
+    setOpen(false)
+    setActiveIndex(-1)
 
     const qs = new URLSearchParams()
     if (sourceLang !== DEFAULT_SOURCE_LANG) qs.set('from', sourceLang)
@@ -89,6 +122,29 @@ export default function SearchBar({
     const query = qs.toString()
 
     navigate(`/word/${encodeURIComponent(w.toLowerCase())}${query ? `?${query}` : ''}`)
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    if (activeIndex >= 0 && suggestions[activeIndex]) {
+      goToWord(suggestions[activeIndex])
+      return
+    }
+    goToWord(value)
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (!open || suggestions.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex((i) => (i + 1) % suggestions.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex((i) => (i <= 0 ? suggestions.length - 1 : i - 1))
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+      setActiveIndex(-1)
+    }
   }
 
   return (
@@ -125,20 +181,53 @@ export default function SearchBar({
         </label>
       </div>
 
-      <form className="search-bar" onSubmit={submit}>
-        <input
-          type="text"
-          placeholder="Search a word"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          autoFocus
-        />
-        <button type="submit" aria-label="Search">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        </button>
+      <form className="search-bar-wrap" onSubmit={submit}>
+        <div className="search-bar">
+          <input
+            type="text"
+            placeholder="Search a word"
+            value={value}
+            onChange={(e) => {
+              userTypedRef.current = true
+              setValue(e.target.value)
+            }}
+            onKeyDown={onKeyDown}
+            onFocus={() => suggestions.length > 0 && setOpen(true)}
+            onBlur={() => setOpen(false)}
+            autoFocus
+            role="combobox"
+            aria-expanded={open}
+            aria-controls="search-suggest-list"
+            aria-autocomplete="list"
+            autoComplete="off"
+          />
+          <button type="submit" aria-label="Search">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
+        </div>
+
+        {open && suggestions.length > 0 && (
+          <ul className="suggest-list" id="search-suggest-list" role="listbox">
+            {suggestions.map((word, i) => (
+              <li key={word} role="option" aria-selected={i === activeIndex}>
+                <button
+                  type="button"
+                  className={`suggest-item ${i === activeIndex ? 'is-active' : ''}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    goToWord(word)
+                  }}
+                  onMouseEnter={() => setActiveIndex(i)}
+                >
+                  {word}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </form>
     </div>
   )

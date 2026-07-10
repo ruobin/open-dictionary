@@ -12,14 +12,21 @@ function WordList({
   title,
   items,
   emptyText,
+  seeAllTo,
 }: {
   title: string
   items: SidebarItem[]
   emptyText: string
+  seeAllTo?: string
 }) {
   return (
     <section className="sidebar-section">
-      <h4 className="sidebar-title">{title}</h4>
+      <h4 className="sidebar-title">
+        {title}
+        {seeAllTo && items.length > 0 && (
+          <Link className="sidebar-see-all" to={seeAllTo}>See all</Link>
+        )}
+      </h4>
       {items.length === 0 ? (
         <p className="sidebar-empty">{emptyText}</p>
       ) : (
@@ -74,6 +81,7 @@ export default function Sidebar({
         title="Recent"
         items={historyItems(history.slice(0, 15))}
         emptyText="Search a word to get started."
+        seeAllTo="/history"
       />
     </aside>
   )

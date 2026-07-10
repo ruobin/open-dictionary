@@ -37,6 +37,12 @@ async function ensureIndexes(db: Db): Promise<void> {
     { fetchedAt: 1 },
     { expireAfterSeconds: TRANSLATION_TTL_SECONDS, name: 'translations_ttl' }
   )
+  // Autocomplete (to-do §6): prefix scan over cached words for a given source
+  // language, e.g. { sourceLang: 'en', word: /^ser/ }.
+  await translations.createIndex(
+    { sourceLang: 1, word: 1 },
+    { name: 'translations_suggest' }
+  )
 
   // Favorites: one per (userKey, word, sourceLang, targetLang); list by userKey.
   const favorites = db.collection('favorites')
@@ -45,4 +51,12 @@ async function ensureIndexes(db: Db): Promise<void> {
     { unique: true, name: 'favorites_key' }
   )
   await favorites.createIndex({ userKey: 1 }, { name: 'favorites_user' })
+
+  // Reports ("Report this entry", to-do §4): reviewed by word, newest first.
+  const reports = db.collection('reports')
+  await reports.createIndex(
+    { word: 1, sourceLang: 1, targetLang: 1 },
+    { name: 'reports_word' }
+  )
+  await reports.createIndex({ createdAt: -1 }, { name: 'reports_recent' })
 }

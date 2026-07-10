@@ -35,3 +35,5 @@ export const MERRIAM_WEBSTER_API_KEY = process.env.MERRIAM_WEBSTER_API_KEY?.trim
 export const TRANSLATE_RATE_LIMIT_RPM = parseInt(process.env.TRANSLATE_RATE_LIMIT_RPM ?? '20', 10) || 20
 export const FAVORITES_RATE_LIMIT_RPM = parseInt(process.env.FAVORITES_RATE_LIMIT_RPM ?? '120', 10) || 120
 export const USERDATA_RATE_LIMIT_RPM = parseInt(process.env.USERDATA_RATE_LIMIT_RPM ?? '60', 10) || 60
+export const SUGGEST_RATE_LIMIT_RPM = parseInt(process.env.SUGGEST_RATE_LIMIT_RPM ?? '60', 10) || 60
+export const REPORT_RATE_LIMIT_RPM = parseInt(process.env.REPORT_RATE_LIMIT_RPM ?? '10', 10) || 10

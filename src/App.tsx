@@ -5,6 +5,8 @@ import { useUserData } from './hooks/useUserData'
 import { useFavorites } from './hooks/useFavorites'
 import Home from './pages/Home'
 import WordPage from './pages/WordPage'
+import HistoryPage from './pages/HistoryPage'
+import AboutPage from './pages/AboutPage'
 
 export default function App() {
   const userData = useUserData()
@@ -21,6 +23,8 @@ export default function App() {
               path="/word/:term"
               element={<WordPage userData={userData} favorites={favorites} />}
             />
+            <Route path="/history" element={<HistoryPage history={userData.history} />} />
+            <Route path="/about" element={<AboutPage />} />
           </Routes>
         </div>
         <Sidebar history={userData.history} favorites={favorites.favorites} />

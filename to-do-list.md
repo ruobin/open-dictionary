@@ -94,9 +94,11 @@ A dictionary's product is *trust*, and each LLM answer is frozen in the cache fo
     model, optionally with a second-model review pass, and seeds the Mongo cache.
   - Live traffic then only hits the fast/cheap model for the long tail.
   - Bonus: kills the cold-start latency problem for the words people actually look up.
-- [ ] **"Report this entry" button** on `WordEntry` → new endpoint (e.g. `POST /api/report`) that
+- [x] **"Report this entry" button** on `WordEntry` → new endpoint (e.g. `POST /api/report`) that
       flags the cache doc for regeneration (set a `flagged: true` field; regeneration job or manual
       review picks it up). This is the only feedback loop into a corpus too large to review manually.
+      (Implemented as its own `reports` collection — word/langs/cache-version/reason/timestamp — rather
+      than a single overwritable flag on the cache doc, so every report is auditable.)
 - [ ] **Lightweight eval harness.** A fixed set of ~100 tricky words (polysemes, false friends,
       slang, inflected forms) with expected properties; run against a prompt/model change before
       bumping `promptVersion`. Wire into CI as a manual job (LLM cost).
@@ -128,12 +130,15 @@ an empty `index.html` to crawlers — we cannot rank as-is.
 
 ## 6. Search UX — **P1**
 
-- [ ] **Autocomplete / typeahead.** Cambridge shows instant suggestions; we only catch typos *after*
+- [x] **Autocomplete / typeahead.** Cambridge shows instant suggestions; we only catch typos *after*
       a full LLM round-trip. Build a prefix index over (a) cached words in Mongo and (b) a seeded
       frequency wordlist. New endpoint `GET /api/suggest?q=…&lang=…` (rate-limited, no LLM, no auth).
+      (Prefix index over cached words only — part (b), a seeded frequency wordlist, doesn't exist yet;
+      see §4 pre-generated corpus. Coverage is limited to words someone has already looked up.)
 - [ ] **Client-side fuzzy match** against the suggestion list to catch typos before spending an LLM
-      call (keep the LLM "Did you mean?" as the fallback for what the wordlist misses).
-- [ ] **Keyboard navigation** for suggestions (↑/↓/Enter/Escape) in `SearchBar.tsx`.
+      call (keep the LLM "Did you mean?" as the fallback for what the wordlist misses). Deferred:
+      no wordlist to fuzzy-match against yet (depends on the item above).
+- [x] **Keyboard navigation** for suggestions (↑/↓/Enter/Escape) in `SearchBar.tsx`.
 
 ---
 
@@ -163,7 +168,7 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
       (extend the favorites collection or a new `reviews` collection).
 - [ ] **Word of the day** — trivially generated from the pre-seeded wordlist, cached daily; good
       for return visits and (later) email/push.
-- [ ] **History page** — a real page listing history with re-lookup links (data already exists in
+- [x] **History page** — a real page listing history with re-lookup links (data already exists in
       `useUserData`).
 - [ ] **User level setting (A1–C2)** in profile → used to pick which graded examples to show first
       and to tune "more examples" generation (§3).
@@ -198,7 +203,7 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
       a freemium model fits the existing architecture: free lookups for everyone; paid tier for
       learning features (unlimited regenerated examples, quizzes/SRS, sentence audio). Decide early
       so §8 features are built with the gate in mind.
-- [ ] Add a public "About / how definitions are generated" page — transparency that content is
+- [x] Add a public "About / how definitions are generated" page — transparency that content is
       AI-generated with a report/feedback loop (§4) builds trust and manages expectations.
 
 ---

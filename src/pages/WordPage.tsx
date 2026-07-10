@@ -100,6 +100,8 @@ export default function WordPage({
       {status === 'success' && data && data.length > 0 && !data[0].typo?.suggestion && (
         <WordEntry
           entry={data[0]}
+          sourceLang={sourceLang}
+          targetLang={targetLang}
           isFavorite={favorites.isFavorite(favKey)}
           onToggleFavorite={() => favorites.toggle(favKey)}
         />

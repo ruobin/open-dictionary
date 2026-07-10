@@ -1,5 +1,6 @@
 import AudioButton from './AudioButton'
 import PosSection from './PosSection'
+import ReportButton from './ReportButton'
 import type { DictionaryEntry, Phonetic } from '../api/dictionary'
 
 type PhoneticWithAudio = Phonetic & { audio: string }
@@ -26,11 +27,19 @@ function pickPhoneticText(phonetics: Phonetic[]): string {
 
 interface WordEntryProps {
   entry: DictionaryEntry
+  sourceLang: string
+  targetLang: string
   isFavorite: boolean
   onToggleFavorite: () => void
 }
 
-export default function WordEntry({ entry, isFavorite, onToggleFavorite }: WordEntryProps) {
+export default function WordEntry({
+  entry,
+  sourceLang,
+  targetLang,
+  isFavorite,
+  onToggleFavorite,
+}: WordEntryProps) {
   const phonetics = entry.phonetics ?? []
   const { uk, us, fallback } = pickAudio(phonetics)
   const phoneticText = pickPhoneticText(phonetics)
@@ -88,6 +97,10 @@ export default function WordEntry({ entry, isFavorite, onToggleFavorite }: WordE
           ))}
         </footer>
       )}
+
+      <div className="word-report-row">
+        <ReportButton word={entry.word} sourceLang={sourceLang} targetLang={targetLang} />
+      </div>
     </article>
   )
 }
