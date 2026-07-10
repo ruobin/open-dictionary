@@ -1,7 +1,11 @@
 import { Link } from 'react-router-dom'
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import type { FavoriteKey } from '../../shared/favorites'
 
 export default function HistoryPage({ history }: { history: FavoriteKey[] }) {
+  // Per-browser and not useful to search engines — keep it out of the index.
+  useDocumentMeta({ title: 'History — Open Dictionary', noindex: true })
+
   return (
     <div className="history-page">
       <h1 className="page-title">History</h1>

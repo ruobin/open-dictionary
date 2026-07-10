@@ -1,4 +1,12 @@
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
+
 export default function AboutPage() {
+  useDocumentMeta({
+    title: 'About — Open Dictionary',
+    description: 'How Open Dictionary generates definitions with AI, why there are no ads, and how to report a wrong entry.',
+    canonical: `${window.location.origin}/about`,
+  })
+
   return (
     <div className="about-page">
       <h1 className="page-title">About Open Dictionary</h1>
@@ -33,6 +41,13 @@ export default function AboutPage() {
           definition, translation, or example looks incorrect, use the <strong>Report this
           entry</strong> link at the bottom of any word page — it flags the entry for review. This
           is the main way inaccurate entries get caught in a corpus too large to check by hand.
+        </p>
+      </section>
+
+      <section className="about-section">
+        <h2>Browse</h2>
+        <p>
+          <a href="/browse/a">Browse all words alphabetically</a>.
         </p>
       </section>
     </div>

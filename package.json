@@ -16,6 +16,7 @@
     "server": "tsx watch server/index.ts",
     "start": "tsx server/index.ts",
     "llm:ping": "tsx scripts/llm-ping.ts",
+    "prerender": "tsx scripts/prerender.ts",
     "dev:all": "concurrently -n web,api -c blue,magenta \"npm:dev\" \"npm:server\""
   },
   "dependencies": {

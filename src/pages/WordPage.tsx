@@ -3,6 +3,8 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import SearchBar from '../components/SearchBar'
 import WordEntry from '../components/WordEntry'
 import { useDictionary } from '../hooks/useDictionary'
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
+import { buildWordDescription, buildWordTitle } from '../../shared/seo'
 import type { FavoriteKey } from '../../shared/favorites'
 import type { useUserData } from '../hooks/useUserData'
 import type { useFavorites } from '../hooks/useFavorites'
@@ -22,12 +24,29 @@ export default function WordPage({
   const { status, data, error } = useDictionary(word, sourceLang, targetLang)
 
   const favKey: FavoriteKey = { word, sourceLang, targetLang }
+  const entry = status === 'success' ? data?.[0] : undefined
+  const isTypo = Boolean(entry?.typo?.suggestion)
 
   useEffect(() => {
     if (status === 'success' && word) {
       userData.addToHistory(word, sourceLang, targetLang)
     }
   }, [status, word, sourceLang, targetLang, userData.addToHistory])
+
+  useDocumentMeta(
+    entry && !isTypo
+      ? {
+          title: buildWordTitle(entry.word),
+          description: buildWordDescription(entry.meanings?.[0]?.definitions?.[0]?.definition, entry.word),
+          // en→en canonical only (to-do §5) — translation-pair query variants
+          // all canonicalize back to the plain /word/:term path.
+          canonical: `${window.location.origin}/word/${encodeURIComponent(entry.word)}`,
+        }
+      : {
+          title: word ? `${word} — Open Dictionary` : 'open-dictionary — English Dictionary',
+          noindex: true,
+        }
+  )
 
   return (
     <div className="word-page">

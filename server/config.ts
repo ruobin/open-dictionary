@@ -32,6 +32,10 @@ export const MONGODB_DB = process.env.MONGODB_DB?.trim() || undefined
 export const FREE_DICTIONARY_API_BASE = process.env.FREE_DICTIONARY_API_BASE?.trim() || undefined
 export const DICTIONARY_API_BASE = process.env.DICTIONARY_API_BASE?.trim() || undefined
 export const MERRIAM_WEBSTER_API_KEY = process.env.MERRIAM_WEBSTER_API_KEY?.trim() || undefined
+// Absolute origin the site is deployed at (no trailing slash). Used only by
+// scripts/prerender.ts to build canonical URLs, JSON-LD `url` fields, and the
+// sitemap — not read by the Express server itself.
+export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL?.trim() || 'http://localhost:5173').replace(/\/$/, '')
 export const TRANSLATE_RATE_LIMIT_RPM = parseInt(process.env.TRANSLATE_RATE_LIMIT_RPM ?? '20', 10) || 20
 export const FAVORITES_RATE_LIMIT_RPM = parseInt(process.env.FAVORITES_RATE_LIMIT_RPM ?? '120', 10) || 120
 export const USERDATA_RATE_LIMIT_RPM = parseInt(process.env.USERDATA_RATE_LIMIT_RPM ?? '60', 10) || 60
