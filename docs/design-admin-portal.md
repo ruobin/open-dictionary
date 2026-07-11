@@ -406,7 +406,7 @@ JSON errors in the existing `{ error: "…" }` style.
 | `POST /api/admin/llm/providers` | Create | Validates per §4.1; encrypts key; audits. |
 | `PATCH /api/admin/llm/providers/:id` | Update | `apiKey` absent ⇒ keep (§5.2); bumps `configVersion`; if `:id` is active, hot-reloads. |
 | `DELETE /api/admin/llm/providers/:id` | Delete | **409 `provider_active`** if it is the active provider — switch first. |
-| `POST /api/admin/llm/test` | One-shot connection test | Body: `{ providerId, modelId? }` **or** a full draft `{ vendor, baseUrl?, apiKey, model }` so a key can be validated *before* saving. Runs a single canonical `translate()` (the `llm-ping` logic, "serendipity" en→en) with a 10 s cap; returns `{ ok, ms, errorCode?, providerIdEcho }`; updates `lastTest` when `providerId` given. Synchronous — one call fits in a normal request. |
+| `POST /api/admin/llm/test` | One-shot connection test | Body: `{ providerId, modelId? }` **or** a full draft `{ vendor, baseUrl?, apiKey, model }` so a key can be validated *before* saving. Runs a single canonical `translate()` (the `llm-ping` logic, "serendipity" en→en) capped at `DEFAULT_TIMEOUT_MS` (15 s, aligned with production — see §18); returns `{ ok, ms, errorCode?, providerIdEcho }`; updates `lastTest` when `providerId` given. Synchronous — one call fits in a normal request. |
 | `POST /api/admin/llm/benchmark` | Start a benchmark job | §9.3. Returns `202 { runId }` or **409 `benchmark_in_progress`**. |
 | `GET  /api/admin/llm/benchmark/:runId` | Poll job | `{ status: running\|done\|error, completed, total, partial/summary }`. |
 | `GET  /api/admin/llm/benchmarks?providerId&limit` | Benchmark history | From `llm_benchmarks`, newest first. |
@@ -461,6 +461,15 @@ it only covers the **active** provider. Everything below exists to measure
 - **pre-save validation** in the provider form (draft mode — catches a bad key
   before it is ever stored),
 - the **verify-before-switch** step of `PUT /active`.
+
+The call is capped at `DEFAULT_TIMEOUT_MS` (15 s) via
+`Math.min(cfg.timeoutMs ?? cap, cap)` — a **ceiling, not a floor**: the test
+never waits longer than the cap even when the provider's own per-model
+`timeoutMs` is higher. This keeps the admin UI synchronous/responsive, but
+means a genuinely slow provider can succeed in production (cache-miss lookups
+use the provider's own `timeoutMs` directly, via `providerToLlmConfig`) yet
+still report `errorCode: "timeout"` here. See §18 for the fix history and a
+worked example.
 
 ### 9.3 On-demand benchmark (the main event)
 
@@ -953,3 +962,43 @@ section's exact interface/route/type claims over the source.
   is unreachable — every request 403s — until an operator adds their Auth0
   `sub` to `ADMIN_USER_IDS` in `server/.env` and runs
   `docker compose up -d api` once more.
+
+**Connection-test timeout cap — aligned with production (fixed 2026-07-11, post-Phase-3)**
+- As originally shipped, `POST /llm/test` and the verify path of
+  `PUT /llm/active` hardcoded `TEST_TIMEOUT_MS = 10_000` — stricter than the
+  15 s `DEFAULT_TIMEOUT_MS` production actually uses (`openaiCompat.ts`). A
+  provider whose backend answered in the 10–15 s band therefore *passed in
+  production but failed the admin **Test** button* (and got blocked by
+  verify-on-switch) with a false `errorCode: "timeout"`. Fixed by exporting
+  `DEFAULT_TIMEOUT_MS` from `server/providers/llm/openaiCompat.ts` (re-exported
+  through the `providers/llm` barrel) and setting
+  `TEST_TIMEOUT_MS = DEFAULT_TIMEOUT_MS`, so both endpoints now cap at the same
+  15 s production uses. Commit `e44b1a2`.
+- The cap is applied as `Math.min(cfg.timeoutMs ?? cap, cap)` — a **ceiling,
+  not a floor** (§9.2). Raising a provider's per-model `timeoutMs` above 15 s
+  fixes/speeds real production lookups (they read the model's `timeoutMs`
+  directly via `providerToLlmConfig`) but does **not** raise the Test/verify
+  ceiling — deliberately, so the admin UI stays synchronous. Consequence: a
+  provider genuinely slower than 15 s can pass in production yet still show a
+  Test/verify timeout.
+
+**Operational note — a legitimately slow provider (`grok-4.5` behind a gateway)**
+- Provider `6a5266b994a4e1caf1be1fed` (model `grok-4.5`) points at a
+  self-hosted `new-api` gateway (`baseUrl https://new-api.ai-dictionary.org/v1`)
+  whose channel for this model forwards upstream to a third-party reseller
+  (`packyapi.com`). Real, **successful** completions through that channel were
+  observed at 11–21 s (occasionally longer) — routinely above even the 15 s
+  cap. Its `errorCode: "timeout"` from the Test button is therefore an accurate
+  report of genuine upstream latency, not an app bug or a misconfiguration; the
+  test cap moved the reported `ms` from ~10 000 to ~15 000 in lockstep with the
+  fix above, confirming the fix landed.
+- **Decision:** set this provider's per-model `timeoutMs` to `30000` so
+  production cache-miss lookups to it succeed. This is a data change to the
+  model entry in `llm_providers` — applied via the Providers page, or a scoped
+  `mongosh` update to that model's `timeoutMs` (never touching the encrypted
+  `apiKey`); no code change. Trade-offs accepted: (1) every cache miss routed to
+  this provider carries that multi-second latency, a poor fit for a *primary*
+  dictionary provider; (2) the **Test** button still caps at 15 s (above), so it
+  may keep reporting a timeout for this provider even though production lookups
+  now succeed. Faster alternatives (DeepSeek / OpenRouter / GLM) remain the
+  better default per the same latency observations.
