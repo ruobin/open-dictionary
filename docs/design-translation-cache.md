@@ -277,7 +277,7 @@ Startup validation (extends `server/index.ts` hard-fail idiom): if `CACHE_ENABLE
 
 - **Provider keys move server-side** (LLM + dictionary), never `VITE_`-prefixed. Today's browser-direct model would otherwise expose any key.
 - **Input validation on `:text`:** trim + lowercase + NFC + collapse whitespace, reject if empty or length > 256. Reuses the spirit of `sanitizeWordList` (`server/index.ts`).
-- **Rate limiting:** a dedicated limiter for `/api/translate` (20 req/min by default, configurable via `TRANSLATE_RATE_LIMIT_RPM`) alongside the existing global 60/min (`server/index.ts`). Translate stays **unauthenticated** (public data) but **rate-limited**.
+- **Rate limiting:** a dedicated limiter for `/api/translate` (5 req/min, hard-capped via `LLM_RATE_LIMIT_MAX_RPM` in `server/config.ts`, configurable below the cap via `TRANSLATE_RATE_LIMIT_RPM`) alongside the existing global 60/min (`server/index.ts`). Translate stays **unauthenticated** (public data) but **rate-limited**; the low ceiling bounds worst-case LLM token spend per client.
 - **No injection surface:** Mongo writes use field values (never operator-shaped user keys); the hashed `_id` (§6) neutralizes `.`/`$` in `text`. Do not log `result.content` at info level in prod.
 
 ---
@@ -356,7 +356,7 @@ The code as landed differs from the above design in a few places:
 | Per-provider tiered cache with stale-while-revalidate (§7) | Single-slot cache with read-through; no stale-while-revalidate (yet) | Kept the implementation tractable; add when provider SLOs are known. |
 | Cache TTL = 1 year (§6) | Same — 1-year TTL index | Verified in `server/db.ts` ensureIndexes. |
 | Stampede protection deferred (§7, §11) | Implemented: an in-flight `Map<key, Promise>` in `server/translate.ts` (`translate()`/`doTranslate()`) dedups concurrent calls for the same `(text, sourceLang, targetLang)` so a popular uncached word triggers one LLM/dictionary call, not N. | Cheap (~15 lines), no new infra; per-process only (doesn't dedup across multiple server instances, which is an acceptable gap at current scale). |
-| Rate limits (§10) | Configurable via env: `TRANSLATE_RATE_LIMIT_RPM` (default 20), `FAVORITES_RATE_LIMIT_RPM` (120), `USERDATA_RATE_LIMIT_RPM` (60). | Makes per‑deployment tuning trivial. |
+| Rate limits (§10) | Configurable via env, hard-capped for LLM endpoints: `TRANSLATE_RATE_LIMIT_RPM` and `MORE_EXAMPLES_RATE_LIMIT_RPM` (default 5, ceiling `LLM_RATE_LIMIT_MAX_RPM`=5 in `server/config.ts`), `FAVORITES_RATE_LIMIT_RPM` (120), `USERDATA_RATE_LIMIT_RPM` (60). | Makes per‑deployment tuning trivial while bounding LLM token spend. |
 | DeepSeek added as default LLM provider | — | `LLM_VENDOR` defaults to `deepseek` (model `deepseek-v4-flash`, base `https://api.deepseek.com`); OpenRouter and GLM are alternatives. Three OpenAI‑compatible providers share `openaiCompat.ts`. |
 | Free Dictionary API replaced by Merriam-Webster Collegiate (§4.2, §6) | `server/providers/dictionary.ts` now calls `https://www.dictionaryapi.com/api/v3/references/collegiate/json/{word}?key=…` (English-only). Definitions are parsed from MW's `shortdef` (mapped to a single meaning with `partOfSpeech`). Audio URLs are constructed from MW's `sound.audio` token using `https://media.merriam-webster.com/audio/prons/en/us/mp3/{subdir}/{audio}.mp3` where `{subdir}` follows MW's rule: `bix`/`gg`/`number`/first-letter of the filename. | The 30-day browser localStorage L1 still uses the Free Dictionary cache key prefix `dict:v1:` (stale naming, harmless). |
 

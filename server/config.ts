@@ -36,13 +36,18 @@ export const MERRIAM_WEBSTER_API_KEY = process.env.MERRIAM_WEBSTER_API_KEY?.trim
 // scripts/prerender.ts to build canonical URLs, JSON-LD `url` fields, and the
 // sitemap — not read by the Express server itself.
 export const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL?.trim() || 'http://localhost:5173').replace(/\/$/, '')
-export const TRANSLATE_RATE_LIMIT_RPM = parseInt(process.env.TRANSLATE_RATE_LIMIT_RPM ?? '20', 10) || 20
+// Hard ceiling on the per-IP request rate for endpoints that trigger paid
+// LLM calls (/translate, /more-examples). Caps worst-case token spend from a
+// single client regardless of env-var misconfiguration — the configured RPM
+// is clamped to this value via Math.min() below.
+export const LLM_RATE_LIMIT_MAX_RPM = 5
+export const TRANSLATE_RATE_LIMIT_RPM = Math.min(parseInt(process.env.TRANSLATE_RATE_LIMIT_RPM ?? '5', 10) || 5, LLM_RATE_LIMIT_MAX_RPM)
 export const FAVORITES_RATE_LIMIT_RPM = parseInt(process.env.FAVORITES_RATE_LIMIT_RPM ?? '120', 10) || 120
 export const USERDATA_RATE_LIMIT_RPM = parseInt(process.env.USERDATA_RATE_LIMIT_RPM ?? '60', 10) || 60
 export const SUGGEST_RATE_LIMIT_RPM = parseInt(process.env.SUGGEST_RATE_LIMIT_RPM ?? '60', 10) || 60
 export const REPORT_RATE_LIMIT_RPM = parseInt(process.env.REPORT_RATE_LIMIT_RPM ?? '10', 10) || 10
 export const WORD_OF_DAY_RATE_LIMIT_RPM = parseInt(process.env.WORD_OF_DAY_RATE_LIMIT_RPM ?? '30', 10) || 30
-export const MORE_EXAMPLES_RATE_LIMIT_RPM = parseInt(process.env.MORE_EXAMPLES_RATE_LIMIT_RPM ?? '15', 10) || 15
+export const MORE_EXAMPLES_RATE_LIMIT_RPM = Math.min(parseInt(process.env.MORE_EXAMPLES_RATE_LIMIT_RPM ?? '5', 10) || 5, LLM_RATE_LIMIT_MAX_RPM)
 
 // --- Admin portal (docs/design-admin-portal.md) ---
 // AES-256-GCM master key (base64, 32 bytes) for encrypting LLM provider API

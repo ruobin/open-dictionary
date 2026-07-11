@@ -283,7 +283,7 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 
 ### Operational notes
 
-- Per‑IP rate limits (configurable via env): `/api/translate` 20 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min. Set `TRANSLATE_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM` in `server/.env`.
+- Per‑IP rate limits (configurable via env): `/api/translate` 5 req/min, `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min. The two LLM endpoints are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM` in `server/.env`.
 - Request body limit is 64 KB.
 - Stack traces are only served in `NODE_ENV=development`.
 - Lookup results are cached in MongoDB for **1 year** (TTL index); subsequent lookups of the same (word, sourceLang, targetLang) skip the LLM entirely.

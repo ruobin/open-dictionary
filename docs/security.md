@@ -21,8 +21,7 @@ Static SPA assets (/var/www/…, content-hashed)
 - **Identity** is an Auth0 access token (JWT, RS256, audience
   `AUTH0_AUDIENCE`). The server trusts **only** the verified token's `sub` —
   never a client-supplied identity header.
-- **Translate** (`GET /api/translate/:text`) is public and rate-limited; it does
-  not touch user data.
+- **Translate** (`GET /api/translate/:text`) and **more-examples** (`GET /api/more-examples`) are public and rate-limited (5 req/min/IP, hard-capped — see below); neither touches user data.
 - **Favorites** (`/api/favorites`) and **user-data** (`/api/user-data`) require
   a valid access token and operate only on the caller's own data.
 - **Admin** (`/api/admin/*`) requires a valid access token **and** an
@@ -88,9 +87,11 @@ without deliberately configuring it.
 
 ## Defense in depth (controls always on)
 
-- Per-IP, per-route rate limits: translate 20/min, favorites 60/min,
-  user-data 60/min (configurable via env). `TRUST_PROXY=1` keys off the real
-  client IP behind nginx.
+- Per-IP, per-route rate limits: translate 5/min, more-examples 5/min,
+  favorites 60/min, user-data 60/min (configurable via env). The two LLM
+  endpoints are hard-capped at 5/min (`LLM_RATE_LIMIT_MAX_RPM` in
+  `server/config.ts`) so a single client can't drive unbounded token spend.
+  `TRUST_PROXY=1` keys off the real client IP behind nginx.
 - `helmet` on every API response (CSP, no-sniff, frame guard, etc.).
 - `Strict-Transport-Security` with `includeSubDomains` at the edge.
 - MongoDB is internal to the docker network (not published to the host).
@@ -112,9 +113,11 @@ further; pick what fits your environment:
    and a `mongodb://user:pass@mongo:27017` URI.
 3. **Auth0 M2M rotation & least privilege.** Confirm the Management API M2M
    client holds only `read:users` + `update:users`.
-4. **Stricter translate rate limiting / WAF.** The translate route is public and
-   each miss costs an LLM call. If you expect adversarial traffic, lower
-   `TRANSLATE_RATE_LIMIT_RPM`, add a global cap, or put a WAF/bot filter in
+4. **Stricter translate rate limiting / WAF.** The translate and more-examples
+   routes are public and each cache miss costs an LLM call. Both are already
+   hard-capped at 5 req/min/IP (`LLM_RATE_LIMIT_MAX_RPM`). For heavier
+   adversarial traffic, lower `TRANSLATE_RATE_LIMIT_RPM` /
+   `MORE_EXAMPLES_RATE_LIMIT_RPM` below the cap, or put a WAF/bot filter in
    front.
 5. **Secrets manager.** For team deployments, source `server/.env` from a
    secrets manager (Vault, AWS SSM, Doppler, etc.) instead of a file on disk.
