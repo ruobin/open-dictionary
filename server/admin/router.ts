@@ -27,6 +27,7 @@ import {
   LlmProviderError,
   DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_OPENROUTER_MODEL,
+  DEFAULT_TIMEOUT_MS,
   type LlmProviderConfig,
 } from '../providers/llm'
 import { getMetricsSnapshot } from '../metrics'
@@ -43,7 +44,7 @@ import type { LlmService } from '../llm/service'
  */
 
 const TEST_WORD = 'run'
-const TEST_TIMEOUT_MS = 10_000
+const TEST_TIMEOUT_MS = DEFAULT_TIMEOUT_MS
 
 /** Safe post-`requireAdmin` cast — the `adminOnly` middleware already confirmed a valid, allowlisted sub. */
 function actorSub(req: Request): string {

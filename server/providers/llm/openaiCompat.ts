@@ -35,7 +35,7 @@ export interface OpenAiCompatOptions {
   jsonMode?: boolean
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000
+export const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_TEMPERATURE = 0.2
 
 interface ChatMessage {

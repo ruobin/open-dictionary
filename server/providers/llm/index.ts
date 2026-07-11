@@ -23,7 +23,7 @@ export { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter
 export type { OpenRouterProviderConfig } from './openrouter'
 export { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 export type { DeepSeekProviderConfig } from './deepseek'
-export { createOpenAiCompatibleProvider } from './openaiCompat'
+export { createOpenAiCompatibleProvider, DEFAULT_TIMEOUT_MS } from './openaiCompat'
 export type { OpenAiCompatOptions } from './openaiCompat'
 
 export type LlmRegistryStatus = 'active' | 'disabled' | 'misconfigured'
