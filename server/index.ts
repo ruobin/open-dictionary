@@ -7,6 +7,7 @@ import {
 } from './config'
 import { connectMongo } from './db'
 import { createLlmProviderFromEnv } from './providers/llm'
+import { createLlmService } from './llm/service'
 import { createDictionaryProvider } from './providers/dictionary'
 import { createTranslationCache, type TranslationDoc } from './cache/translationCache'
 import { createApp } from './app'
@@ -19,6 +20,7 @@ const dictionaryProvider = createDictionaryProvider({
 
 const llmRegistry = createLlmProviderFromEnv()
 console.log(`[llm] ${llmRegistry.status.toUpperCase()} — ${llmRegistry.message}`)
+const llmService = createLlmService(llmRegistry)
 
 // MongoDB: translation cache + favorites.
 let translationCache: ReturnType<typeof createTranslationCache> | null = null
@@ -27,6 +29,11 @@ if (MONGODB_URI) {
     const db = await connectMongo(MONGODB_URI, MONGODB_DB)
     translationCache = createTranslationCache(db.collection<TranslationDoc>('translations'))
     console.log(`[mongo] connected (db: ${db.databaseName})`)
+    // Layer any admin-portal DB config on top of the env baseline (§7.2) —
+    // reloadFromDb() never throws, it falls back to the env provider on any
+    // DB-config failure.
+    await llmService.reloadFromDb()
+    console.log(`[llm] state: ${JSON.stringify(llmService.status())}`)
   } catch (err) {
     console.error('[mongo] connection failed — cache/favorites degraded:', err)
   }
@@ -35,7 +42,7 @@ if (MONGODB_URI) {
 }
 
 const app = createApp({
-  llmProvider: llmRegistry.provider,
+  llmService,
   dictionaryProvider,
   translationCache,
 })

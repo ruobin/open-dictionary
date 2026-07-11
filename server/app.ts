@@ -20,13 +20,15 @@ import { createSuggestRouter } from './suggest'
 import { createReportRouter } from './report'
 import { createWordOfDayRouter } from './wordOfDay'
 import { createMoreExamplesRouter } from './moreExamples'
-import type { LlmProvider } from './providers/llm'
+import { createAdminRouter } from './admin/router'
+import { createRequireAdmin } from './admin/auth'
+import type { LlmService } from './llm/service'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
 import type { FavoriteKey } from '../shared/favorites'
 
 export interface AppDeps {
-  llmProvider: LlmProvider | null
+  llmService: LlmService
   dictionaryProvider: DictionaryProvider
   translationCache: TranslationCache | null
 }
@@ -68,7 +70,7 @@ interface HandledError {
   message?: string
 }
 
-export function createApp({ llmProvider, dictionaryProvider, translationCache }: AppDeps) {
+export function createApp({ llmService, dictionaryProvider, translationCache }: AppDeps) {
   const app = express()
 
   if (TRUST_PROXY !== '0') {
@@ -113,7 +115,7 @@ export function createApp({ llmProvider, dictionaryProvider, translationCache }:
     clientSecret: AUTH0_MGMT_CLIENT_SECRET,
   })
 
-  app.locals.llm = llmProvider
+  app.locals.llmService = llmService
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' })
@@ -130,6 +132,11 @@ export function createApp({ llmProvider, dictionaryProvider, translationCache }:
   app.use('/api', createWordOfDayRouter())
   app.use('/api', createMoreExamplesRouter())
   app.use('/api', createFavoritesRouter(checkJwt))
+
+  // Allowlist-only admin portal (design doc §17 Q1: no Auth0 RBAC/permissions
+  // check, just checkJwt + sub ∈ ADMIN_USER_IDS). createRequireAdmin returns
+  // [checkJwt, adminOnly], spread directly per its own doc comment.
+  app.use('/api/admin', ...createRequireAdmin(checkJwt), createAdminRouter(llmService))
 
   app.get(
     '/api/user-data',

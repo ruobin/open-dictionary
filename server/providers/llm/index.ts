@@ -1,6 +1,7 @@
 import { createGlmProvider } from './glm'
 import { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter'
 import { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
+import { createOpenAiCompatibleProvider } from './openaiCompat'
 import { LlmProviderError, type LlmProvider } from './types'
 
 export type {
@@ -22,6 +23,8 @@ export { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter
 export type { OpenRouterProviderConfig } from './openrouter'
 export { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 export type { DeepSeekProviderConfig } from './deepseek'
+export { createOpenAiCompatibleProvider } from './openaiCompat'
+export type { OpenAiCompatOptions } from './openaiCompat'
 
 export type LlmRegistryStatus = 'active' | 'disabled' | 'misconfigured'
 
@@ -138,5 +141,78 @@ export function createLlmProviderFromEnv(): LlmRegistryResult {
         status: 'misconfigured',
         message: `Unknown LLM_VENDOR "${vendor}" — supported: ${SUPPORTED_VENDORS}`,
       }
+  }
+}
+
+/**
+ * Vendor-tagged config for building a provider outside the env-boot path —
+ * from a decrypted `llm_providers` doc (admin panel) or a benchmark draft.
+ * Admin portal (docs/design-admin-portal.md §4.1, §7.1).
+ */
+export interface LlmProviderConfig {
+  /** "deepseek" | "openrouter" | "glm" | "openai-compat" */
+  vendor: string
+  apiKey: string
+  model: string
+  baseUrl?: string
+  /** OpenRouter attribution (`referer`/`title`) for that vendor; passed through
+   *  verbatim as request headers for the generic "openai-compat" vendor. */
+  headers?: Record<string, string>
+  timeoutMs?: number
+  temperature?: number
+}
+
+/**
+ * Builds a provider from admin-portal config, reusing the same vendor
+ * factories the env-boot path uses (design doc §7.1: "the portal changes
+ * *where config comes from*, not how providers work").
+ */
+export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
+  switch (cfg.vendor) {
+    case 'deepseek':
+      return createDeepSeekProvider({
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        baseUrl: cfg.baseUrl,
+        timeoutMs: cfg.timeoutMs,
+        temperature: cfg.temperature,
+      })
+
+    case 'openrouter':
+      return createOpenRouterProvider({
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        baseUrl: cfg.baseUrl,
+        referer: cfg.headers?.referer,
+        title: cfg.headers?.title,
+        timeoutMs: cfg.timeoutMs,
+        temperature: cfg.temperature,
+      })
+
+    case 'glm':
+      return createGlmProvider({
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        baseUrl: cfg.baseUrl,
+        timeoutMs: cfg.timeoutMs,
+        temperature: cfg.temperature,
+      })
+
+    case 'openai-compat':
+      if (!cfg.baseUrl) {
+        throw new LlmProviderError('not_configured', '"openai-compat" providers require a baseUrl')
+      }
+      return createOpenAiCompatibleProvider({
+        vendor: 'openai-compat',
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        baseUrl: cfg.baseUrl,
+        headers: cfg.headers,
+        timeoutMs: cfg.timeoutMs,
+        temperature: cfg.temperature,
+      })
+
+    default:
+      throw new LlmProviderError('not_configured', `Unknown vendor "${cfg.vendor}" — supported: ${SUPPORTED_VENDORS}, openai-compat`)
   }
 }

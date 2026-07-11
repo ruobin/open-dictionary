@@ -93,9 +93,18 @@ export interface LlmTranslationContent {
   typo?: LlmTranslationSuggestion
 }
 
+/** Vendor-reported token usage, when the API surfaces it. Used by the Latency
+ *  Lab benchmark to report `tokensOut` (design doc §9.3) — not persisted or
+ *  shown anywhere in the normal translate path. */
+export interface LlmUsageMeta {
+  promptTokens?: number
+  completionTokens?: number
+}
+
 export interface LlmTranslationResult {
   /** Provider-specific payload. For GLM this is an {@link LlmTranslationContent}. */
   content: unknown
+  meta?: LlmUsageMeta
 }
 
 /**

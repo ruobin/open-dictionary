@@ -1,10 +1,15 @@
 # Design: LLM Admin Portal (vendors, API keys, models, latency)
 
-**Status:** proposed · **Date:** 2026-07-11
+**Status:** implemented & deployed · **Proposed:** 2026-07-11 · **Shipped:** 2026-07-11
 **Scope:** runtime management of LLM providers (vendor, API key, base URL, models),
 switching the active provider/model without redeploy, and first-class **LLM API
 latency testing** — on-demand benchmarks, provider comparison, and production
 latency percentiles.
+
+Phases 0–3 (§15) shipped in full. Phase 4 (scheduled-probe scheduler, multi-instance
+config polling, vendor `/models` proxy, cache stats/purge card, admin i18n) was
+deferred — see **§18 Implementation notes** for the complete list of decisions and
+deviations from this doc as originally proposed.
 
 ---
 
@@ -277,24 +282,32 @@ TTL 365 days.
 Reuse the existing Auth0 setup end to end; the admin plane adds an
 **authorization** layer on top of the current authentication.
 
-- **Primary: Auth0 RBAC.** In the Auth0 dashboard, define permission
-  `manage:llm-config` on the existing API (audience `AUTH0_AUDIENCE`), create
-  an `admin` role holding it, assign the role to your user, and enable *"Add
-  Permissions in the Access Token"*. The access token then carries
-  `permissions: ["manage:llm-config"]`.
-- **Server middleware `requireAdmin`** = existing `checkJwt` **and**
-  (`permissions` includes `manage:llm-config` **or** `sub` ∈
-  **`ADMIN_USER_IDS`**). The env allowlist (comma-separated Auth0 subs) is the
-  break-glass / lazy-setup path so a solo dev can skip the RBAC dashboard work
-  initially; both checks are server-side.
-- 401 for missing/invalid token (existing behavior), **403
-  `{ error: "forbidden" }`** for a valid token without the permission.
+**Shipped as allowlist-only (§17 Q1) — Auth0 RBAC was not implemented.** The
+design below is kept for reference / a future path if a second admin joins;
+`requireAdmin` today checks *only* the env allowlist, not a permission claim.
+
+- **Server middleware `requireAdmin`** = existing `checkJwt` **and** `sub` ∈
+  **`ADMIN_USER_IDS`** (comma-separated Auth0 subs in `server/.env`). No Auth0
+  dashboard RBAC setup (permission/role) is required or checked.
+- 401 for missing/invalid token (existing behavior via `checkJwt`, upstream),
+  **403 `{ error: "forbidden" }`** for a valid token whose `sub` is not on the
+  allowlist.
 - **Rate limit** the whole admin router (new `ADMIN_RATE_LIMIT_RPM`, default
   30/min/IP) — same `express-rate-limit` pattern as every other router.
-- **Frontend guard is cosmetic only:** the `/admin` route checks the decoded
-  token to decide whether to render, but the server is the enforcement point.
+- **Frontend guard is cosmetic only:** `<RequireAdmin>` checks only
+  `isAuthenticated` (no permission claim to check under allowlist-only) and
+  redirects to Auth0 login if not. The real "is this account allowed" signal
+  is server-side: `AdminLayout`'s first `GET /llm/status` call 403ing renders
+  a distinct "not on the admin allowlist" state. The server is always the
+  enforcement point either way (§10.1).
 - No CORS/CSRF changes: same SPA origin, bearer tokens, `credentials: false`
   stays.
+
+*Original RBAC proposal (not built):* define permission `manage:llm-config`
+on the existing API, create an `admin` role holding it, assign it to a user,
+enable "Add Permissions in the Access Token" — `requireAdmin` would then check
+`permissions.includes('manage:llm-config') || sub ∈ ADMIN_USER_IDS`. Revisit
+if/when a second admin needs access without sharing the allowlist env var.
 
 ---
 
@@ -306,14 +319,14 @@ New `server/llm/service.ts`:
 
 ```ts
 interface LlmRuntimeStatus {
-  source: 'db' | 'env' | 'none'
+  source: 'db' | 'env'
   status: 'active' | 'disabled' | 'misconfigured'
   providerId?: string            // Mongo _id when source = 'db'
   vendor?: string
   model?: string
   id?: string                    // e.g. "llm:deepseek:deepseek-v4-flash"
   message: string
-  appliedAt: Date
+  appliedAt: string
   configVersion?: number
 }
 
@@ -324,6 +337,13 @@ interface LlmService {
   buildEphemeral(cfg): LlmProvider   // for tests/benchmarks — never becomes current()
 }
 ```
+
+**As shipped** (§18): `source` is two-valued, not three — there is no `'none'`.
+The "nothing configured / off" signal lives in `status` (`'disabled'` /
+`'misconfigured'`) instead of a third source, since "no LLM configured" is
+still either sourced from env (absent) or db (absent), not a sourceless state.
+`appliedAt` is a `string` (`.toISOString()`), not a `Date` — it crosses the
+wire as JSON, so callers never had a `Date` to work with anyway.
 
 - Construction reuses the existing factories
   (`createDeepSeekProvider` / `createOpenRouterProvider` / `createGlmProvider`
@@ -349,7 +369,7 @@ interface LlmService {
    "configured via environment — import to manage here" banner when
    `source = 'env'`.
 
-### 7.3 Multi-instance convergence
+### 7.3 Multi-instance convergence — **deferred (Phase 4, not shipped)**
 
 Deployment is a single container today (`docker-compose.yml`), and the
 instance that handles an admin write applies it to itself immediately. For
@@ -358,6 +378,12 @@ future replicas, each instance polls `llm_settings.configVersion` (a
 and calls `reloadFromDb()` on change — ~15 lines, and it also self-heals an
 instance that restarted against a stale env while others moved on. No pub/sub
 infra needed at this scale.
+
+`LLM_CONFIG_POLL_SEC` does not exist in `server/config.ts` today — this
+section describes a future extension, not shipped behavior. It's needed only
+when a second `api` replica is added to `docker-compose.yml`; single-instance
+deploys (today's reality) don't need it, since the writing instance already
+applies its own change immediately.
 
 ### 7.4 Interaction with the "misconfigured" state
 
@@ -384,7 +410,7 @@ JSON errors in the existing `{ error: "…" }` style.
 | `POST /api/admin/llm/benchmark` | Start a benchmark job | §9.3. Returns `202 { runId }` or **409 `benchmark_in_progress`**. |
 | `GET  /api/admin/llm/benchmark/:runId` | Poll job | `{ status: running\|done\|error, completed, total, partial/summary }`. |
 | `GET  /api/admin/llm/benchmarks?providerId&limit` | Benchmark history | From `llm_benchmarks`, newest first. |
-| `GET  /api/admin/llm/probes?providerId&sinceHours` | Probe series (P2) | Time series for sparklines. |
+| `GET  /api/admin/llm/probes?providerId&sinceHours` | Probe series (P2) | **Not implemented** — the scheduled prober that would populate `llm_latency_probes` is deferred (§9.6, §18); the route, collection, and 30 d TTL index exist and are ready for it. |
 | `PUT  /api/admin/llm/active` | Switch active provider/model | Body `{ providerId: string \| null, modelId?: string }` (`null` ⇒ LLM off, dictionary-only). Optional `"verify": true` runs a connection test first and refuses the switch on failure (default **true** — see §12). Applies via `LlmService`, audits, returns new status. |
 | `POST /api/admin/llm/import-env` | Seed DB from current env | One-click migration: builds a provider doc from the live env config (the key is already server-side; it is encrypted and stored, never echoed). Idempotent by vendor name. |
 | `GET  /api/admin/metrics` | Production metrics snapshot | `getMetricsSnapshot()` + new latency percentiles (§9.2). |
@@ -521,7 +547,7 @@ Benchmark/test traffic must not contaminate the system being measured:
 3. **Never becomes the active provider** — ephemeral instances are discarded
    after the run.
 
-### 9.6 Scheduled probes (P2 — trend lines)
+### 9.6 Scheduled probes (P2 — trend lines) — **deferred (Phase 4, not shipped)**
 
 On-demand benchmarks answer "which is faster *now*". Vendors degrade at
 specific times of day; a lightweight background probe gives the trend:
@@ -733,13 +759,21 @@ New trust-boundary element: an **admin plane** on the same Express app.
 
 ## 14. Testing strategy
 
-Vitest, mirroring the existing per-module test files:
+Vitest, mirroring the existing per-module test files.
+
+**As shipped** (§18): every module is unit-tested directly against its own
+functions/exports, not via HTTP — there is no supertest dependency anywhere
+in this codebase (including pre-existing routers like `favorites.ts`), so
+`authz` is tested by calling `isAdminSub()` directly rather than standing up
+`createApp()` and asserting on response codes. There is no "permission path"
+to test since RBAC (§6) was not implemented — only the allowlist path exists.
 
 - **crypto**: encrypt/decrypt roundtrip; GCM tamper detection (flip a ct byte
   → throws); `keyVersion` + `_PREVIOUS` rotation path; missing-key 503.
-- **authz**: no token → 401; valid token w/o permission → 403; permission
-  path and `ADMIN_USER_IDS` path both → 200 (supertest against `createApp`,
-  as in `favorites.test.ts`).
+- **authz**: `isAdminSub()` unit-tested directly (`server/admin/auth.test.ts`,
+  via `vi.resetModules()` + dynamic re-import to exercise different
+  `ADMIN_USER_IDS` env values) — allowlist hit/miss, empty allowlist, and
+  malformed/missing `sub`.
 - **providers repo/routes**: validation matrix (§4.1), masked responses never
   contain key material (assert on serialized body), `apiKey`-absent PATCH
   keeps the stored blob, delete/disable-active → 409.
@@ -759,23 +793,26 @@ Vitest, mirroring the existing per-module test files:
 
 ## 15. Rollout plan
 
-- **Phase 0 — prerequisites (no behavior change):** generate
-  `CONFIG_ENCRYPTION_KEY`; set `ADMIN_USER_IDS` (and/or do the Auth0 RBAC
-  setup); update `.env.example` files.
-- **Phase 1 — read-only plane (low risk, immediately useful):**
+- **Phase 0 — prerequisites (no behavior change):** ✅ shipped. Generate
+  `CONFIG_ENCRYPTION_KEY`; set `ADMIN_USER_IDS`; update `.env.example` files.
+  (Auth0 RBAC setup dropped — §6, §17 Q1.)
+- **Phase 1 — read-only plane (low risk, immediately useful):** ✅ shipped.
   `requireAdmin`, `GET status` + `GET metrics` (with percentiles), Overview
-  page. Nothing can be broken from the panel yet.
-- **Phase 2 — manage & switch (the core):** collections, crypto, provider
-  CRUD, connection test (incl. draft), env import, `PUT /active` +
+  page.
+- **Phase 2 — manage & switch (the core):** ✅ shipped. Collections, crypto,
+  provider CRUD, connection test (incl. draft), env import, `PUT /active` +
   `LlmService` hot swap, audit log, Providers page.
-- **Phase 3 — Latency Lab:** benchmark jobs + history + compare UI +
-  "promote winner".
-- **Phase 4 — optional polish:** scheduled probes + sparklines, vendor
-  `/models` proxy, cache stats/purge card, config polling for multi-instance,
-  admin i18n.
+- **Phase 3 — Latency Lab:** ✅ shipped. Benchmark jobs + history + compare UI
+  + "promote winner".
+- **Phase 4 — optional polish:** **deferred**, not shipped. Scheduled probes
+  + sparklines, vendor `/models` proxy, cache stats/purge card, config
+  polling for multi-instance, admin i18n. See §18 for what this leaves
+  half-built (route/collection/TTL index exist for probes; the prober itself
+  doesn't).
 
 Each phase ships independently; the app runs unchanged if the process stops
-after any phase.
+after any phase — Phase 4 stopping here is exactly that: no half-built state,
+just unstarted work.
 
 ### New env vars (all in `server/.env`, documented in `server/.env.example`)
 
@@ -783,10 +820,10 @@ after any phase.
 |---|---|---|
 | `CONFIG_ENCRYPTION_KEY` | — (required for key writes) | AES-256-GCM master key, base64 |
 | `CONFIG_ENCRYPTION_KEY_PREVIOUS` | — | decrypt-only, during rotation |
-| `ADMIN_USER_IDS` | — | comma-separated Auth0 subs (break-glass admin) |
+| `ADMIN_USER_IDS` | — | comma-separated Auth0 subs (the whole authz model — §6) |
 | `ADMIN_RATE_LIMIT_RPM` | `30` | admin router rate limit |
-| `LLM_CONFIG_POLL_SEC` | `30` | cross-instance config convergence (0 = off) |
-| `LLM_PROBE_INTERVAL_MIN` | `0` (off) | scheduled latency probes (§9.6) |
+| `LLM_CONFIG_POLL_SEC` | *(not implemented — Phase 4)* | cross-instance config convergence (0 = off) |
+| `LLM_PROBE_INTERVAL_MIN` | `0` (off) | scheduled latency probes (§9.6) — config var exists and is read at boot, but the interval loop itself is Phase 4/not implemented, so the value currently has no effect |
 
 ### Proposed file layout
 
@@ -816,15 +853,103 @@ src/pages/admin/*             # Overview / Providers / Latency / Audit + compone
 
 ---
 
-## 17. Open questions
+## 17. Open questions — resolved 2026-07-11
 
-1. **Auth0 RBAC vs allowlist-only:** is the Auth0 dashboard RBAC setup worth
-   it now, or ship Phase 1–2 on `ADMIN_USER_IDS` and add RBAC when a second
-   admin exists? (Design supports both simultaneously.)
-2. **Scheduled probes default:** off (as designed) or on-at-hourly once ≥2
-   providers are configured?
-3. **Benchmark languages:** is en→en representative enough for ranking
-   providers, or should the default suite include one CJK and one es→en case
-   (longer outputs, different tokenizers)? Word set is already configurable;
-   this is only about the default.
-4. **Retention:** 90 d benchmarks / 30 d probes / 365 d audit — confirm.
+All four were decided before implementation began; shipped exactly as
+decided, confirmed against running code/config (§18).
+
+1. **Auth0 RBAC vs allowlist-only → allowlist-only.** Ship on
+   `ADMIN_USER_IDS` alone; no Auth0 dashboard RBAC setup. `requireAdmin`
+   checks only the env allowlist (§6). Revisit RBAC if/when a second admin
+   needs independent access.
+2. **Scheduled probes default → off**, and the scheduler itself is deferred
+   (Phase 4, not shipped) — see §18. `LLM_PROBE_INTERVAL_MIN` defaults to `0`
+   in `server/config.ts`; even a nonzero value has no effect yet since the
+   interval loop was never built. Not a partial rollout: nothing runs.
+3. **Benchmark languages → en→en.** `server/admin/benchmark.ts`'s
+   `DEFAULT_LANG = 'en'`; the canonical word set (§9.3) and, per the request
+   shape, the language pair remain admin-configurable per run.
+4. **Retention → confirmed as designed**, verified against the live TTL
+   indexes via `mongosh`: `llm_benchmarks` 90 d (`expireAfterSeconds: 7776000`),
+   `llm_latency_probes` 30 d (`2592000`), `admin_audit` 365 d (`31536000`).
+
+---
+
+## 18. Implementation notes (2026-07-11)
+
+Phases 0–3 (§15) shipped in full and are deployed to production. This
+section is the authoritative deviation list between this doc as originally
+proposed and what actually shipped — read it before trusting any other
+section's exact interface/route/type claims over the source.
+
+**Auth model**
+- Allowlist-only, not RBAC-primary (§6, §17 Q1). `<RequireAdmin>` on the
+  frontend checks only `isAuthenticated` — there's no permission claim to
+  gate on. The allowlist check is entirely server-side; a logged-in,
+  non-allowlisted user reaches `/admin`'s shell and sees a 403 from the first
+  `GET /llm/status` call, surfaced by `AdminLayout` as a distinct "not on the
+  admin allowlist" state, not a route-level block.
+
+**Types (`server/llm/service.ts`)**
+- `LlmRuntimeStatus.source` is `'env' | 'db'` — two-valued, not three
+  (`'none'` doesn't exist; "off" is expressed via `status`, not `source`).
+- `LlmRuntimeStatus.appliedAt` is `string` (`.toISOString()`), not `Date`.
+
+**Routes (§8)**
+- `GET /api/admin/llm/probes` is not implemented — see Phase 4 below.
+- `POST /api/admin/llm/import-env` idempotency is keyed on the **generated
+  provider name** (e.g. `"DeepSeek (from env)"`, via
+  `existingNames.has(candidate.name)` in `readEnvProviderCandidates()`), not
+  a literal `vendor` field match. Re-running import is still a no-op once a
+  provider with that name exists; renaming it manually would allow a
+  duplicate on the next import.
+
+**Benchmark runner (`server/admin/benchmark.ts`) — matches §9.3 closely**
+- One addition beyond the original design: a defensive `MAX_TARGETS = 10`
+  cap on `targets.length`, not specified in §9.3/§9.7. Generous relative to
+  every documented use (compare mode uses 2) — added so a malformed/malicious
+  request can't fan out into an unbounded number of concurrent vendor calls.
+  Everything else (mutex, sequential-per-target/parallel-across-targets,
+  250 ms gap, error-as-result, isolation from cache/metrics) matches §9.3–9.5
+  as designed.
+
+**Testing (§14)**
+- Every module is unit-tested directly against its exports; there is no
+  supertest dependency anywhere in this codebase, including pre-existing
+  routers (`favorites.test.ts` does not use it either — the original §14
+  text describing it as a supertest example was inaccurate even before this
+  feature). `authz` tests call `isAdminSub()` directly rather than asserting
+  on HTTP response codes from a running app.
+
+**Not a deviation (confirmed matching as designed)**
+- §9.1 production latency percentiles: `getMetricsSnapshot()` reports
+  `llmLatencyByVendor: { p50, p95, p99, count, windowSize }` exactly as
+  specified, additive alongside the pre-existing `llmAvgLatencyMsByVendor`.
+
+**Phase 4 — deferred, not shipped**
+- Scheduled probes (§9.6): the `llm_latency_probes` collection, its 30 d TTL
+  index, and the `GET /probes` route all exist and are ready; the
+  `setInterval`-based prober that would populate the collection was never
+  built. `LLM_PROBE_INTERVAL_MIN` defaults to `0`/off per §17 Q2 regardless.
+- Multi-instance config polling (§7.3): `LLM_CONFIG_POLL_SEC` does not exist
+  in `server/config.ts`. Fine today — one `api` container — needed only if
+  `docker-compose.yml` grows a second replica.
+- Vendor `/models` proxy, cache stats/purge card (§11), admin i18n: not
+  built. Admin copy is English-only, as §10.1 allowed for v1.
+
+**Deployment**
+- Backend: `docker compose up -d api` against the existing
+  `docker-compose.yml` (image rebuilt via `docker compose build api` first).
+  No compose file changes were needed — new env vars are optional with safe
+  defaults (§7.2, §12), so the container boots and serves exactly as before
+  for any operator who hasn't set `ADMIN_USER_IDS` yet.
+- Frontend: `npm run build` → `rsync -a --delete` to the nginx web root
+  (`/var/www/html/dict.ai-dictionary.org`), per the existing deploy process —
+  no nginx config changes needed (§10.1's lazy route + existing SPA
+  fallback/CSP already cover it).
+- **Operator action required post-deploy:** `ADMIN_USER_IDS` is unset in
+  production. The portal deploys safely either way (§7.2/§12 fail open to
+  env-configured/dictionary-only behavior, never to a crash), but `/admin`
+  is unreachable — every request 403s — until an operator adds their Auth0
+  `sub` to `ADMIN_USER_IDS` in `server/.env` and runs
+  `docker compose up -d api` once more.

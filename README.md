@@ -118,6 +118,16 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `LLM_REQUEST_TIMEOUT_MS` | no | `15000` | Per‑request LLM timeout (ms) |
 | `LLM_DEBUG` | no | off | `true` prints full prompts and response bodies |
 
+#### Admin portal (`/admin` — see [docs/design-admin-portal.md](docs/design-admin-portal.md))
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `ADMIN_USER_IDS` | to use `/admin` at all | — (empty ⇒ nobody can) | Comma-separated Auth0 `sub`s. This **is** the authorization model — allowlist-only, no Auth0 RBAC. |
+| `CONFIG_ENCRYPTION_KEY` | to save provider API keys via `/admin` | — | AES-256-GCM master key, base64. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Without it, admin key-writes 503; everything else still works. |
+| `CONFIG_ENCRYPTION_KEY_PREVIOUS` | no | — | Decrypt-only, set during key rotation |
+| `ADMIN_RATE_LIMIT_RPM` | no | `30` | Rate limit for all `/api/admin/*` routes |
+| `LLM_PROBE_INTERVAL_MIN` | no | `0` (off) | Reserved for scheduled latency probes — the config is read, but the prober itself isn't implemented yet, so any value is currently a no-op |
+
 #### DeepSeek (default)
 
 | Variable | Required | Default | Notes |
@@ -160,12 +170,14 @@ Set `LLM_DEBUG=true` to log every LLM request URL, the full prompt, response sta
 
 ```
 src/
-  api/            dictionary.ts, userData.ts, favorites.ts
+  api/            dictionary.ts, userData.ts, favorites.ts, admin.ts
   components/     SearchBar, WordEntry, PosSection, AudioButton,
                   Sidebar, Header, AuthButton, ErrorBoundary
-  hooks/          useDictionary, useUserData, useFavorites
+                  admin/          admin-only components (provider cards, forms, tables)
+  hooks/          useDictionary, useUserData, useFavorites, useAdminAuth
   pages/          Home.tsx, WordPage.tsx
-  styles/         app.css
+                  admin/          Overview, Providers, Latency, Audit (lazy-loaded, §Admin portal)
+  styles/         app.css, admin.css
   vite‑env.d.ts   Vite / import.meta.env typings
 public/           favicon.svg, robots.txt
 scripts/
@@ -194,10 +206,21 @@ server/
       index.ts          Registry + env‑driven factory
     dictionary.ts       Merriam-Webster Collegiate provider (English-only)
     errors.ts           Shared ProviderError
+  llm/
+    service.ts      LlmService — hot-swappable active provider (env ⇄ db), see admin portal design doc §7
+  admin/
+    router.ts        /api/admin/* routes (status, providers, test, benchmark, active, audit)
+    auth.ts           requireAdmin middleware (allowlist-only)
+    crypto.ts         AES-256-GCM encrypt/decrypt/redact helpers
+    providersRepo.ts  llm_providers/llm_settings access + validation
+    benchmark.ts      On-demand latency benchmark job runner
+    audit.ts          Append-only admin_audit log
 docs/
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
+  design‑admin‑portal.md        Admin portal design + §18 implementation notes
+  ui‑i18n‑and‑themes.md         Dark/light theming + UI i18n design
   security.md                   Threat model, findings & mitigations, hardening
-docker‑compose.yml      MongoDB (local dev only)
+docker‑compose.yml      Production stack (mongo + api) — see Production deployment
 Dockerfile              Production API image
 .github/workflows/      CI (build + typecheck + smoke‑start)
 ```
@@ -237,7 +260,19 @@ Drop `dist/` on any static host (Vercel, Netlify, S3+CloudFront, nginx…). The 
 
 ### API server
 
-Build and run with Docker:
+The actual production mechanism is `docker-compose.yml` (mongo + api, both
+containerized; see the file's header comment for the topology):
+
+```bash
+docker compose build api      # rebuild the image, does not touch the running container
+docker compose up -d api      # graceful recreate — zero-downtime for mongo, brief blip for api
+```
+
+`docker compose up -d api` is also the correct way to pick up a new
+`server/.env` value (e.g. after setting `ADMIN_USER_IDS` — see
+[Admin portal](#admin-portal)) without rebuilding.
+
+Equivalent without compose, for a bare-Docker host:
 
 ```bash
 docker build -t open-dictionary-api .
@@ -273,12 +308,45 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
   ```
 - **Tune** with env vars: `MONGO_CONTAINER`, `MONGO_DB`, `BACKUP_DIR`. Retention (one backup) is handled inside the script — change the `find … -delete` line to retain more if you ever need point-in-time history.
 
+## Admin portal
+
+`/admin` is an operator-only panel for managing LLM providers at runtime — no
+redeploy to rotate a key or switch models — plus latency benchmarking and an
+audit log of every change. Full design and implementation notes:
+[docs/design-admin-portal.md](docs/design-admin-portal.md) (see **§18
+Implementation notes** for exactly what shipped vs. what's deferred).
+
+- **Auth is allowlist-only**, not Auth0 RBAC: a request needs a valid Auth0
+  token **and** a `sub` listed in `ADMIN_USER_IDS`. Unset, `/admin` is
+  unreachable for everyone — this is the fail-closed default, not a bug.
+- **One-time setup:**
+  1. Log in to the app once (any account) and get your Auth0 `sub` — easiest
+     from the Auth0 dashboard's Users list, or decode your access token.
+  2. Add it to `server/.env`: `ADMIN_USER_IDS=auth0|abc123` (comma-separated
+     for more than one admin).
+  3. Generate and set `CONFIG_ENCRYPTION_KEY` (see the Admin portal row group
+     in [Environment variables](#environment-variables) above) — required
+     before you can save a provider's API key through the panel.
+  4. `docker compose up -d api` to pick up the new env values.
+  5. Visit `/admin`.
+- Pages: **Overview** (active provider, health, recent changes), **Providers**
+  (CRUD, keys, models, connection test), **Latency** (on-demand benchmarks,
+  compare providers, promote a winner), **Audit** (append-only change log,
+  365-day retention).
+- The admin bundle is lazy-loaded and never ships to non-admin users; the
+  server-side allowlist check is the actual security boundary either way
+  (see [Security](#security)).
+- **Not yet implemented** (see the design doc's §18): scheduled background
+  latency probes (on-demand benchmarking works today), and multi-instance
+  config sync (fine for the current single-`api`-container deployment).
+
 ## Security
 
 See [docs/security.md](docs/security.md) for the full threat model. Highlights:
 
 - **Identity is always the verified Auth0 JWT `sub`** — favorites and user-data routes require a valid access token and operate only on the caller's own data. A client-supplied identity header is never trusted (would be an IDOR).
 - **Translate input is constrained** — `from`/`to` are validated against the supported language list (bounds cache cardinality and prevents LLM-cost abuse); lookup text is length-capped and control chars are stripped.
+- **Admin (`/admin`) is allowlist-only** — `ADMIN_USER_IDS` gates every `/api/admin/*` route server-side; unset, it's unreachable by anyone. Provider API keys are AES-256-GCM encrypted at rest and never returned by any API response (write-only). See [Admin portal](#admin-portal).
 - **No stored XSS** — no `dangerouslySetInnerHTML`; React escapes all LLM/dictionary output.
 - **Security headers + strict CSP** on the SPA at the edge nginx; `helmet` on every API response; HSTS with `includeSubDomains`.
 - **Dependencies** — keep `npm audit` at 0 vulnerabilities.

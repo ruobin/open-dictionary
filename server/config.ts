@@ -43,3 +43,25 @@ export const SUGGEST_RATE_LIMIT_RPM = parseInt(process.env.SUGGEST_RATE_LIMIT_RP
 export const REPORT_RATE_LIMIT_RPM = parseInt(process.env.REPORT_RATE_LIMIT_RPM ?? '10', 10) || 10
 export const WORD_OF_DAY_RATE_LIMIT_RPM = parseInt(process.env.WORD_OF_DAY_RATE_LIMIT_RPM ?? '30', 10) || 30
 export const MORE_EXAMPLES_RATE_LIMIT_RPM = parseInt(process.env.MORE_EXAMPLES_RATE_LIMIT_RPM ?? '15', 10) || 15
+
+// --- Admin portal (docs/design-admin-portal.md) ---
+// AES-256-GCM master key (base64, 32 bytes) for encrypting LLM provider API
+// keys at rest. Admin writes that touch a key return 503 when unset; nothing
+// else is affected. Generate with:
+//   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+export const CONFIG_ENCRYPTION_KEY = process.env.CONFIG_ENCRYPTION_KEY?.trim() || undefined
+// Decrypt-only fallback, honored during key rotation (§5.1 of the design doc).
+export const CONFIG_ENCRYPTION_KEY_PREVIOUS = process.env.CONFIG_ENCRYPTION_KEY_PREVIOUS?.trim() || undefined
+// Comma-separated Auth0 `sub` values granted admin access (allowlist-only —
+// no Auth0 RBAC dependency). e.g. "auth0|64f1a2b3c4d5e6f7a8b9c0d1"
+export const ADMIN_USER_IDS = new Set(
+  (process.env.ADMIN_USER_IDS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+)
+export const ADMIN_RATE_LIMIT_RPM = parseInt(process.env.ADMIN_RATE_LIMIT_RPM ?? '30', 10) || 30
+// Scheduled latency probes (design doc §9.6): 0 = off (default — opt in per
+// docs/design-admin-portal.md §17 Q2). One canonical call per enabled
+// provider every N minutes.
+export const LLM_PROBE_INTERVAL_MIN = parseInt(process.env.LLM_PROBE_INTERVAL_MIN ?? '0', 10) || 0

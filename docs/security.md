@@ -25,6 +25,9 @@ Static SPA assets (/var/www/…, content-hashed)
   not touch user data.
 - **Favorites** (`/api/favorites`) and **user-data** (`/api/user-data`) require
   a valid access token and operate only on the caller's own data.
+- **Admin** (`/api/admin/*`) requires a valid access token **and** an
+  allowlisted `sub` (`ADMIN_USER_IDS`) — see [Admin plane](#admin-plane-added-2026-07-11)
+  below.
 
 ## Findings & mitigations
 
@@ -36,6 +39,35 @@ Static SPA assets (/var/www/…, content-hashed)
 | S4 | Low | Control characters in lookup text (log-injection / cache-key integrity). | `normalizeText` strips C0/DEL control chars; whitespace is collapsed (newline injection already prevented). |
 | S5 | Medium | `react-router` open-redirect CVE (GHSA-2j2x-hqr9-3h42); plus dev-only `shell-quote`/`vite` advisories. | `npm audit fix` applied — `npm audit` reports 0 vulnerabilities. |
 | S6 | Low | SPA was served with only HSTS (the API has `helmet`; the static SPA did not). | Edge nginx now adds HSTS, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, and a strict **CSP** (scripts same-origin only, no inline scripts). |
+
+## Admin plane (added 2026-07-11)
+
+`/api/admin/*` (LLM provider management, latency benchmarking, audit log —
+see `docs/design-admin-portal.md`) is a second, higher-privilege trust
+boundary on the same Express app. Summary of its controls, expanded from
+design doc §13:
+
+| Concern | Control |
+|---|---|
+| AuthN | Same Auth0 JWT as the rest of the API (`checkJwt`) — no separate identity system. |
+| AuthZ | **Allowlist-only**: `sub` must be in `ADMIN_USER_IDS` (comma-separated Auth0 subs, `server/.env`). No Auth0 RBAC/permission claims are checked — see design doc §6, §17. |
+| Unauthenticated request | `401` (existing `checkJwt` behavior, unchanged). |
+| Authenticated, not on allowlist | `403 {"error":"forbidden"}`. Not persisted to the audit log — logging denied requests to Mongo would itself be an unauthenticated write channel. |
+| Frontend gate | Cosmetic only. `<RequireAdmin>` checks `isAuthenticated`, not the allowlist (no claim exists to check client-side); the real gate is the server 403 above, surfaced in the UI by the first failed API call. Never rely on the client for authorization. |
+| Bundle exposure | The admin SPA (`src/pages/admin/*`) is `React.lazy`-loaded — its code never ships in the bundle served to non-admin users, so it isn't even inspectable without an admin session. |
+| Secrets at rest | Provider API keys are **AES-256-GCM** encrypted with a server-only master key (`CONFIG_ENCRYPTION_KEY`), never stored or logged in plaintext. |
+| Secrets in transit / API responses | **Write-only**: no response ever contains a decrypted key, only `{set: true, last4}`. There is no "reveal" endpoint. `PATCH` with `apiKey` omitted keeps the existing key. |
+| Audit trail | Every mutation (`provider.create/update/delete`, `active.switch`, `benchmark.run`, `env.import`) is appended to `admin_audit` (365-day TTL) with actor, IP, and a diff — key material is redacted to `"(rotated, last4=…)"`, never the key itself. |
+| Rate limiting | Admin router is rate-limited separately (`ADMIN_RATE_LIMIT_RPM`, default 30/min/IP) — same `express-rate-limit` pattern as the rest of the API. |
+| Economic abuse (paid LLM calls via test/benchmark) | Admin-only; hard caps (≤10 samples, ≤10 targets, ≤10 custom words); one benchmark globally in flight at a time (in-memory mutex); every run audited. |
+| SSRF via provider `baseUrl` | Accepted admin-trust tradeoff, not a vulnerability: `https://` required outside dev, and an admin could reach the same outcome by simply saving a malicious provider — there is no *unauthenticated* path to this. |
+| CSRF | N/A — bearer tokens only, `credentials: false`, no cookies; unchanged from the rest of the API. |
+| Injection | Provider ids are validated as Mongo `ObjectId`s before use; all writes bind typed scalars, per the existing convention. |
+
+**Operator setup required:** `ADMIN_USER_IDS` and `CONFIG_ENCRYPTION_KEY` are
+unset by default. With both unset, `/api/admin/*` fail-closed (every request
+403s) rather than failing open — there is no way to reach the admin plane
+without deliberately configuring it.
 
 ## Verified safe (no change required)
 
@@ -86,6 +118,11 @@ further; pick what fits your environment:
    front.
 5. **Secrets manager.** For team deployments, source `server/.env` from a
    secrets manager (Vault, AWS SSM, Doppler, etc.) instead of a file on disk.
+6. **Set the admin allowlist deliberately.** `ADMIN_USER_IDS` and
+   `CONFIG_ENCRYPTION_KEY` ship unset — add your Auth0 `sub` and generate a
+   key (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
+   only when you're ready to use `/admin`, and keep the allowlist to as few
+   subs as actually need provider/key management.
 
 ## Reproducing the review
 
@@ -97,4 +134,8 @@ npm test                        # unit tests
 curl -i https://dict.ai-dictionary.org/api/favorites
 # Language validation (expect 400 invalid_language):
 curl -i 'https://dict.ai-dictionary.org/api/translate/hello?from=xxxxx&to=en'
+# Admin auth (expect 401 without a valid token):
+curl -i https://dict.ai-dictionary.org/api/admin/llm/status
+# Admin authz (expect 403 with a valid token whose sub isn't in ADMIN_USER_IDS):
+curl -i https://dict.ai-dictionary.org/api/admin/llm/status -H "Authorization: Bearer $TOKEN"
 ```

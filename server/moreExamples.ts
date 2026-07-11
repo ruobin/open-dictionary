@@ -3,7 +3,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import { normalizeText, type GradedExample } from './translate'
-import type { LlmProvider } from './providers/llm'
+import type { LlmService } from './llm/service'
 import { LANGUAGES } from '../shared/languages'
 import { MORE_EXAMPLES_RATE_LIMIT_RPM } from './config'
 
@@ -98,7 +98,7 @@ export function createMoreExamplesRouter(): Router {
           }
         }
 
-        const llm = (req.app.locals.llm as LlmProvider | null) ?? null
+        const llm = (req.app.locals.llmService as LlmService).current()
         if (!llm) {
           res.status(503).json({ error: 'not_configured' })
           return

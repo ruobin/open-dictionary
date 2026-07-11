@@ -1,4 +1,5 @@
-import { Route, Routes } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import { useUserData } from './hooks/useUserData'
@@ -8,7 +9,9 @@ import WordPage from './pages/WordPage'
 import HistoryPage from './pages/HistoryPage'
 import AboutPage from './pages/AboutPage'
 
-export default function App() {
+const AdminApp = lazy(() => import('./pages/admin'))
+
+function DictionaryApp() {
   const userData = useUserData()
   const favorites = useFavorites()
 
@@ -32,3 +35,19 @@ export default function App() {
     </div>
   )
 }
+
+export default function App() {
+  const location = useLocation()
+  const isAdmin = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
+
+  if (isAdmin) {
+    return (
+      <Suspense fallback={<div className="state-msg">Loading admin…</div>}>
+        <AdminApp />
+      </Suspense>
+    )
+  }
+
+  return <DictionaryApp />
+}
+

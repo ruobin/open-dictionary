@@ -11,6 +11,7 @@ import {
   type LlmTranslationContent,
   type LlmTranslationRequest,
   type LlmTranslationResult,
+  type LlmUsageMeta,
 } from './types'
 import { languageName } from '../../../shared/languages'
 
@@ -167,8 +168,18 @@ function parseMoreExamplesContent(vendor: string, raw: string): LlmGradedExample
 interface ChatChoice {
   message?: { content?: string }
 }
+interface ChatUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+}
 interface ChatResponseBody {
   choices?: ChatChoice[]
+  usage?: ChatUsage
+}
+
+interface ChatResult {
+  content: string
+  meta?: LlmUsageMeta
 }
 
 function asString(value: unknown): string | undefined {
@@ -320,7 +331,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
   /** Shared POST /chat/completions + timeout/error handling for both
    *  translate() and moreExamples() — only the message-building and
    *  response-parsing differ between them. */
-  async function callChat(messages: ChatMessage[], logLabel: string): Promise<string> {
+  async function callChat(messages: ChatMessage[], logLabel: string): Promise<ChatResult> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     const started = Date.now()
@@ -382,14 +393,19 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
       dbg(`← no message content; body: ${JSON.stringify(responseBody).slice(0, 500)}`)
       throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
     }
-    return content
+    const usage = responseBody?.usage
+    const meta: LlmUsageMeta | undefined =
+      typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number'
+        ? { promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens }
+        : undefined
+    return { content, meta }
   }
 
   return {
     id,
     async translate(req: LlmTranslationRequest): Promise<LlmTranslationResult> {
       const messages = buildMessages(req)
-      const content = await callChat(messages, `text="${req.text.slice(0, 60)}"`)
+      const { content, meta } = await callChat(messages, `text="${req.text.slice(0, 60)}"`)
       const parsed = parseContent(vendor, content)
       // Defensive: the model occasionally includes a "translation" even in
       // same-language define mode despite the prompt saying to omit it. The
@@ -398,11 +414,11 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
       if (req.sourceLang.toLowerCase() === req.targetLang.toLowerCase()) {
         delete parsed.translation
       }
-      return { content: parsed }
+      return meta ? { content: parsed, meta } : { content: parsed }
     },
     async moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
       const messages = buildMoreExamplesMessages(req)
-      const content = await callChat(messages, `moreExamples word="${req.word.slice(0, 60)}"`)
+      const { content } = await callChat(messages, `moreExamples word="${req.word.slice(0, 60)}"`)
       return { examples: parseMoreExamplesContent(vendor, content) }
     },
   }

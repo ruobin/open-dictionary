@@ -9,6 +9,7 @@ import type {
 } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
 import type { TranslationCache } from './cache/translationCache'
+import type { LlmService } from './llm/service'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
 import { LANGUAGES } from '../shared/languages'
 import {
@@ -368,7 +369,7 @@ export function createTranslateRouter(
           return
         }
 
-        const llm = (req.app.locals.llm as LlmProvider | null) ?? null
+        const llm = (req.app.locals.llmService as LlmService).current()
         const started = Date.now()
         const outcome = await translate({ text, sourceLang, targetLang }, llm, dictionary, cache)
         const latencyMs = Date.now() - started

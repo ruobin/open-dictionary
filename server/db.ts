@@ -6,6 +6,11 @@ let database: Db | null = null
 const TRANSLATION_TTL_SECONDS = 365 * 24 * 60 * 60 // 1 year (design doc §6)
 const MORE_EXAMPLES_TTL_SECONDS = 90 * 24 * 60 * 60 // 90 days — more speculative/long-tail than the main cache
 
+// Admin portal (docs/design-admin-portal.md §4, retention confirmed §17 Q4).
+const LLM_BENCHMARKS_TTL_SECONDS = 90 * 24 * 60 * 60 // 90 days
+const LLM_LATENCY_PROBES_TTL_SECONDS = 30 * 24 * 60 * 60 // 30 days
+const ADMIN_AUDIT_TTL_SECONDS = 365 * 24 * 60 * 60 // 1 year
+
 /** Connects to MongoDB and ensures required indexes (idempotent). */
 export async function connectMongo(uri: string, dbName = 'open-dictionary'): Promise<Db> {
   client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 })
@@ -67,5 +72,44 @@ async function ensureIndexes(db: Db): Promise<void> {
   await moreExamples.createIndex(
     { fetchedAt: 1 },
     { expireAfterSeconds: MORE_EXAMPLES_TTL_SECONDS, name: 'more_examples_ttl' }
+  )
+
+  // --- Admin portal (docs/design-admin-portal.md §4) ---
+
+  // Providers: unique human-readable name (design doc §4.1 validation rules).
+  const llmProviders = db.collection('llm_providers')
+  await llmProviders.createIndex({ name: 1 }, { unique: true, name: 'llm_providers_name' })
+
+  // Settings is a singleton (`_id: "llm"`); the default _id index is enough.
+
+  // Benchmarks (Latency Lab history): lookup by runId, list newest-first,
+  // filter by target provider; TTL bounds the collection (§4.3, 90d confirmed).
+  const llmBenchmarks = db.collection('llm_benchmarks')
+  await llmBenchmarks.createIndex({ runId: 1 }, { unique: true, name: 'llm_benchmarks_run_id' })
+  await llmBenchmarks.createIndex({ finishedAt: -1 }, { name: 'llm_benchmarks_recent' })
+  await llmBenchmarks.createIndex({ 'targets.providerId': 1 }, { name: 'llm_benchmarks_provider' })
+  await llmBenchmarks.createIndex(
+    { finishedAt: 1 },
+    { expireAfterSeconds: LLM_BENCHMARKS_TTL_SECONDS, name: 'llm_benchmarks_ttl' }
+  )
+
+  // Scheduled probe samples (§4.4, §9.6, off by default): trend series per
+  // provider. TTL indexes can't be compound, so it's a second single-field one.
+  const llmLatencyProbes = db.collection('llm_latency_probes')
+  await llmLatencyProbes.createIndex(
+    { providerId: 1, ts: -1 },
+    { name: 'llm_latency_probes_series' }
+  )
+  await llmLatencyProbes.createIndex(
+    { ts: 1 },
+    { expireAfterSeconds: LLM_LATENCY_PROBES_TTL_SECONDS, name: 'llm_latency_probes_ttl' }
+  )
+
+  // Append-only change log (§4.5): `?limit&before` pagination reads off the
+  // same TTL field, newest first.
+  const adminAudit = db.collection('admin_audit')
+  await adminAudit.createIndex(
+    { ts: 1 },
+    { expireAfterSeconds: ADMIN_AUDIT_TTL_SECONDS, name: 'admin_audit_ttl' }
   )
 }
