@@ -13,7 +13,7 @@ export default function AdminApp() {
   return (
     <RequireAdmin>
       <Routes>
-        <Route element={<AdminLayout />}>
+        <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Overview />} />
           <Route path="providers" element={<Providers />} />
           <Route path="latency" element={<Latency />} />
