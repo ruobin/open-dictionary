@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Open Dictionary — Settings</title>
+    <style>
+      body {
+        margin: 0;
+        max-width: 480px;
+        font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        color: #1a1a1a;
+      }
+      #root {
+        padding: 24px;
+      }
+      h2 {
+        margin-top: 0;
+      }
+      .od-opt-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      .od-opt-label {
+        font-weight: 600;
+      }
+      .od-opt-hint {
+        color: #777;
+        font-size: 12px;
+        margin: -8px 0 14px;
+      }
+      select {
+        padding: 4px 6px;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+        font-size: 13px;
+      }
+      .od-opt-links {
+        margin-top: 20px;
+        padding-top: 12px;
+        border-top: 1px solid #e5e5e5;
+        font-size: 12px;
+      }
+      .od-opt-links a {
+        color: #b81b21;
+        text-decoration: none;
+      }
+      .od-opt-links a:hover {
+        text-decoration: underline;
+      }
+      .od-opt-saved {
+        color: #2a7a2a;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./Options.tsx"></script>
+  </body>
+</html>

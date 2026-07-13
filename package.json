@@ -18,7 +18,11 @@
     "llm:ping": "tsx scripts/llm-ping.ts",
     "prerender": "tsx scripts/prerender.ts",
     "eval": "tsx scripts/eval-harness.ts",
-    "dev:all": "concurrently -n web,api -c blue,magenta \"npm:dev\" \"npm:server\""
+    "dev:all": "concurrently -n web,api -c blue,magenta \"npm:dev\" \"npm:server\"",
+    "ext:install": "npm --prefix extension install",
+    "ext:build": "npm --prefix extension run build",
+    "ext:dev": "npm --prefix extension run dev",
+    "ext:test": "npm --prefix extension test"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.2.4",

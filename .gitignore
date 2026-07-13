@@ -24,3 +24,6 @@ yarn-error.log*
 .vscode/
 .idea/
 *.swp
+
+# Extension signing key (private key material — never commit)
+extension/*.pem

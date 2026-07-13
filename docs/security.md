@@ -21,7 +21,7 @@ Static SPA assets (/var/www/…, content-hashed)
 - **Identity** is an Auth0 access token (JWT, RS256, audience
   `AUTH0_AUDIENCE`). The server trusts **only** the verified token's `sub` —
   never a client-supplied identity header.
-- **Translate** (`GET /api/translate/:text`) and **more-examples** (`GET /api/more-examples`) are public and rate-limited (5 req/min/IP, hard-capped — see below); neither touches user data.
+- **Translate** (`GET /api/translate/:text`) and **more-examples** (`GET /api/more-examples`) are public and rate-limited (5 req/min/IP, hard-capped — see below); neither touches user data. The Chrome extension (`extension/`) is an additional caller of the translate endpoint — see [design-browser-extension.md](../design-browser-extension.md) §6. Its `chrome-extension://<id>` origin is allowlisted in `ALLOWED_ORIGINS` alongside the web app's origin(s); no new trust boundary since the endpoint was already public/unauthenticated. Extension traffic does add a new class of caller behind the shared per-IP rate limiter (design doc §6) — a lever to revisit if adversarial/heavy extension traffic appears.
 - **Favorites** (`/api/favorites`) and **user-data** (`/api/user-data`) require
   a valid access token and operate only on the caller's own data.
 - **Admin** (`/api/admin/*`) requires a valid access token **and** an

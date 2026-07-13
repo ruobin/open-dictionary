@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Open Dictionary",
+  "version": "0.1.0",
+  "description": "Look up any word or phrase instantly \u2014 highlight or right-click.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8yX7mBPgZ8LM6F/XvdP2TDwtHDKPt69RHLDd5TDAACH8DR5xjE8elQBUj0NIODancuoCfRe/FpBW0fFdzOCC/5c+hGEvu4lQkJgLj9IuepkSwVfywbYACltWHxs7Z5vObkdMsO/r+uMh4+obj2PGapjvkuHsXoewhknhOwxYuAWiYSOjN0ZA+jOllAD0WcVgM8QrdFUP1NxvfhdhMb1QQK3sQ3zwZwnMP1rsMRmQnx3tlQwg4o/tJHKkKtsmjrGM0NXB0GNNzDUzZnSnD+SC0QXDSOoH/PbKSmf3y93TimAjbu0QsGKRxE8oFHvH+khzUX3fXltVbEM2CuaUpQ/TVwIDAQAB",
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/serviceWorker.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/selectionListener.tsx"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["contextMenus", "storage", "scripting", "activeTab", "identity"],
+  "host_permissions": [
+    "http://localhost:3001/*",
+    "https://dict.ai-dictionary.org/*",
+    "https://dev-oz1bs6okox5c8xd0.us.auth0.com/*"
+  ],
+  "options_page": "src/options/options.html",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

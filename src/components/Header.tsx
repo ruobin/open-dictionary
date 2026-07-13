@@ -72,6 +72,7 @@ export default function Header() {
       </Link>
       <nav className="header-nav">
         <Link to="/about" className="header-nav-link">{t('nav.about')}</Link>
+        <Link to="/privacy" className="header-nav-link">{t('nav.privacy')}</Link>
         <LanguageSwitcher />
         <ThemeToggle />
         <AuthButton />
