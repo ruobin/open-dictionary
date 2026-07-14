@@ -344,61 +344,84 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
     const requestBody: Record<string, unknown> = { model, messages, temperature }
     if (jsonMode) requestBody.response_format = { type: 'json_object' }
 
-    let res: Response
+    // The abort timer must stay armed for the *entire* request/response
+    // lifecycle, not just until fetch() resolves with headers. A vendor can
+    // send a 200 promptly and then stall (or never finish) streaming the
+    // body — if the timer were cleared as soon as headers arrived, the
+    // subsequent res.json()/res.text() call would have no timeout
+    // protection at all and could hang indefinitely (observed in prod: a
+    // request stuck for 10+ minutes). So the whole fetch + body-read is
+    // wrapped in one try/finally that only clears the timer at the end.
     try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          ...(headers ?? {}),
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      })
-    } catch (err) {
-      const elapsed = Date.now() - started
-      if (err instanceof Error && err.name === 'AbortError') {
-        dbg(`← TIMEOUT after ${elapsed}ms — no response received from ${url}`)
+      let res: Response
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            ...(headers ?? {}),
+          },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        })
+      } catch (err) {
+        const elapsed = Date.now() - started
+        if (err instanceof Error && err.name === 'AbortError') {
+          dbg(`← TIMEOUT after ${elapsed}ms — no response received from ${url}`)
+          throw new LlmProviderError(
+            'timeout',
+            `${vendor} request to ${url} timed out after ${elapsed}ms (limit ${timeoutMs}ms) — no response received`
+          )
+        }
+        dbg(`← NETWORK ERROR after ${elapsed}ms:`, err)
         throw new LlmProviderError(
-          'timeout',
-          `${vendor} request to ${url} timed out after ${elapsed}ms (limit ${timeoutMs}ms) — no response received`
+          'network',
+          `Could not reach the ${vendor} API at ${url}: ${(err as Error)?.message ?? err}`
         )
       }
-      dbg(`← NETWORK ERROR after ${elapsed}ms:`, err)
-      throw new LlmProviderError(
-        'network',
-        `Could not reach the ${vendor} API at ${url}: ${(err as Error)?.message ?? err}`
-      )
+
+      const elapsed = Date.now() - started
+      dbg(`← ${res.status} in ${elapsed}ms`)
+
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        dbg(`← error body: ${detail.slice(0, 500)}`)
+        throw new LlmProviderError(
+          'api_error',
+          `${vendor} API error: ${res.status} ${detail.slice(0, 200)}`.trimEnd(),
+          res.status
+        )
+      }
+
+      let responseBody: ChatResponseBody
+      try {
+        responseBody = (await res.json()) as ChatResponseBody
+      } catch (err) {
+        const bodyElapsed = Date.now() - started
+        if (err instanceof Error && err.name === 'AbortError') {
+          dbg(`← TIMEOUT after ${bodyElapsed}ms — response body did not finish streaming from ${url}`)
+          throw new LlmProviderError(
+            'timeout',
+            `${vendor} request to ${url} timed out after ${bodyElapsed}ms (limit ${timeoutMs}ms) — response body did not finish streaming`
+          )
+        }
+        throw err
+      }
+      const content = responseBody?.choices?.[0]?.message?.content
+      if (typeof content !== 'string' || !content.trim()) {
+        dbg(`← no message content; body: ${JSON.stringify(responseBody).slice(0, 500)}`)
+        throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
+      }
+      const usage = responseBody?.usage
+      const meta: LlmUsageMeta | undefined =
+        typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number'
+          ? { promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens }
+          : undefined
+      return { content, meta }
     } finally {
       clearTimeout(timer)
     }
-
-    const elapsed = Date.now() - started
-    dbg(`← ${res.status} in ${elapsed}ms`)
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      dbg(`← error body: ${detail.slice(0, 500)}`)
-      throw new LlmProviderError(
-        'api_error',
-        `${vendor} API error: ${res.status} ${detail.slice(0, 200)}`.trimEnd(),
-        res.status
-      )
-    }
-
-    const responseBody = (await res.json()) as ChatResponseBody
-    const content = responseBody?.choices?.[0]?.message?.content
-    if (typeof content !== 'string' || !content.trim()) {
-      dbg(`← no message content; body: ${JSON.stringify(responseBody).slice(0, 500)}`)
-      throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
-    }
-    const usage = responseBody?.usage
-    const meta: LlmUsageMeta | undefined =
-      typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number'
-        ? { promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens }
-        : undefined
-    return { content, meta }
   }
 
   return {
