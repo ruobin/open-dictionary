@@ -25,6 +25,9 @@ export type AdminAuditAction =
   | 'active.switch'
   | 'benchmark.run'
   | 'env.import'
+  | 'entry.delete'
+  | 'entry.batch_delete'
+  | 'report.dismiss'
 
 export interface AdminAuditTarget {
   providerId?: string

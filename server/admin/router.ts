@@ -24,6 +24,19 @@ import {
   listBenchmarkHistory,
 } from './benchmark'
 import {
+  parseEntriesQuery,
+  isValidEntryId,
+  listEntries,
+  getEntry,
+  getReportsSummary,
+  deleteEntry,
+  batchDeleteEntries,
+  validateBatchIds,
+  parseReportsQuery,
+  listReports,
+  dismissReport,
+} from './entries'
+import {
   LlmProviderError,
   DEFAULT_DEEPSEEK_MODEL,
   DEFAULT_OPENROUTER_MODEL,
@@ -514,6 +527,173 @@ export function createAdminRouter(llmService: LlmService): Router {
       const options = parseAuditQuery(req.query as Record<string, unknown>)
       const entries = await listAudit(options)
       res.json({ entries })
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  // --- cache entries (docs/design-admin-cache-entries.md) ---
+
+  router.get('/entries', async (req, res, next) => {
+    try {
+      const query = parseEntriesQuery(req.query as Record<string, unknown>)
+      const result = await listEntries(query)
+      res.json(result)
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.get('/reports/summary', async (_req, res, next) => {
+    try {
+      const summary = await getReportsSummary()
+      res.json(summary)
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.get('/reports', async (req, res, next) => {
+    try {
+      const query = parseReportsQuery(req.query as Record<string, unknown>)
+      const result = await listReports(query)
+      res.json(result)
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.delete('/reports/:id', async (req, res, next) => {
+    try {
+      const ok = await dismissReport(req.params.id)
+      if (!ok) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+      const sub = actorSub(req)
+      await recordAudit({
+        actor: sub,
+        ip: reqIp(req),
+        action: 'report.dismiss',
+        target: { name: req.params.id },
+      })
+      res.status(204).end()
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.get('/entries/:id', async (req, res, next) => {
+    try {
+      if (!isValidEntryId(req.params.id)) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+      const entry = await getEntry(req.params.id)
+      if (!entry) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+      res.json({ entry })
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.delete('/entries/:id', async (req, res, next) => {
+    try {
+      if (!isValidEntryId(req.params.id)) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+      const body = (req.body ?? {}) as { resolveReports?: unknown; reason?: unknown }
+      const resolveReports = body.resolveReports === undefined ? true : Boolean(body.resolveReports)
+      const reason =
+        typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 500) : undefined
+
+      const target = await getEntry(req.params.id)
+      const result = await deleteEntry(req.params.id, { resolveReports })
+      if (!result) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+
+      const sub = actorSub(req)
+      await recordAudit({
+        actor: sub,
+        ip: reqIp(req),
+        action: 'entry.delete',
+        target: target ? { name: `${target.word} (${target.sourceLang}→${target.targetLang})` } : undefined,
+        diff: {
+          tier: target?.tier,
+          version: target?.version,
+          reportsResolved: result.reportsResolved,
+          reason,
+        },
+      })
+      res.json(result)
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.post('/entries/batch-delete', async (req, res, next) => {
+    try {
+      const body = (req.body ?? {}) as { ids?: unknown; resolveReports?: unknown; reason?: unknown }
+      const validated = validateBatchIds(body.ids)
+      if (!validated.ok) {
+        res.status(400).json({ error: 'validation', errors: [validated.error] })
+        return
+      }
+      const resolveReports = body.resolveReports === undefined ? true : Boolean(body.resolveReports)
+      const reason =
+        typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 500) : undefined
+
+      const result = await batchDeleteEntries(validated.value, { resolveReports })
+
+      const sub = actorSub(req)
+      await recordAudit({
+        actor: sub,
+        ip: reqIp(req),
+        action: 'entry.batch_delete',
+        target: { name: `${result.deletedIds.length} entries` },
+        diff: {
+          ids: validated.value,
+          deletedIds: result.deletedIds,
+          notFoundIds: result.notFoundIds,
+          reportsResolved: result.reportsResolved,
+          reason,
+        },
+      })
+      res.json(result)
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
         res.status(503).json({ error: 'mongo_unavailable' })

@@ -4,6 +4,8 @@ import AdminLayout from './AdminLayout'
 import Overview from './Overview'
 import Providers from './Providers'
 import Latency from './Latency'
+import Entries from './Entries'
+import Reports from './Reports'
 import Audit from './Audit'
 import '../../styles/admin.css'
 
@@ -17,6 +19,8 @@ export default function AdminApp() {
           <Route index element={<Overview />} />
           <Route path="providers" element={<Providers />} />
           <Route path="latency" element={<Latency />} />
+          <Route path="entries" element={<Entries />} />
+          <Route path="reports" element={<Reports />} />
           <Route path="audit" element={<Audit />} />
         </Route>
       </Routes>

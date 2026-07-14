@@ -56,12 +56,13 @@ design doc §13:
 | Bundle exposure | The admin SPA (`src/pages/admin/*`) is `React.lazy`-loaded — its code never ships in the bundle served to non-admin users, so it isn't even inspectable without an admin session. |
 | Secrets at rest | Provider API keys are **AES-256-GCM** encrypted with a server-only master key (`CONFIG_ENCRYPTION_KEY`), never stored or logged in plaintext. |
 | Secrets in transit / API responses | **Write-only**: no response ever contains a decrypted key, only `{set: true, last4}`. There is no "reveal" endpoint. `PATCH` with `apiKey` omitted keeps the existing key. |
-| Audit trail | Every mutation (`provider.create/update/delete`, `active.switch`, `benchmark.run`, `env.import`) is appended to `admin_audit` (365-day TTL) with actor, IP, and a diff — key material is redacted to `"(rotated, last4=…)"`, never the key itself. |
+| Audit trail | Every mutation (`provider.create/update/delete`, `active.switch`, `benchmark.run`, `env.import`, `entry.delete`, `entry.batch_delete`) is appended to `admin_audit` (365-day TTL) with actor, IP, and a diff — key material is redacted to `"(rotated, last4=…)"`, never the key itself. |
 | Rate limiting | Admin router is rate-limited separately (`ADMIN_RATE_LIMIT_RPM`, default 30/min/IP) — same `express-rate-limit` pattern as the rest of the API. |
 | Economic abuse (paid LLM calls via test/benchmark) | Admin-only; hard caps (≤10 samples, ≤10 targets, ≤10 custom words); one benchmark globally in flight at a time (in-memory mutex); every run audited. |
 | SSRF via provider `baseUrl` | Accepted admin-trust tradeoff, not a vulnerability: `https://` required outside dev, and an admin could reach the same outcome by simply saving a malicious provider — there is no *unauthenticated* path to this. |
 | CSRF | N/A — bearer tokens only, `credentials: false`, no cookies; unchanged from the rest of the API. |
-| Injection | Provider ids are validated as Mongo `ObjectId`s before use; all writes bind typed scalars, per the existing convention. |
+| Injection | Provider ids are validated as Mongo `ObjectId`s before use; `translations._id` (`GET/DELETE /entries/:id`) is validated against `/^[a-f0-9]{40}$/`; the `word` filter is regex-escaped (`escapeRegex()`) and always an anchored prefix match; all writes bind typed scalars, per the existing convention. |
+| Cache entries CRUD (`/api/admin/entries*`, `/api/admin/reports/summary`, docs/design-admin-cache-entries.md) | Same trust boundary as the rest of this table — no new auth model. Deletes are hard (no undo) but audited; batch delete is capped at 20 explicit ids per call, never a query-shaped bulk delete. Entry detail responses expose the same `DictionaryEntry` content already public via `/api/translate/:text` — no new data exposure. |
 
 **Operator setup required:** `ADMIN_USER_IDS` and `CONFIG_ENCRYPTION_KEY` are
 unset by default. With both unset, `/api/admin/*` fail-closed (every request

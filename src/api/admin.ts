@@ -1,3 +1,5 @@
+import type { DictionaryEntry } from './dictionary'
+
 export interface AdminAuth {
   getAccessToken: () => Promise<string>
 }
@@ -230,6 +232,9 @@ export type AdminAuditAction =
   | 'active.switch'
   | 'benchmark.run'
   | 'env.import'
+  | 'entry.delete'
+  | 'entry.batch_delete'
+  | 'report.dismiss'
 
 export interface AuditTarget {
   providerId?: string
@@ -362,4 +367,163 @@ export async function listAudit(auth: AdminAuth, query: ListAuditQuery = {}): Pr
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const data = await adminFetch<{ entries: AuditEntry[] }>(auth, `/audit${suffix}`)
   return data.entries
+}
+
+// --- cache entries (docs/design-admin-cache-entries.md) ---
+
+export type EntryTier = 'llm' | 'dict'
+export type EntrySort = 'newest' | 'oldest' | 'mostReported'
+
+export interface EntrySummaryView {
+  id: string
+  word: string
+  sourceLang: string
+  targetLang: string
+  tier: string
+  version: string
+  fetchedAt: string
+  reportCount: number
+  headwordPreview?: string
+}
+
+export interface EntryReportView {
+  id: string
+  reason?: string
+  createdAt: string
+}
+
+export interface EntryDetailView {
+  id: string
+  word: string
+  sourceLang: string
+  targetLang: string
+  tier: string
+  version: string
+  fetchedAt: string
+  entries: DictionaryEntry[]
+  reports: EntryReportView[]
+}
+
+export interface ReportsSummaryEntry {
+  word: string
+  sourceLang: string
+  targetLang: string
+  count: number
+  lastAt: string
+}
+
+export interface ReportsSummary {
+  total: number
+  byWordCount: ReportsSummaryEntry[]
+}
+
+export interface ListEntriesQuery {
+  word?: string
+  sourceLang?: string
+  targetLang?: string
+  tier?: EntryTier
+  hasReports?: boolean
+  sort?: EntrySort
+  limit?: number
+  before?: string
+}
+
+export interface ListEntriesResult {
+  entries: EntrySummaryView[]
+  hasMore: boolean
+}
+
+export interface DeleteEntryRequest {
+  resolveReports?: boolean
+  reason?: string
+}
+
+export interface DeleteEntryResult {
+  deleted: boolean
+  reportsResolved: number
+}
+
+export interface BatchDeleteEntriesRequest {
+  ids: string[]
+  resolveReports?: boolean
+  reason?: string
+}
+
+export interface BatchDeleteEntriesResult {
+  deletedIds: string[]
+  notFoundIds: string[]
+  reportsResolved: number
+}
+
+export async function listEntries(auth: AdminAuth, query: ListEntriesQuery = {}): Promise<ListEntriesResult> {
+  const qs = new URLSearchParams()
+  if (query.word) qs.set('word', query.word)
+  if (query.sourceLang) qs.set('sourceLang', query.sourceLang)
+  if (query.targetLang) qs.set('targetLang', query.targetLang)
+  if (query.tier) qs.set('tier', query.tier)
+  if (query.hasReports !== undefined) qs.set('hasReports', String(query.hasReports))
+  if (query.sort) qs.set('sort', query.sort)
+  if (query.limit) qs.set('limit', String(query.limit))
+  if (query.before) qs.set('before', query.before)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return adminFetch<ListEntriesResult>(auth, `/entries${suffix}`)
+}
+
+/** Resolves `null` on a 404 (entry already deleted, e.g. in another tab) instead of throwing. */
+export async function getEntry(auth: AdminAuth, id: string): Promise<EntryDetailView | null> {
+  try {
+    const data = await adminFetch<{ entry: EntryDetailView }>(auth, `/entries/${encodeURIComponent(id)}`)
+    return data.entry
+  } catch (err) {
+    if (err instanceof AdminApiError && err.status === 404) return null
+    throw err
+  }
+}
+
+export function deleteEntry(auth: AdminAuth, id: string, body: DeleteEntryRequest = {}): Promise<DeleteEntryResult> {
+  return adminFetch(auth, `/entries/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify(body) })
+}
+
+export function batchDeleteEntries(
+  auth: AdminAuth,
+  body: BatchDeleteEntriesRequest
+): Promise<BatchDeleteEntriesResult> {
+  return adminFetch(auth, '/entries/batch-delete', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function getReportsSummary(auth: AdminAuth): Promise<ReportsSummary> {
+  return adminFetch(auth, '/reports/summary')
+}
+
+export interface ReportListItemView {
+  id: string
+  word: string
+  sourceLang: string
+  targetLang: string
+  version: string
+  reason?: string
+  createdAt: string
+  entryId?: string
+}
+
+export interface ListReportsQuery {
+  limit?: number
+  before?: string
+}
+
+export interface ListReportsResult {
+  reports: ReportListItemView[]
+  hasMore: boolean
+}
+
+export async function listReports(auth: AdminAuth, query: ListReportsQuery = {}): Promise<ListReportsResult> {
+  const qs = new URLSearchParams()
+  if (query.limit) qs.set('limit', String(query.limit))
+  if (query.before) qs.set('before', query.before)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return adminFetch<ListReportsResult>(auth, `/reports${suffix}`)
+}
+
+export function dismissReport(auth: AdminAuth, id: string): Promise<void> {
+  return adminFetch(auth, `/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

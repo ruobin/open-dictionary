@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import { LANGUAGES } from '../shared/languages'
 import { SUGGEST_RATE_LIMIT_RPM } from './config'
+import { escapeRegex } from './util/regex'
 
 /**
  * Autocomplete/typeahead (to-do §6). Public, unauthenticated, no LLM call —
@@ -14,9 +15,7 @@ const LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code))
 const MAX_QUERY_LENGTH = 64
 const MAX_SUGGESTIONS = 8
 
-export function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
+export { escapeRegex }
 
 const suggestLimiter = rateLimit({
   windowMs: 60 * 1000,

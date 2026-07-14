@@ -233,3 +233,22 @@
 
 .sparkline { display: inline-block; vertical-align: middle; }
 .sparkline-empty { color: var(--muted); font-size: 12px; }
+
+/* Cache entries (docs/design-admin-cache-entries.md) */
+.admin-entries-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.admin-entries-filters .admin-input { width: auto; flex: 0 1 160px; }
+.admin-entries-table td { vertical-align: middle; }
+.admin-entry-preview {
+  margin: 8px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.admin-entry-preview .word-entry { margin: 0; }

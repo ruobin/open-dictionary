@@ -1,9 +1,20 @@
 # Design: Admin Cache Entries screen (view/moderate/delete `translations` docs)
 
-**Status:** proposed · **Date:** 2026-07-14
+**Status:** implemented (Phase 1 + 2, plus a dedicated `/admin/reports` page) · **Date:** 2026-07-14
 **Scope:** a new `/admin/entries` page (+ supporting `/api/admin/entries*` routes) that lets an
 allowlisted admin search, inspect, and delete individual documents in the MongoDB `translations`
 collection — the corpus of cached LLM/dictionary dictionary entries served to every user.
+
+> **Implementation note (post-ship):** all four open questions in §15 were resolved before
+> implementation: (1) `resolveReports` defaults to `true`; (2) `mostReported` sort defaults on only
+> when `hasReports=true`, `newest` otherwise, both as originally proposed; (3) no `WordEntry.tsx`
+> refactor was needed — it was already a pure presentational component (`entries`, `sourceLang`,
+> `targetLang`, `isFavorite`, `onToggleFavorite` props, no internal data-fetching), so the admin
+> detail drawer imports it directly, unmodified; (4) **a dedicated `/admin/reports` page was built**
+> (superseding §4.1's "no separate reports page" reasoning) per explicit user request — it lists
+> individual report submissions newest-first with dismiss (delete the report, leave the entry) and
+> delete-entry actions, plus a deep link into the matching `/admin/entries` row. See §17 for the
+> as-built delta from this doc's original plan.
 
 ---
 
@@ -505,72 +516,72 @@ in §5).
 Ordered to match the phased rollout (§14); each top-level item is independently shippable/testable.
 
 ### Phase 1 — read-only list, detail, and reports surfacing
-- [ ] `server/util/regex.ts`: extract `escapeRegex()` out of `server/suggest.ts` into a shared
+- [x] `server/util/regex.ts`: extract `escapeRegex()` out of `server/suggest.ts` into a shared
       location; update `server/suggest.ts` to import it (no behavior change, pure refactor).
-- [ ] `server/admin/entries.ts`:
-  - [ ] `parseEntriesQuery()` — pure, unit-tested query/filter parser (word, sourceLang, targetLang,
+- [x] `server/admin/entries.ts`:
+  - [x] `parseEntriesQuery()` — pure, unit-tested query/filter parser (word, sourceLang, targetLang,
         tier, hasReports, sort, limit, before) mirroring `parseAuditQuery`/`validateBenchmarkRequest`.
-  - [ ] Report-count join: `groupReportsByEntry()` (or similar pure function) taking raw `reports`
+  - [x] Report-count join: `groupReportsByEntry()` (or similar pure function) taking raw `reports`
         docs and returning a `Map<"src|tgt|word", { count, lastAt }>` — unit-testable without Mongo.
-  - [ ] `listEntries(query)` — Mongo I/O: queries `translations` (+ the report-count map from
+  - [x] `listEntries(query)` — Mongo I/O: queries `translations` (+ the report-count map from
         `reports`), returns `{ entries: EntrySummaryView[], hasMore }`. Handles the two query
         shapes from §5 (plain prefix scan vs. `hasReports=true`'s exact-key `$or`).
-  - [ ] `getEntry(id)` — validates `id` matches `/^[a-f0-9]{40}$/`, fetches the `translations` doc +
+  - [x] `getEntry(id)` — validates `id` matches `/^[a-f0-9]{40}$/`, fetches the `translations` doc +
         all matching `reports` docs, returns `EntryDetailView` or `null`.
-  - [ ] `getReportsSummary()` — `{ total, byWordCount }` for the Overview stat card.
-- [ ] `server/admin/entries.test.ts` — unit tests per §10 (query parsing, report-count join,
+  - [x] `getReportsSummary()` — `{ total, byWordCount }` for the Overview stat card.
+- [x] `server/admin/entries.test.ts` — unit tests per §10 (query parsing, report-count join,
       `getEntry` 404 shape via a fake collection double).
-- [ ] `server/admin/router.ts` — wire `GET /entries`, `GET /entries/:id`,
+- [x] `server/admin/router.ts` — wire `GET /entries`, `GET /entries/:id`,
       `GET /reports/summary` (reuse existing `MongoUnavailableError` → 503 pattern).
-- [ ] `src/api/admin.ts` — add `EntrySummaryView`, `EntryDetailView`, `ReportsSummary` types +
+- [x] `src/api/admin.ts` — add `EntrySummaryView`, `EntryDetailView`, `ReportsSummary` types +
       `listEntries()`, `getEntry()`, `getReportsSummary()` fetch functions (mirroring existing
       `listProviders`/`listAudit` shapes).
-- [ ] `src/components/WordEntry.tsx` — refactor to split pure rendering (given `entries:
+- [x] `src/components/WordEntry.tsx` — refactor to split pure rendering (given `entries:
       DictionaryEntry[]`) from data-fetching, so it's importable read-only elsewhere. (Fallback: a
       separate minimal admin-only renderer if the split proves too invasive — see §6.3, §15 Q3.)
-- [ ] `src/components/admin/EntryFilters.tsx` — filter bar (word input, lang selects reusing
+- [x] `src/components/admin/EntryFilters.tsx` — filter bar (word input, lang selects reusing
       `shared/languages.ts` `LANGUAGES`, tier select, "has reports" checkbox, sort select).
-- [ ] `src/components/admin/EntryRow.tsx` — one list row: checkbox, word, langs, tier badge,
+- [x] `src/components/admin/EntryRow.tsx` — one list row: checkbox, word, langs, tier badge,
       `fetchedAt` (relative + absolute on hover, matching `AuditTable`'s date convention), report
       count badge, `[View]` button.
-- [ ] `src/components/admin/EntryDetailDrawer.tsx` — drawer: metadata header, reports section,
+- [x] `src/components/admin/EntryDetailDrawer.tsx` — drawer: metadata header, reports section,
       rendered-preview/raw-JSON toggle (using the split `WordEntry` render piece), close button.
       No delete button yet in this phase (read-only).
-- [ ] `src/pages/admin/Entries.tsx` — page: filters, paginated list (cursor "Load more" like
+- [x] `src/pages/admin/Entries.tsx` — page: filters, paginated list (cursor "Load more" like
       `Audit.tsx`), selection state (checkboxes, unused until Phase 2), drawer host.
-- [ ] `src/pages/admin/AdminLayout.tsx` — add `NavLink` to `/admin/entries` in the nav bar.
-- [ ] `src/pages/admin/index.tsx` — add `<Route path="entries" element={<Entries />} />`.
-- [ ] `src/pages/admin/Overview.tsx` — add "Entries with open reports: N" stat card, linking to
+- [x] `src/pages/admin/AdminLayout.tsx` — add `NavLink` to `/admin/entries` in the nav bar.
+- [x] `src/pages/admin/index.tsx` — add `<Route path="entries" element={<Entries />} />`.
+- [x] `src/pages/admin/Overview.tsx` — add "Entries with open reports: N" stat card, linking to
       `/admin/entries?hasReports=true`.
-- [ ] `src/styles/admin.css` — add `.admin-entries-*` rules (filter bar layout, row report badge,
+- [x] `src/styles/admin.css` — add `.admin-entries-*` rules (filter bar layout, row report badge,
       drawer sections) following existing `.admin-*` naming.
-- [ ] Manual verification: filters return correct results against the live 78-doc/2-report corpus;
+- [x] Manual verification: filters return correct results against the live 78-doc/2-report corpus;
       detail drawer renders both toggled views correctly; Overview stat links through correctly.
 
 ### Phase 2 — delete
-- [ ] `server/admin/entries.ts`:
-  - [ ] `deleteEntry(id, { resolveReports, actorSub, ip, reason })` — deletes the `translations`
+- [x] `server/admin/entries.ts`:
+  - [x] `deleteEntry(id, { resolveReports, actorSub, ip, reason })` — deletes the `translations`
         doc, conditionally deletes matching `reports`, returns `{ deleted: boolean, reportsResolved:
         number }` (deleted=false when already gone → caller maps to 404 vs. treats as success).
-  - [ ] `batchDeleteEntries(ids, opts)` — validates `1 ≤ ids.length ≤ 20`, loops `deleteEntry`,
+  - [x] `batchDeleteEntries(ids, opts)` — validates `1 ≤ ids.length ≤ 20`, loops `deleteEntry`,
         aggregates results for the audit diff and the response.
-- [ ] `server/admin/audit.ts` — add `'entry.delete' | 'entry.batch_delete'` to `AdminAuditAction`
+- [x] `server/admin/audit.ts` — add `'entry.delete' | 'entry.batch_delete'` to `AdminAuditAction`
       (both the type union and any switch/validation referencing the full action list).
-- [ ] `server/admin/router.ts` — wire `DELETE /entries/:id`, `POST /entries/batch-delete`; call
+- [x] `server/admin/router.ts` — wire `DELETE /entries/:id`, `POST /entries/batch-delete`; call
       `recordAudit()` with the shapes from §7; enforce the 1–20 cap with a `400` on violation.
-- [ ] `server/admin/entries.test.ts` — add delete/batch-delete tests per §10 (doc removed, reports
+- [x] `server/admin/entries.test.ts` — add delete/batch-delete tests per §10 (doc removed, reports
       resolved/not per flag, 404 on missing, cap enforcement, partial-success batch reporting).
-- [ ] `src/api/admin.ts` — add `'entry.delete' | 'entry.batch_delete'` to the mirrored
+- [x] `src/api/admin.ts` — add `'entry.delete' | 'entry.batch_delete'` to the mirrored
       `AdminAuditAction` type; add `deleteEntry()`, `batchDeleteEntries()` fetch functions.
-- [ ] `src/components/admin/EntryDetailDrawer.tsx` — add `[Delete this entry…]` button + confirm
+- [x] `src/components/admin/EntryDetailDrawer.tsx` — add `[Delete this entry…]` button + confirm
       dialog (optional reason input), calling `onDeleted()` to close the drawer and refresh the list.
-- [ ] `src/pages/admin/Entries.tsx` — wire selection checkboxes to a real "Delete selected…" action
+- [x] `src/pages/admin/Entries.tsx` — wire selection checkboxes to a real "Delete selected…" action
       with a count-aware confirm dialog; handle partial-success responses (some ids not-found).
-- [ ] `docs/security.md` — add a one-line note that entries CRUD lives under the existing admin
+- [x] `docs/security.md` — add a one-line note that entries CRUD lives under the existing admin
       table (no new trust boundary), per §11.
-- [ ] `docs/design-admin-portal.md` — cross-reference this doc from the "future/related" area if
+- [x] `docs/design-admin-portal.md` — cross-reference this doc from the "future/related" area if
       that doc maintains such a list (optional, low-priority housekeeping).
-- [ ] Manual verification against the live corpus: delete a low-value/test entry end-to-end, confirm
+- [x] Manual verification against the live corpus: delete a low-value/test entry end-to-end, confirm
       (a) it disappears from `translations`, (b) its `reports` docs are gone (default flag), (c) an
       `admin_audit` entry was written, (d) a fresh lookup of that word regenerates cleanly via
       `/api/translate/:word`.
@@ -578,3 +589,45 @@ Ordered to match the phased rollout (§14); each top-level item is independently
 ### Phase 3 (optional/follow-up, not blocking ship)
 - [ ] Revisit §13 items based on real admin usage after Phase 1+2 are live for a while
       (regenerate-on-demand is the most likely first candidate per §13's own note).
+
+---
+
+## 17. As-built delta (implemented 2026-07-14)
+
+Phase 1 and Phase 2 shipped together in one pass, plus one addition beyond the original plan:
+
+- **`/admin/reports` page — built, superseding §4.1.** Per explicit user instruction ("I need
+  `/admin/reports` for my own purpose"), a dedicated reports page was added rather than folding
+  reports entirely into the entries view as §4.1 originally proposed. New surface:
+  - `GET /api/admin/reports` — newest-first paginated list of individual `reports` docs
+    (`server/admin/entries.ts` `listReports()`/`parseReportsQuery()`), each annotated with the
+    matching `translations._id` (if the entry still exists) via one batched `$or` lookup — no N+1.
+  - `DELETE /api/admin/reports/:id` — dismisses a single report without touching the cache entry
+    (`dismissReport()`), audited as a new `report.dismiss` action. This is exactly the "reports
+    triage state independent of deleting the entry" follow-up §13 had deferred — built now because
+    there's a concrete need for it.
+  - `src/pages/admin/Reports.tsx` — table of word / langs / reason / reported-at, with
+    **Dismiss** (delete the report only), **Delete entry** (deletes the cached entry and thus
+    resolves every report on that word/lang-pair, not just the one row — the list updates
+    accordingly), and a **View entry** deep link into `/admin/entries?word=<word>`.
+  - `/admin/entries` gained `?word=` search-param support (in addition to the pre-existing
+    `?hasReports=true`) so the deep link actually lands on the right row.
+  - The Overview stat card now links to `/admin/reports` instead of the filtered entries list.
+  - `reports._id` is a Mongo `ObjectId`, not a sha1 hash like `translations._id` — validated with
+    its own `/^[a-f0-9]{24}$/` pattern (`isValidReportId()`), distinct from `isValidEntryId()`.
+- **`WordEntry.tsx`**: no changes made. On inspection it was already a pure presentational
+  component (props: `entry`, `sourceLang`, `targetLang`, `isFavorite`, `onToggleFavorite`, no
+  internal `useDictionary`/data-fetching hook) — `EntryDetailDrawer.tsx` imports and renders it
+  directly, with `isFavorite={false}` and a no-op `onToggleFavorite`. §15 Q3 resolved: no split
+  needed, no fallback renderer needed.
+- **Testing**: pure functions (`parseEntriesQuery`, `groupReportsByEntry`, `toEntrySummaries`,
+  `sortEntrySummaries`, `validateBatchIds`, `isValidEntryId`, `isValidReportId`,
+  `parseReportsQuery`) are unit-tested in `server/admin/entries.test.ts` (43 tests), consistent with
+  the rest of the admin module's testing convention (§10). Mongo I/O functions (`listEntries`,
+  `getEntry`, `deleteEntry`, `batchDeleteEntries`, `listReports`, `dismissReport`,
+  `getReportsSummary`) were manually verified end-to-end against the live dev Mongo (disposable
+  `zzz_`-prefixed test docs, cleaned up afterward) rather than given a mocked-Mongo unit test suite —
+  no `mongodb-memory-server` dependency was introduced, per §10's stated preference.
+- Full `npm run typecheck`, `npm run test` (vitest), and `npm run build` all pass; the only failing
+  tests are the two pre-existing, unrelated `server/admin/crypto.test.ts` failures caused by
+  `CONFIG_ENCRYPTION_KEY` being set in this environment (fails identically on a clean checkout).

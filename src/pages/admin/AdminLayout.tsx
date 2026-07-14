@@ -75,6 +75,8 @@ export default function AdminLayout() {
           <NavLink to="/admin" end>Overview</NavLink>
           <NavLink to="/admin/providers">Providers</NavLink>
           <NavLink to="/admin/latency">Latency lab</NavLink>
+          <NavLink to="/admin/entries">Entries</NavLink>
+          <NavLink to="/admin/reports">Reports</NavLink>
           <NavLink to="/admin/audit">Audit log</NavLink>
         </nav>
         <div className="admin-topbar-user">{user?.email}</div>

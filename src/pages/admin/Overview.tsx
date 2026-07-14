@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAdminOutletContext } from './AdminLayout'
-import { getMetrics, listAudit, listProviders, type AuditEntry, type MetricsSnapshot, type ProviderView } from '../../api/admin'
+import {
+  getMetrics,
+  listAudit,
+  listProviders,
+  getReportsSummary,
+  type AuditEntry,
+  type MetricsSnapshot,
+  type ProviderView,
+  type ReportsSummary,
+} from '../../api/admin'
 import { describeApiError } from '../../components/admin/adminErrors'
 import ActiveSwitcher from '../../components/admin/ActiveSwitcher'
 
@@ -10,16 +19,18 @@ export default function Overview() {
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null)
   const [providers, setProviders] = useState<ProviderView[]>([])
   const [recentAudit, setRecentAudit] = useState<AuditEntry[]>([])
+  const [reportsSummary, setReportsSummary] = useState<ReportsSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const loadAll = useCallback(() => {
     setLoading(true)
-    Promise.all([getMetrics(auth), listProviders(auth), listAudit(auth, { limit: 8 })])
-      .then(([m, p, a]) => {
+    Promise.all([getMetrics(auth), listProviders(auth), listAudit(auth, { limit: 8 }), getReportsSummary(auth)])
+      .then(([m, p, a, r]) => {
         setMetrics(m)
         setProviders(p)
         setRecentAudit(a)
+        setReportsSummary(r)
         setError(null)
       })
       .catch((err) => setError(describeApiError(err)))
@@ -50,6 +61,19 @@ export default function Overview() {
         <h2>Active provider</h2>
         <ActiveSwitcher auth={auth} status={status} providers={providers} onChanged={handleRefresh} />
       </section>
+
+      {reportsSummary && (
+        <section className="admin-card">
+          <div className="admin-card-header-row">
+            <h2>Reports</h2>
+            <Link to="/admin/reports">View all reports →</Link>
+          </div>
+          <div className="admin-stat-grid">
+            <Stat label="Open reports" value={reportsSummary.total} />
+            <Stat label="Distinct reported entries" value={reportsSummary.byWordCount.length} />
+          </div>
+        </section>
+      )}
 
       {metrics && (
         <section className="admin-card">
