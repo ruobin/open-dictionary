@@ -27,3 +27,6 @@ yarn-error.log*
 
 # Extension signing key (private key material — never commit)
 extension/*.pem
+
+# Extension build artifacts (reproducible via npm run build:prod)
+extension/*.zip
