@@ -97,6 +97,14 @@ export default function Providers() {
 
       {editing && (
         <ProviderForm
+          // Force a remount when switching which provider is being edited —
+          // ProviderForm seeds all its fields from `initial` via useState
+          // initializers, which only run once per mount. Without a key tied
+          // to the provider identity, clicking Edit on a different card
+          // while the drawer is already open would just update the `initial`
+          // prop and leave the form showing the previously-edited provider's
+          // stale name/vendor/models/headers.
+          key={editing === 'new' ? 'new' : editing.id}
           auth={auth}
           mode={editing === 'new' ? 'create' : 'edit'}
           initial={editing === 'new' ? undefined : editing}
