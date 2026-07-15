@@ -9,20 +9,26 @@ import manifest from './manifest.json' with { type: 'json' }
 //
 // Production (Web Store) builds are triggered with `npm run build:prod`
 // (i.e. `vite build --mode prod`), which (1) strips the dev-only
-// `localhost:3001` host permission and (2) disables source maps, so the
-// published bundle ships neither TS/React source nor a dev-only permission.
-// `npm run dev` / `npm run build` keep the full dev manifest + sourcemaps.
+// `localhost:3001` host permission, (2) removes the `"key"` field (the Web
+// Store rejects an explicit key and assigns its own extension ID on publish
+// — see RELEASE.md for the CORS/Auth0 callback implications), and (3)
+// disables source maps, so the published bundle ships neither TS/React
+// source nor a dev-only permission. `npm run dev` / `npm run build` keep the
+// full dev manifest (with key + localhost) + sourcemaps.
 export default defineConfig(({ mode }) => {
   const isProd = mode === 'prod'
 
   // Deep-clone so we never mutate the imported manifest module.
   const buildManifest = isProd
-    ? {
-        ...structuredClone(manifest),
-        host_permissions: manifest.host_permissions.filter(
-          (h) => !h.includes('localhost'),
-        ),
-      }
+    ? (() => {
+        const { key: _key, ...withoutKey } = structuredClone(manifest)
+        return {
+          ...withoutKey,
+          host_permissions: manifest.host_permissions.filter(
+            (h) => !h.includes('localhost'),
+          ),
+        }
+      })()
     : manifest
 
   return {
