@@ -11,6 +11,7 @@ const MESSAGES: Record<string, string> = {
   in_progress: 'A benchmark run is already in progress.',
   verify_failed: 'Verification call failed — the provider was not switched.',
   unknown_model: 'Unknown model for this provider.',
+  target_not_found: 'One of the selected providers no longer exists.',
 }
 
 /** One human-readable line for any admin API failure. For multi-message

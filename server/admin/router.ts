@@ -23,6 +23,7 @@ import {
   parseHistoryQuery,
   listBenchmarkHistory,
 } from './benchmark'
+import { validatePlaygroundRequest, runPlayground } from './playground'
 import {
   parseEntriesQuery,
   isValidEntryId,
@@ -385,6 +386,37 @@ export function createAdminRouter(llmService: LlmService): Router {
       const options = parseHistoryQuery(req.query as Record<string, unknown>)
       const benchmarks = await listBenchmarkHistory(options)
       res.json({ benchmarks })
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  // --- Playground: ad-hoc direct LLM lookups (bypasses cache/metrics) ---
+
+  router.post('/llm/playground', async (req, res, next) => {
+    try {
+      const parsed = validatePlaygroundRequest(req.body)
+      if (!parsed.ok) {
+        res.status(400).json({ error: 'validation', errors: parsed.errors })
+        return
+      }
+      const result = await runPlayground(parsed.value, {
+        getProviderDoc,
+        buildEphemeral: (cfg) => llmService.buildEphemeral(cfg),
+      })
+      if (!result.ok) {
+        if (result.error === 'target_not_found') {
+          res.status(404).json({ error: 'target_not_found', providerId: result.providerId })
+          return
+        }
+        res.status(400).json({ error: 'unknown_model', providerId: result.providerId, modelId: result.modelId })
+        return
+      }
+      res.json({ results: result.results })
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
         res.status(503).json({ error: 'mongo_unavailable' })

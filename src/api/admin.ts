@@ -204,6 +204,41 @@ export interface ListBenchmarkHistoryQuery {
   limit?: number
 }
 
+// --- playground (ad-hoc direct LLM lookups, bypasses cache) ---
+
+export interface PlaygroundTargetRequest {
+  providerId: string
+  modelId?: string
+}
+
+export interface PlaygroundRequest {
+  targets: PlaygroundTargetRequest[]
+  word: string
+  sourceLang?: string
+  targetLang?: string
+}
+
+export interface PlaygroundTargetResult {
+  providerId: string
+  providerName: string
+  vendor: string
+  model: string
+  ok: boolean
+  ms: number
+  errorCode?: string
+  tokensOut?: number
+  entries?: DictionaryEntry[]
+  raw?: unknown
+}
+
+export interface PlaygroundResponse {
+  results: PlaygroundTargetResult[]
+}
+
+export function runPlayground(auth: AdminAuth, body: PlaygroundRequest): Promise<PlaygroundResponse> {
+  return adminFetch(auth, '/llm/playground', { method: 'POST', body: JSON.stringify(body) })
+}
+
 // --- active switch ---
 
 export interface SetActiveRequest {

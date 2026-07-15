@@ -252,3 +252,13 @@
   background: var(--bg);
 }
 .admin-entry-preview .word-entry { margin: 0; }
+
+/* Playground (direct LLM lookups) */
+.admin-playground-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.admin-playground-results { display: flex; flex-direction: column; gap: 0; }
+.admin-playground-card .admin-page-actions { align-items: center; margin-bottom: 8px; }
