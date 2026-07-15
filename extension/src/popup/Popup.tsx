@@ -6,6 +6,12 @@ import { LANGUAGES } from '../../../shared/languages'
 import { EntryView, ErrorView } from '../shared/renderEntry'
 import { webAppWordUrl, API_BASE } from '../shared/config'
 import type { DictionaryEntry } from '../types'
+// Popup renders in a regular (non-shadow-DOM) page, unlike the
+// content-script surfaces, so it needs its own `<style>` injection of the
+// same `.od-*` rules those surfaces put in their shadow roots — otherwise
+// `EntryView`'s markup (word/phonetic/audio buttons/favorite star) is
+// unstyled here.
+import { entryStyles } from '../content/entryStyles'
 
 /** Thin typed wrapper over `chrome.runtime.sendMessage` shared by every
  *  extension-page surface (popup, options). Content-script injections talk
@@ -101,6 +107,7 @@ function Popup() {
 
   return (
     <div>
+      <style>{entryStyles}</style>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6, fontSize: 12 }}>
         {auth.isAuthenticated ? (
           <button

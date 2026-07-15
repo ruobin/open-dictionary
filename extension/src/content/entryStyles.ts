@@ -35,6 +35,22 @@ export const entryStyles = `
   .od-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-right: 20px; }
   .od-word { font-weight: 700; font-size: 16px; }
   .od-phonetic { color: #777; font-size: 13px; }
+  .od-audio-row { display: inline-flex; gap: 4px; }
+  .od-audio-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border: 1px solid #d9d9d9;
+    background: #f7f7f7;
+    border-radius: 10px;
+    padding: 1px 7px 1px 5px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #444;
+    cursor: pointer;
+  }
+  .od-audio-btn:hover { background: #eee; }
+  .od-audio-btn svg { flex-shrink: 0; }
   .od-translation { font-style: italic; color: #b81b21; margin-bottom: 8px; }
   .od-meaning { margin-bottom: 8px; }
   .od-pos { font-weight: 600; font-size: 12px; text-transform: uppercase; color: #555; margin-bottom: 2px; }
