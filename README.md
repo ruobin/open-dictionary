@@ -2,6 +2,29 @@
 
 A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Merriam-Webster Collegiate API as a fallback (English-only). Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. After the LLM produces an entry, pronunciation audio URLs are best-effort merged from Merriam-Webster (English source) and cached with the entry. Per-user favorites (**language**-scoped) live in MongoDB; history (now also language-scoped, `{word, sourceLang, targetLang}` shape) stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated). Anonymous users are prompted to log in before favoriting — a pending favorite is stashed in `sessionStorage` and applied on return. The last‑used source/target language pair is persisted in `localStorage` so the pickers survive refreshes.
 
+## Features
+
+**User-facing**
+
+- **Word lookup** (`/api/translate/:word?from=&to=`) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
+- **Autocomplete** (`/api/suggest`) — prefix suggestions from already-cached words
+- **Word of the day** (`/api/word-of-day`) — deterministic daily pick from the cache
+- **"More examples like this"** (`/api/more-examples`) — per-sense follow-up LLM call, optionally constrained by topic/CEFR level (cached 90 days)
+- **Report an entry** (`/api/report`) — one-click quality flag on any entry, triaged in the admin portal
+- **Favorites & history** — Auth0-backed, language-pair scoped, synced across devices
+- **UI i18n + dark/light themes** ([docs/ui-i18n-and-themes.md](docs/ui-i18n-and-themes.md))
+- **Browser extension** (`extension/` — separate build; see [extension/README.md](extension/README.md)) — Chrome/Firefox popup lookup against the same API
+
+**Operator-facing (admin portal, `/admin` — see [Admin portal](#admin-portal))**
+
+- **Overview** — active provider + health, lookup/latency/fallback metrics, recent audit entries
+- **Providers** — runtime CRUD for LLM providers (encrypted keys, models, connection test, hot-swap the active provider/model without redeploy)
+- **Latency lab** — on-demand multi-provider benchmarks with history and compare mode
+- **Playground** — direct LLM lookups (cache bypassed) to compare raw model output side-by-side before promoting a model
+- **Entries** — browse/search/delete cached translations (regenerate-on-next-lookup)
+- **Reports** — triage user quality reports (dismiss, or delete the offending entry)
+- **Audit log** — append-only record of every admin mutation (365-day TTL)
+
 ## Stack
 
 - **TypeScript** throughout (frontend + backend, strict mode)
@@ -117,6 +140,8 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `LLM_VENDOR` | no | `deepseek` | `deepseek` / `openrouter` / `glm` / `none` |
 | `LLM_REQUEST_TIMEOUT_MS` | no | `15000` | Per‑request LLM timeout (ms) |
 | `LLM_DEBUG` | no | off | `true` prints full prompts and response bodies |
+| `PUBLIC_BASE_URL` | no | `http://localhost:5173` | Site origin — used only by `scripts/prerender.ts` for canonical URLs/sitemap |
+| `*_RATE_LIMIT_RPM` | no | see [Operational notes](#operational-notes) | Per-route per-IP rate limits: `TRANSLATE`, `MORE_EXAMPLES`, `FAVORITES`, `USERDATA`, `SUGGEST`, `WORD_OF_DAY`, `REPORT`, `ADMIN` prefixes |
 
 #### Admin portal (`/admin` — see [docs/design-admin-portal.md](docs/design-admin-portal.md))
 
@@ -163,6 +188,13 @@ All three vendors expose an OpenAI‑compatible Chat Completions API and share a
 - **DeepSeek** (default) — model `deepseek-v4-flash`. Endpoint `https://api.deepseek.com`.
 - **OpenRouter** — access to many models through one API key. Default model MiniMax M3 (`minimax/minimax‑m3`).
 - **GLM / Z.AI** — direct Z.AI API (general or coding‑plan endpoints). Default model `glm‑5.2`.
+- **Custom OpenAI-compatible** (`openai-compat`) — any endpoint speaking the Chat Completions protocol; admin-portal only (requires a `baseUrl`).
+
+**Env vars are the boot-time baseline only.** Once a provider is configured
+and made active through the [admin portal](#admin-portal), that DB-stored
+config wins over `LLM_VENDOR`/`*_API_KEY` env vars (hot-swapped at runtime,
+no restart). If the DB config is missing or broken, the service falls back
+to the env baseline — see `server/llm/service.ts` and design doc §7.
 
 Set `LLM_DEBUG=true` to log every LLM request URL, the full prompt, response status/body, and elapsed time — useful for debugging timeouts or response quality.
 
@@ -170,29 +202,45 @@ Set `LLM_DEBUG=true` to log every LLM request URL, the full prompt, response sta
 
 ```
 src/
-  api/            dictionary.ts, userData.ts, favorites.ts, admin.ts
-  components/     SearchBar, WordEntry, PosSection, AudioButton,
-                  Sidebar, Header, AuthButton, ErrorBoundary
-                  admin/          admin-only components (provider cards, forms, tables)
-  hooks/          useDictionary, useUserData, useFavorites, useAdminAuth
-  pages/          Home.tsx, WordPage.tsx
-                  admin/          Overview, Providers, Latency, Audit (lazy-loaded, §Admin portal)
+  api/            dictionary.ts, userData.ts, favorites.ts, report.ts, admin.ts
+  components/     SearchBar, WordEntry, PosSection, AudioButton, WordOfDay,
+                  MoreExamplesButton, ReportButton, Sidebar, Header,
+                  AuthButton, ErrorBoundary
+                  admin/          admin-only components (provider cards/forms,
+                                  benchmark form/results, playground form/results,
+                                  entry filters/rows/detail drawer, audit table)
+  hooks/          useDictionary, useUserData, useFavorites, useTheme,
+                  useDocumentMeta, useAdminAuth
+  i18n/           I18nContext, translations (UI copy, multiple languages)
+  pages/          Home, WordPage, HistoryPage, AboutPage, PrivacyPage
+                  admin/          Overview, Providers, Latency, Playground,
+                                  Entries, Reports, Audit (lazy-loaded, §Admin portal)
   styles/         app.css, admin.css
   vite‑env.d.ts   Vite / import.meta.env typings
 public/           favicon.svg, robots.txt
 scripts/
   llm‑ping.ts     Smoke‑test the active LLM provider
+  eval‑harness.ts LLM output-quality eval harness (npm run eval)
+  prerender.ts    Static prerender of word pages for SEO (npm run prerender)
   mongodb‑backup.sh          Weekly mongodump; keeps only the latest backup
   open‑dictionary‑backup.cron  Cron schedule (Monday 02:00 UTC = APAC Mon morning)
 shared/
-  languages.ts    Language list + code‑to‑name helper
+  languages.ts    Language list + code‑to‑name helper (single source of truth)
   favorites.ts    FavoriteKey interface
+  wordLink.ts     Canonical /word/:term URL builder
+  seo.ts          Shared SEO/meta helpers
+extension/        Browser extension (separate npm workspace — npm run ext:build)
 server/
   index.ts        Boot: connect Mongo, create providers, listen + shutdown
   config.ts       Env reading + validation (loaded by both index and app)
   app.ts          Express app factory (middleware, routes, error handling)
   translate.ts    /api/translate handler + read‑through cache orchestrator
+  suggest.ts      /api/suggest — autocomplete over cached words
+  wordOfDay.ts    /api/word-of-day
+  moreExamples.ts /api/more-examples — per-sense follow-up LLM call
+  report.ts       /api/report — user quality reports
   favorites.ts    /api/favorites (Mongo‑backed)
+  metrics.ts      In-memory lookup/latency/error counters (admin Overview)
   db.ts           Mongo connection + index provisioning
   cache/
     translationCache.ts   Cache for lookup results (TTL 1 year)
@@ -203,21 +251,28 @@ server/
       deepseek.ts       DeepSeek wrapper
       openrouter.ts     OpenRouter wrapper
       glm.ts            Z.AI GLM wrapper
-      index.ts          Registry + env‑driven factory
+      index.ts          Registry + env‑driven factory + buildLlmProvider
     dictionary.ts       Merriam-Webster Collegiate provider (English-only)
     errors.ts           Shared ProviderError
   llm/
     service.ts      LlmService — hot-swappable active provider (env ⇄ db), see admin portal design doc §7
+  util/
+    regex.ts        escapeRegex (safe user input → Mongo regex)
   admin/
-    router.ts        /api/admin/* routes (status, providers, test, benchmark, active, audit)
+    router.ts        /api/admin/* routes (status, providers, test, benchmark,
+                     playground, active, entries, reports, audit)
     auth.ts           requireAdmin middleware (allowlist-only)
     crypto.ts         AES-256-GCM encrypt/decrypt/redact helpers
     providersRepo.ts  llm_providers/llm_settings access + validation
     benchmark.ts      On-demand latency benchmark job runner
+    playground.ts     Ad-hoc direct LLM lookups (cache bypassed)
+    entries.ts        Cache entries + reports browse/delete
     audit.ts          Append-only admin_audit log
 docs/
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
   design‑admin‑portal.md        Admin portal design + §18 implementation notes
+  design‑admin‑cache‑entries.md Admin Entries/Reports pages design + §17 as-built delta
+  design‑geo‑load‑balancing.md  Multi-region deployment design (not yet implemented)
   ui‑i18n‑and‑themes.md         Dark/light theming + UI i18n design
   security.md                   Threat model, findings & mitigations, hardening
 docker‑compose.yml      Production stack (mongo + api) — see Production deployment
@@ -233,9 +288,13 @@ Dockerfile              Production API image
 | `npm run server` | API server with `tsx watch` (hot reload) |
 | `npm run dev:all` | Web + API concurrently |
 | `npm run build` | Typecheck then Vite production build |
+| `npm run typecheck` | `tsc --noEmit` only |
 | `npm run test` | Run unit tests (vitest) |
 | `npm run test:watch` | Tests in watch mode |
 | `npm run llm:ping` | Test the active LLM provider (via `scripts/llm‑ping.ts`) |
+| `npm run eval` | LLM output-quality eval harness (`scripts/eval-harness.ts`) |
+| `npm run prerender` | Prerender word pages for SEO (`scripts/prerender.ts`) |
+| `npm run ext:build` / `ext:dev` / `ext:test` / `ext:install` | Browser extension build/dev/test (separate workspace in `extension/`) |
 | `npm start` | Production server start — for local/CI use only; **the live server runs via Docker** (`docker-compose.yml`), not this command. See [Production deployment](#production-deployment). |
 
 Non-npm operational scripts (not run via npm):
@@ -305,7 +364,7 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 
 ### Operational notes
 
-- Per‑IP rate limits (configurable via env): `/api/translate` 5 req/min, `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min. The two LLM endpoints are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM` in `server/.env`.
+- Per‑IP rate limits (configurable via env): `/api/translate` 5 req/min, `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/admin/*` 30 req/min. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
 - Request body limit is 64 KB.
 - Stack traces are only served in `NODE_ENV=development`.
 - Lookup results are cached in MongoDB for **1 year** (TTL index); subsequent lookups of the same (word, sourceLang, targetLang) skip the LLM entirely.
@@ -333,10 +392,13 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 ## Admin portal
 
 `/admin` is an operator-only panel for managing LLM providers at runtime — no
-redeploy to rotate a key or switch models — plus latency benchmarking and an
-audit log of every change. Full design and implementation notes:
+redeploy to rotate a key or switch models — plus latency benchmarking, a
+model-comparison playground, cache-entry management, user-report triage, and
+an audit log of every change. Full design and implementation notes:
 [docs/design-admin-portal.md](docs/design-admin-portal.md) (see **§18
-Implementation notes** for exactly what shipped vs. what's deferred).
+Implementation notes** for exactly what shipped vs. what's deferred) and
+[docs/design-admin-cache-entries.md](docs/design-admin-cache-entries.md)
+(Entries/Reports pages, see **§17 As-built delta**).
 
 - **Auth is allowlist-only**, not Auth0 RBAC: a request needs a valid Auth0
   token **and** a `sub` listed in `ADMIN_USER_IDS`. Unset, `/admin` is
@@ -351,10 +413,19 @@ Implementation notes** for exactly what shipped vs. what's deferred).
      before you can save a provider's API key through the panel.
   4. `docker compose up -d api` to pick up the new env values.
   5. Visit `/admin`.
-- Pages: **Overview** (active provider, health, recent changes), **Providers**
-  (CRUD, keys, models, connection test), **Latency** (on-demand benchmarks,
-  compare providers, promote a winner), **Audit** (append-only change log,
-  365-day retention).
+- Pages:
+  - **Overview** — active provider, health, lookup/latency metrics, recent changes
+  - **Providers** — CRUD, encrypted keys, models, connection test, hot-swap active provider/model
+  - **Latency lab** — on-demand benchmarks, compare providers, promote a winner
+  - **Playground** — look up a word via a *direct LLM call* (translation cache
+    bypassed) against up to 6 provider/model targets at once; rendered preview
+    + raw-JSON view per target, for judging output quality before switching
+  - **Entries** — browse/search cached translations (filter by word prefix,
+    language pair, tier, has-reports), inspect the stored entry, delete
+    (single or batch, capped at 20) so the next lookup regenerates fresh
+  - **Reports** — triage user quality reports: dismiss a report, delete the
+    reported entry, or jump to it in Entries
+  - **Audit** — append-only change log, 365-day retention
 - The admin bundle is lazy-loaded and never ships to non-admin users; the
   server-side allowlist check is the actual security boundary either way
   (see [Security](#security)).

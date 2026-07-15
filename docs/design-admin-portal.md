@@ -11,6 +11,11 @@ config polling, vendor `/models` proxy, cache stats/purge card, admin i18n) was
 deferred — see **§18 Implementation notes** for the complete list of decisions and
 deviations from this doc as originally proposed.
 
+The portal has since grown beyond this doc's original scope — see
+**§19 Post-ship additions** for the features added after 2026-07-11
+(Cache Entries + Reports pages, and the Playground) and where each is
+documented.
+
 ---
 
 ## 1. Why
@@ -614,6 +619,10 @@ specific times of day; a lightweight background probe gives the trend:
 /admin/audit      Audit      — change log
 ```
 
+*(As-built, the nav has since grown to Overview / Providers / Latency lab /
+Playground / Entries / Reports / Audit log — see §19 for the pages added
+after this doc shipped.)*
+
 **Overview**
 
 ```
@@ -1002,3 +1011,53 @@ section's exact interface/route/type claims over the source.
   may keep reporting a timeout for this provider even though production lookups
   now succeed. Faster alternatives (DeepSeek / OpenRouter / GLM) remain the
   better default per the same latency observations.
+
+---
+
+## 19. Post-ship additions (features added after this doc shipped)
+
+The portal has kept growing on the foundations this doc laid (`requireAdmin`,
+the admin router, the audit log, `buildEphemeral` isolation). Each addition
+below reuses those primitives rather than introducing new auth/infra; this
+section is an index, not a design — follow the links for the actual designs.
+
+**Cache Entries + Reports pages (2026-07-14)** — designed and documented in
+[design-admin-cache-entries.md](design-admin-cache-entries.md) (see its §17
+as-built delta):
+
+- `/admin/entries` — browse/search/delete cached `translations` docs
+  (`GET/DELETE /api/admin/entries(:id)`, `POST /api/admin/entries/batch-delete`,
+  capped at 20 ids). Deletes are audited (`entry.delete`, `entry.batch_delete`).
+- `/admin/reports` — triage user quality reports
+  (`GET /api/admin/reports`, `GET /api/admin/reports/summary`,
+  `DELETE /api/admin/reports/:id` audited as `report.dismiss`).
+- Overview gained a reports stat card linking to `/admin/reports`.
+
+**Playground (2026-07-15)** — `/admin/playground` +
+`POST /api/admin/llm/playground` (`server/admin/playground.ts`):
+
+- Looks up one word (source lang → target lang) via a **direct LLM call per
+  selected provider/model target** (up to 6 in parallel), so an admin can
+  compare raw model output side-by-side before promoting one via
+  `PUT /llm/active`.
+- **Bypasses the translation cache entirely** — both read and write — and
+  uses the same §9.5 ephemeral-provider isolation as the Latency Lab
+  (`LlmService.buildEphemeral()` / `buildLlmProvider` directly): no
+  production metrics, no `LlmService.current()`, disabled providers are
+  callable (that's the point).
+- Response per target: `ok/ms/errorCode/tokensOut`, plus the raw LLM content
+  *and* the same adapted `DictionaryEntry[]` shape production serves (via the
+  exported `adaptLlm()`), so the UI renders results with the real `WordEntry`
+  component next to a raw-JSON toggle.
+- Guardrails in the spirit of §9.7: ≤ 6 targets per run, word ≤ 128 chars,
+  language codes validated against the supported set, vendor call capped at
+  the production `DEFAULT_TIMEOUT_MS` (15 s) ceiling.
+- **Not persisted and not audited** — deliberately consistent with
+  `POST /llm/test` (ad-hoc read-only-in-spirit diagnostics), unlike
+  benchmarks which persist history and audit `benchmark.run`. Runs are
+  synchronous (one call per target, no sample loop), so none of the
+  benchmark's job/polling infrastructure applies.
+- Files: `server/admin/playground.ts` (+ `.test.ts`, 17 tests),
+  `src/pages/admin/Playground.tsx`,
+  `src/components/admin/PlaygroundForm.tsx` / `PlaygroundResults.tsx`,
+  `runPlayground()` in `src/api/admin.ts`.
