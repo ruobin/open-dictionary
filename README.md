@@ -236,7 +236,7 @@ Dockerfile              Production API image
 | `npm run test` | Run unit tests (vitest) |
 | `npm run test:watch` | Tests in watch mode |
 | `npm run llm:ping` | Test the active LLM provider (via `scripts/llm‑ping.ts`) |
-| `npm start` | Production server start |
+| `npm start` | Production server start — for local/CI use only; **the live server runs via Docker** (`docker-compose.yml`), not this command. See [Production deployment](#production-deployment). |
 
 Non-npm operational scripts (not run via npm):
 
@@ -246,6 +246,22 @@ Non-npm operational scripts (not run via npm):
 | `scripts/open-dictionary-backup.cron` | Cron schedule — Monday 02:00 UTC (APAC Monday morning) |
 
 ## Production deployment
+
+> **This app's production instance is deployed with Docker by default —
+> not by running `npm start` on the host.** The API always runs as the
+> `open-dictionary-api` container from `docker-compose.yml`; `npm start` /
+> `npm run build && node ...` are for local dev/CI only and are **not** how
+> the live server gets (re)deployed. If you're an AI agent asked to "deploy"
+> or "redeploy" this app, that means:
+> ```bash
+> docker compose build api   # rebuild the API image from current source
+> docker compose up -d api   # recreate the container with the new image
+> npm run build                                                    # frontend
+> rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/    # publish SPA
+> ```
+> Do **not** `npm start` the API directly on the host, and do not assume the
+> static host serving the SPA is anything other than that nginx web root —
+> both are already fixed by the existing ops setup below.
 
 ### Frontend (static)
 
@@ -258,10 +274,16 @@ Drop `dist/` on any static host (Vercel, Netlify, S3+CloudFront, nginx…). The 
 - rewrite unknown paths to `/index.html` (SPA routing)
 - proxy `/api/*` to the API server
 
+In this deployment, that static host is nginx serving
+`/var/www/html/dict.ai-dictionary.org/`, published via
+`rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/` — see the
+callout above.
+
 ### API server
 
 The actual production mechanism is `docker-compose.yml` (mongo + api, both
-containerized; see the file's header comment for the topology):
+containerized; see the file's header comment for the topology) — **not**
+`npm start`:
 
 ```bash
 docker compose build api      # rebuild the image, does not touch the running container
