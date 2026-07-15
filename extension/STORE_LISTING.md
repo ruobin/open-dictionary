@@ -18,27 +18,44 @@ options page). Source: `src/pages/PrivacyPage.tsx`.
 ## Permission justifications
 
 Paste one paragraph per requested permission into the corresponding review
-form field.
+form field. Every permission below is required — removing any one breaks a
+documented feature.
 
 - **`contextMenus`** — Adds a "Look up '%s' in Open Dictionary" item to the
   right-click menu when text is selected on a page. This is one of the two
-  ways (along with the selection icon) a user triggers a lookup.
+  ways (along with the selection icon) a user triggers a lookup. The menu
+  item is created once in `chrome.runtime.onInstalled` and only fires on
+  `contexts: ['selection']`; it does not read any page content —
+  `info.selectionText` (the user's selected text) is supplied directly by
+  the browser.
 
 - **`storage`** — Stores the user's language-pair and selection-icon
-  preferences (`chrome.storage.sync`, a few bytes) and a local response
-  cache for previously looked-up words (`chrome.storage.local`), so repeat
-  lookups of the same word don't need a new network request. No page
-  content or browsing history is ever stored.
+  preferences (`chrome.storage.sync`, a few bytes), a local response cache
+  for previously looked-up words (`chrome.storage.local`) so repeat lookups
+  of the same word don't need a new network request, and the Auth0 access
+  token for the (optional) sign-in feature (`chrome.storage.local`). No
+  page content or browsing history is ever stored.
 
 - **`scripting`** — Used only to render the result card after a right-click
   lookup (`chrome.scripting.executeScript`, scoped to the clicked tab via
-  `activeTab`). The lookup itself already happened in the background
-  worker before this injection; the injected code only displays the
-  already-fetched result.
+  `activeTab`). The lookup itself already happened in the background worker
+  before this injection; the injected code only displays the already-fetched
+  result next to the selection.
 
 - **`activeTab`** — Scopes the on-demand result-card injection above to the
   single tab the user right-clicked in, instead of requesting a permission
-  applicable to all tabs.
+  applicable to all tabs. It is requested only at the moment of the user's
+  right-click lookup action; the extension has no continuous access to any
+  tab.
+
+- **`identity`** — Used by the optional sign-in feature (sync favorites and
+  lookup history across devices). Calls
+  `chrome.identity.launchWebAuthFlow` against our Auth0 `/authorize`
+  endpoint using the Authorization Code + PKCE flow (no client secret).
+  `identity` is used solely to complete the OAuth redirect and obtain an
+  access token; no user email or profile data is read. Users who never
+  sign in are unaffected — all dictionary lookup features work without
+  signing in.
 
 - **Content script matching `<all_urls>`** — Needed to detect when a user
   highlights text on any page, so the lookup icon can appear next to the
@@ -49,10 +66,32 @@ form field.
   disable it in the options page ("Show icon on text selection" toggle),
   which still leaves the right-click lookup path fully functional.
 
-- **`host_permissions` (`dict.ai-dictionary.org`, and `localhost:3001` for
-  local development)** — The only network destination the background
-  worker ever calls, to fetch dictionary/translation results for the text
-  the user explicitly selected or typed.
+- **`host_permissions` — `https://dict.ai-dictionary.org/*`** — The only
+  API destination the background service worker calls, to fetch dictionary
+  definitions, example sentences, and translations for the text the user
+  explicitly selected or typed. This is the same public lookup API the
+  Open Dictionary website itself uses. No other host is contacted for
+  lookups.
+
+- **`host_permissions` — `https://dev-oz1bs6okox5c8xd0.us.auth0.com/*`** —
+  The Auth0 authentication server for the (optional) sign-in feature,
+  used by `chrome.identity.launchWebAuthFlow`. Contacted only when the
+  user actively chooses to sign in to sync favorites/history; never
+  contacted for anonymous dictionary lookups. This is the same Auth0
+  tenant the Open Dictionary website uses for sign-in.
+
+### Quick reference
+
+| Permission | One-line reason |
+|---|---|
+| `contextMenus` | Right-click → "Look up" menu item |
+| `storage` | User settings + lookup cache + auth token |
+| `scripting` | Render the result card after a right-click lookup |
+| `activeTab` | Scope that render to the one tab the user clicked |
+| `identity` | Optional Auth0 sign-in (favorites/history sync) |
+| `<all_urls>` content script | Detect text highlights to show the lookup icon |
+| `host: dict.ai-dictionary.org` | The lookup API |
+| `host: …auth0.com` | Auth0, only for optional sign-in |
 
 ## What data is sent, in plain language
 
@@ -61,6 +100,10 @@ source/target language codes, sent to the same public lookup endpoint the
 website itself uses. No URL, page content beyond the selection, cookies,
 or browsing history ever leaves the browser. See the privacy policy above
 for the full statement.
+
+For the optional sign-in feature: an Auth0 access token is sent only to
+the Open Dictionary API to authenticate favorites/history sync requests;
+it is never sent anywhere else.
 
 ## Store listing copy (draft)
 
