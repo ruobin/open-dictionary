@@ -922,6 +922,44 @@ section's exact interface/route/type claims over the source.
   provider with that name exists; renaming it manually would allow a
   duplicate on the next import.
 
+**LLM fusion — secondary provider (added 2026-07-17)**
+- `PUT /api/admin/llm/active` now accepts an optional `secondary:
+  { providerId, modelId? } | null`. Omitted = leave any existing secondary
+  untouched (a primary-only switch doesn't wipe a configured pair); `null` =
+  clear fusion; an object = enable it. `verify: true` (default) live-tests
+  **both** targets before applying.
+- The settings doc (`llm_settings`) gained `secondaryProviderId` /
+  `secondaryModelId`. `setActive()` in `providersRepo.ts` validates the
+  secondary through the same `resolveTarget()` helper as the primary and
+  rejects an exact primary==secondary (providerId+modelId) match with
+  `error: 'secondary_equals_primary'`. Same provider, *different* model is a
+  legitimate fusion (e.g. two OpenRouter models) and is allowed.
+- At runtime (`server/llm/service.ts` `reloadFromDb`), when a secondary is
+  configured and resolvable the service wraps `(primary, secondary)` in a
+  `FusionProvider` (`server/providers/llm/fusion.ts`) that itself implements
+  the `LlmProvider` interface — so the entire translate pipeline (caching,
+  metrics, audio-merge, dictionary fallback) is unchanged. The fusion
+  provider's `id` is `llm:fusion:<primaryId>+<secondaryId>`, which becomes
+  the Mongo cache key, so fused results cache distinctly from single-provider
+  results. If the secondary is missing/disabled/broken, fusion degrades to
+  primary-alone (best-effort, never throws); `LlmServiceState` surfaces
+  `secondaryProviderId`/`secondaryProviderName`/`secondaryModel`.
+- Merge strategy (pure, unit-tested in `fusion.test.ts`): both providers are
+  called via `Promise.allSettled`; meaningGroups are bucketed by
+  part-of-speech and senses deduped by definition similarity (token-Jaccard
+  ≥ 0.6) with CEFR/grammar/register filled from either side and examples
+  unioned; `typo` is only kept when *both* flag it (a real definition must
+  survive one model's false "typo" judgement); phonetic takes the longer IPA;
+  the remaining list fields (commonMistakes/collocations/wordFamily) are
+  unioned with case-insensitive dedupe. If one provider fails, the other's
+  result is used verbatim; if both fail, the error propagates to the
+  dictionary fallback — so fusion is never *less* available than a single
+  provider, at the cost of one extra paid call per uncached lookup.
+- Frontend: the Overview "Active provider" card (`ActiveSwitcher.tsx`) gained
+  a **Secondary** dropdown; setting it (and hitting Switch) enables fusion,
+  `— none —` is single-provider mode. The card heading becomes "Active
+  providers (fusion)" and a hint explains the parallel-merge behavior.
+
 **Benchmark runner (`server/admin/benchmark.ts`) — matches §9.3 closely**
 - One addition beyond the original design: a defensive `MAX_TARGETS = 10`
   cap on `targets.length`, not specified in §9.3/§9.7. Generous relative to

@@ -19,6 +19,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 - **Overview** — active provider + health, lookup/latency/fallback metrics, recent audit entries
 - **Providers** — runtime CRUD for LLM providers (encrypted keys, models, connection test, hot-swap the active provider/model without redeploy)
+- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; every uncached lookup calls both in parallel and merges their structured results (deduped senses, unioned examples/collocations) into one superior entry. Graceful degradation — if one fails, the other stands alone. Configured on the Overview page.
 - **Latency lab** — on-demand multi-provider benchmarks with history and compare mode
 - **Playground** — direct LLM lookups (cache bypassed) to compare raw model output side-by-side before promoting a model
 - **Entries** — browse/search/delete cached translations (regenerate-on-next-lookup)
@@ -44,7 +45,7 @@ browser  →  localStorage L1  →  GET /api/translate/:word?from=&to=
    │                                         │
    │                           ┌────────── [Mongo cache] ──── hit → return
    │                           │        miss ↓
-   │                           │   [LLM tier] (primary)
+   │                           │   [LLM tier] (primary, or primary + secondary merged in fusion mode)
    │                           │        error ↓
    │                           │   [Merriam-Webster] (English-only, fallback only on LLM failure)
    │                           │
@@ -417,7 +418,7 @@ Implementation notes** for exactly what shipped vs. what's deferred) and
   4. `docker compose up -d api` to pick up the new env values.
   5. Visit `/admin`.
 - Pages:
-  - **Overview** — active provider, health, lookup/latency metrics, recent changes
+  - **Overview** — active provider, health, lookup/latency metrics, recent changes. The "Active provider" card also has an optional **Secondary** dropdown that enables **LLM fusion** (pair a second provider/model — lookups call both in parallel and merge results).
   - **Providers** — CRUD, encrypted keys, models, connection test, hot-swap active provider/model
   - **Latency lab** — on-demand benchmarks, compare providers, promote a winner
   - **Playground** — look up a word via a *direct LLM call* (translation cache
