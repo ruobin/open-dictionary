@@ -168,8 +168,8 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `OPENROUTER_API_KEY` | if vendor=openrouter | — | Key from [openrouter.ai](https://openrouter.ai) |
 | `OPENROUTER_MODEL` | no | `minimax/minimax‑m3` | |
 | `OPENROUTER_BASE_URL` | no | `https://openrouter.ai/api/v1` | |
-| `OPENROUTER_REFERER` | no | — | Optional attribution |
-| `OPENROUTER_TITLE` | no | — | Optional attribution |
+| `OPENROUTER_REFERER` | no | `PUBLIC_BASE_URL` | Attribution shown in the OpenRouter dashboard as the request's source URL |
+| `OPENROUTER_TITLE` | no | `Open Dictionary` | Attribution shown in the OpenRouter dashboard as the app name |
 
 #### GLM / Z.AI (alternative)
 

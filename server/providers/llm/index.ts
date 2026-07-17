@@ -183,8 +183,7 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         apiKey: cfg.apiKey,
         model: cfg.model,
         baseUrl: cfg.baseUrl,
-        referer: cfg.headers?.referer,
-        title: cfg.headers?.title,
+        headers: cfg.headers,
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
       })

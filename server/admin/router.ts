@@ -119,8 +119,8 @@ function readEnvProviderCandidates(): EnvProviderCandidate[] {
     const headers: Record<string, string> = {}
     const referer = truthy(process.env.OPENROUTER_REFERER)
     const title = truthy(process.env.OPENROUTER_TITLE)
-    if (referer) headers.referer = referer
-    if (title) headers.title = title
+    if (referer) headers['HTTP-Referer'] = referer
+    if (title) headers['X-Title'] = title
     candidates.push({
       vendor: 'openrouter',
       name: 'OpenRouter (from env)',

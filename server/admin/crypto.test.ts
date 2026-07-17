@@ -5,6 +5,19 @@ const KEY_B = Buffer.alloc(32, 9).toString('base64')
 
 async function freshCrypto() {
   vi.resetModules()
+  // `../config` runs dotenv at module-load and re-populates env vars from
+  // server/.env on every fresh import — which would mask the "no key
+  // configured" cases below whenever a real key is present in the dev
+  // environment. Stub it with lazy getters so the tests' process.env
+  // manipulation takes effect at call time instead of import time.
+  vi.doMock('../config', () => ({
+    get CONFIG_ENCRYPTION_KEY(): string | undefined {
+      return process.env.CONFIG_ENCRYPTION_KEY?.trim() || undefined
+    },
+    get CONFIG_ENCRYPTION_KEY_PREVIOUS(): string | undefined {
+      return process.env.CONFIG_ENCRYPTION_KEY_PREVIOUS?.trim() || undefined
+    },
+  }))
   return import('./crypto')
 }
 
