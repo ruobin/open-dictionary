@@ -25,6 +25,8 @@ export { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 export type { DeepSeekProviderConfig } from './deepseek'
 export { createOpenAiCompatibleProvider, DEFAULT_TIMEOUT_MS } from './openaiCompat'
 export type { OpenAiCompatOptions } from './openaiCompat'
+export { createFusionProvider, mergeContents, definitionsSimilar } from './fusion'
+export type { FusionProviderConfig } from './fusion'
 
 export type LlmRegistryStatus = 'active' | 'disabled' | 'misconfigured'
 

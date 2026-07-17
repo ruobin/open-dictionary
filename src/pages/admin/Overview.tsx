@@ -58,8 +58,16 @@ export default function Overview() {
       {error && <div className="state-msg state-error">{error}</div>}
 
       <section className="admin-card">
-        <h2>Active provider</h2>
+        <h2>Active provider{status?.secondaryProviderId ? 's (fusion)' : ''}</h2>
         <ActiveSwitcher auth={auth} status={status} providers={providers} onChanged={handleRefresh} />
+        {status?.secondaryProviderId && (
+          <p className="admin-hint">
+            Fusion mode: every uncached lookup calls the primary and secondary in parallel and merges their results.
+            {status.secondaryProviderName && status.secondaryModel
+              ? ` Secondary: ${status.secondaryProviderName} · ${status.secondaryModel}.`
+              : ''}
+          </p>
+        )}
       </section>
 
       {reportsSummary && (

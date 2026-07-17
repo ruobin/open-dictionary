@@ -31,6 +31,10 @@ export interface LlmServiceState {
   vendor?: string
   model?: string
   id?: string
+  /** When fusion mode is active: the secondary provider/model. */
+  secondaryProviderId?: string
+  secondaryProviderName?: string
+  secondaryModel?: string
   configVersion?: number
   appliedAt: string
 }
@@ -241,10 +245,20 @@ export function runPlayground(auth: AdminAuth, body: PlaygroundRequest): Promise
 
 // --- active switch ---
 
+/** `secondary` controls LLM fusion mode:
+ *  - `undefined` (omitted): leave any existing secondary as-is.
+ *  - `null`: explicitly disable fusion (single-provider mode).
+ *  - `{ providerId, modelId? }`: enable fusion with this second provider. */
+export interface SetActiveSecondary {
+  providerId: string
+  modelId?: string
+}
+
 export interface SetActiveRequest {
   providerId: string | null
   modelId?: string
   verify?: boolean
+  secondary?: SetActiveSecondary | null
 }
 
 export interface SetActiveResponse {

@@ -72,6 +72,12 @@ export interface LlmSettingsDoc {
   _id: 'llm'
   activeProviderId?: ObjectId | null
   activeModelId?: string | null
+  /** Optional second provider for "LLM fusion" mode (design doc §X): when
+   *  set, the service calls both providers in parallel and merges results.
+   *  Absent/null = single-provider mode; an ObjectId = fusion enabled. The
+   *  primary (activeProviderId) is always required for fusion. */
+  secondaryProviderId?: ObjectId | null
+  secondaryModelId?: string | null
   configVersion: number
   updatedAt?: Date
   updatedBy?: string
@@ -414,32 +420,94 @@ export type SetActiveResult =
   | { ok: false; error: 'not_found' }
   | { ok: false; error: 'disabled' }
   | { ok: false; error: 'unknown_model' }
+  | { ok: false; error: 'secondary_equals_primary' }
 
+/** Resolves and validates a (providerId, modelId) target against the
+ *  providers collection. Returns the ObjectId + verified modelId, or an
+ *  error code. Shared between primary and secondary validation. */
+async function resolveTarget(
+  db: Db,
+  providerId: string,
+  modelId: string | undefined
+): Promise<{ ok: true; objectId: ObjectId; modelId: string | undefined } | { ok: false; error: 'not_found' | 'disabled' | 'unknown_model' }> {
+  if (!ObjectId.isValid(providerId)) return { ok: false, error: 'not_found' }
+  const objectId = new ObjectId(providerId)
+  const doc = await providersCol(db).findOne({ _id: objectId })
+  if (!doc) return { ok: false, error: 'not_found' }
+  if (!doc.enabled) return { ok: false, error: 'disabled' }
+  if (modelId && !doc.models.some((m) => m.id === modelId)) return { ok: false, error: 'unknown_model' }
+  return { ok: true, objectId, modelId }
+}
+
+/**
+ * Sets the active primary provider (and optional secondary for fusion mode).
+ * - `primaryId === null` disables the LLM tier entirely and clears any
+ *   secondary (fusion requires a primary).
+ * - `secondary` omitted/undefined leaves any existing secondary untouched
+ *   (so a primary-only "Switch" doesn't silently unconfigure fusion).
+ * - `secondary === null` explicitly clears fusion mode.
+ */
 export async function setActive(
-  providerId: string | null,
-  modelId: string | undefined,
-  actorSub: string
+  primaryId: string | null,
+  primaryModelId: string | undefined,
+  actorSub: string,
+  secondary?: { providerId: string | null; modelId?: string } | null
 ): Promise<SetActiveResult> {
   const db = requireDb()
-  let objectId: ObjectId | null = null
-  if (providerId !== null) {
-    if (!ObjectId.isValid(providerId)) return { ok: false, error: 'not_found' }
-    objectId = new ObjectId(providerId)
-    const doc = await providersCol(db).findOne({ _id: objectId })
-    if (!doc) return { ok: false, error: 'not_found' }
-    if (!doc.enabled) return { ok: false, error: 'disabled' }
-    if (modelId && !doc.models.some((m) => m.id === modelId)) return { ok: false, error: 'unknown_model' }
+
+  // --- primary ---
+  let primaryObjectId: ObjectId | null = null
+  if (primaryId !== null) {
+    const r = await resolveTarget(db, primaryId, primaryModelId)
+    if (!r.ok) return r
+    primaryObjectId = r.objectId
   }
+
+  // --- secondary (fusion) ---
+  let secondaryObjectId: ObjectId | null = null
+  let secondaryModelId: string | null = null
+  if (primaryObjectId === null) {
+    // Disabling the primary also clears the secondary — fusion without a
+    // primary is meaningless.
+    secondaryObjectId = null
+    secondaryModelId = null
+  } else if (secondary === undefined) {
+    // Preserve existing secondary (if any). Only set the $set fields below
+    // when secondary is explicitly provided.
+  } else if (secondary === null || secondary.providerId === null) {
+    secondaryObjectId = null
+    secondaryModelId = null
+  } else {
+    const r = await resolveTarget(db, secondary.providerId, secondary.modelId)
+    if (!r.ok) return r
+    // Same provider+model as the primary is wasteful (two identical calls).
+    // Same provider with a DIFFERENT model is a legitimate fusion (e.g. two
+    // OpenRouter models), so only reject an exact match.
+    if (r.objectId.equals(primaryObjectId!) && (r.modelId ?? null) === (primaryModelId ?? null)) {
+      return { ok: false, error: 'secondary_equals_primary' }
+    }
+    secondaryObjectId = r.objectId
+    secondaryModelId = r.modelId ?? null
+  }
+
+  const $set: Record<string, unknown> = {
+    activeProviderId: primaryObjectId,
+    activeModelId: primaryModelId ?? null,
+    updatedAt: new Date(),
+    updatedBy: actorSub,
+  }
+  // Only touch the secondary fields when the caller expressed an opinion
+  // about fusion — keeps a primary-only switch from wiping a configured pair.
+  if (secondary !== undefined) {
+    $set.secondaryProviderId = secondaryObjectId
+    $set.secondaryModelId = secondaryModelId
+  }
+
   await settingsCol(db).updateOne(
     { _id: 'llm' },
     {
       $inc: { configVersion: 1 },
-      $set: {
-        activeProviderId: objectId,
-        activeModelId: modelId ?? null,
-        updatedAt: new Date(),
-        updatedBy: actorSub,
-      },
+      $set,
     },
     { upsert: true }
   )

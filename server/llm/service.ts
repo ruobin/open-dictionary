@@ -1,5 +1,6 @@
 import {
   buildLlmProvider,
+  createFusionProvider,
   LlmProviderError,
   type LlmProvider,
   type LlmProviderConfig,
@@ -36,6 +37,11 @@ export interface LlmServiceState {
   model?: string
   /** The built provider's own cache-key id, e.g. "llm:deepseek:deepseek-v4-flash". */
   id?: string
+  /** When fusion mode is active: the secondary provider/model. Absent
+   *  otherwise (single-provider mode). */
+  secondaryProviderId?: string
+  secondaryProviderName?: string
+  secondaryModel?: string
   /** llm_settings.configVersion as of the last successful read — debugging aid for multi-instance drift (§7.3). */
   configVersion?: number
   appliedAt: string
@@ -87,6 +93,17 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
     }
   }
 
+  function disableViaDb(message: string, configVersion: number): void {
+    activeProvider = null
+    currentState = {
+      source: 'db',
+      status: 'disabled',
+      message,
+      configVersion,
+      appliedAt: new Date().toISOString(),
+    }
+  }
+
   async function reloadFromDb(): Promise<void> {
     let settings: LlmSettingsDoc | null
     try {
@@ -113,14 +130,7 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
 
     if (settings.activeProviderId === null) {
       // Admin deliberately switched the LLM tier off — do NOT fall back to env.
-      activeProvider = null
-      currentState = {
-        source: 'db',
-        status: 'disabled',
-        message: 'LLM tier explicitly disabled via admin panel',
-        configVersion: settings.configVersion,
-        appliedAt: new Date().toISOString(),
-      }
+      disableViaDb('LLM tier explicitly disabled via admin panel', settings.configVersion)
       return
     }
 
@@ -158,18 +168,40 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
     try {
       const cfg = providerToLlmConfig(doc, settings.activeModelId ?? undefined)
       const provider = buildLlmProvider(cfg)
-      activeProvider = provider
-      currentState = {
-        source: 'db',
-        status: 'active',
-        message: `Provider "${doc.name}" active (${provider.id})`,
-        providerId: doc._id.toHexString(),
-        providerName: doc.name,
-        vendor: doc.vendor,
-        model: cfg.model,
-        id: provider.id,
-        configVersion: settings.configVersion,
-        appliedAt: new Date().toISOString(),
+
+      // --- fusion: optional second provider merged into the result. ---
+      const secondaryState = await buildSecondary(settings, provider)
+      if (secondaryState) {
+        activeProvider = secondaryState.provider
+        currentState = {
+          source: 'db',
+          status: 'active',
+          message: `Fusion active: "${doc.name}" + "${secondaryState.name}" (${secondaryState.provider.id})`,
+          providerId: doc._id.toHexString(),
+          providerName: doc.name,
+          vendor: doc.vendor,
+          model: cfg.model,
+          id: secondaryState.provider.id,
+          secondaryProviderId: secondaryState.id,
+          secondaryProviderName: secondaryState.name,
+          secondaryModel: secondaryState.model,
+          configVersion: settings.configVersion,
+          appliedAt: new Date().toISOString(),
+        }
+      } else {
+        activeProvider = provider
+        currentState = {
+          source: 'db',
+          status: 'active',
+          message: `Provider "${doc.name}" active (${provider.id})`,
+          providerId: doc._id.toHexString(),
+          providerName: doc.name,
+          vendor: doc.vendor,
+          model: cfg.model,
+          id: provider.id,
+          configVersion: settings.configVersion,
+          appliedAt: new Date().toISOString(),
+        }
       }
     } catch (err) {
       const detail = err instanceof LlmProviderError ? err.message : String(err)
@@ -179,6 +211,46 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
         `Provider "${doc.name}" failed to initialize (${detail}) — reverted to env baseline (${envResult.message})`,
         settings.configVersion
       )
+    }
+  }
+
+  /**
+   * If the settings doc configures a secondary provider for fusion mode,
+   * loads + builds it and wraps (primary, secondary) in a FusionProvider.
+   * Returns null when no secondary is configured, or on any secondary failure
+   * (in which case the primary stands alone — fusion is best-effort).
+   */
+  async function buildSecondary(
+    settings: LlmSettingsDoc,
+    primary: LlmProvider
+  ): Promise<{ provider: LlmProvider; id: string; name: string; model: string } | null> {
+    const secId = settings.secondaryProviderId
+    if (!secId) return null
+    const id = secId.toHexString()
+    let secDoc: LlmProviderDoc | null
+    try {
+      secDoc = await deps.getProviderDoc(id)
+    } catch (err) {
+      console.error(`[llm-service] failed to load secondary provider ${id} — fusion disabled, primary stands alone:`, err)
+      return null
+    }
+    if (!secDoc || !secDoc.enabled) {
+      console.error(
+        `[llm-service] secondary provider ${id} is missing or disabled — fusion disabled, primary stands alone`
+      )
+      return null
+    }
+    try {
+      const secCfg = providerToLlmConfig(secDoc, settings.secondaryModelId ?? undefined)
+      const secondary = buildLlmProvider(secCfg)
+      const fusion = createFusionProvider({ primary, secondary })
+      return { provider: fusion, id, name: secDoc.name, model: secCfg.model }
+    } catch (err) {
+      const detail = err instanceof LlmProviderError ? err.message : String(err)
+      console.error(
+        `[llm-service] failed to initialize secondary provider "${secDoc.name}": ${detail} — fusion disabled, primary stands alone`
+      )
+      return null
     }
   }
 

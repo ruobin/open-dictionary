@@ -213,3 +213,70 @@ describe('llm/service: transient read failures keep the last applied provider', 
     expect(service.status()).toEqual(before)
   })
 })
+
+describe('llm/service: fusion (secondary provider)', () => {
+  it('builds a FusionProvider when a secondary is configured', async () => {
+    process.env.CONFIG_ENCRYPTION_KEY = KEY
+    vi.resetModules()
+    const { createLlmService: freshCreate } = await import('./service')
+    const { encryptSecret } = await import('../admin/crypto')
+    const primaryId = new ObjectId()
+    const secondaryId = new ObjectId()
+    const primaryDoc = providerDoc({ _id: primaryId, apiKey: encryptSecret('sk-p') })
+    const secondaryDoc = providerDoc({
+      _id: secondaryId,
+      name: 'Secondary',
+      vendor: 'glm',
+      apiKey: encryptSecret('sk-s'),
+      models: [{ id: 'glm-5.2', isDefault: true }],
+    })
+
+    const docs = new Map<string, LlmProviderDoc>([
+      [primaryId.toHexString(), primaryDoc],
+      [secondaryId.toHexString(), secondaryDoc],
+    ])
+    const service = freshCreate(ENV_ACTIVE, {
+      getSettings: async () => ({
+        _id: 'llm',
+        activeProviderId: primaryId,
+        secondaryProviderId: secondaryId,
+        configVersion: 20,
+      }),
+      getProviderDoc: async (id: string) => docs.get(id) ?? null,
+    })
+    await service.reloadFromDb()
+    const current = service.current()
+    expect(current?.id).toMatch(/^llm:fusion:/)
+    expect(service.status()).toMatchObject({
+      source: 'db',
+      status: 'active',
+      providerName: 'DB Provider',
+      secondaryProviderName: 'Secondary',
+      secondaryModel: 'glm-5.2',
+    })
+  })
+
+  it('falls back to the primary alone when the secondary is missing', async () => {
+    process.env.CONFIG_ENCRYPTION_KEY = KEY
+    vi.resetModules()
+    const { createLlmService: freshCreate } = await import('./service')
+    const { encryptSecret } = await import('../admin/crypto')
+    const primaryId = new ObjectId()
+    const primaryDoc = providerDoc({ _id: primaryId, apiKey: encryptSecret('sk-p') })
+
+    const docs = new Map<string, LlmProviderDoc>([[primaryId.toHexString(), primaryDoc]])
+    const service = freshCreate(ENV_ACTIVE, {
+      getSettings: async () => ({
+        _id: 'llm',
+        activeProviderId: primaryId,
+        secondaryProviderId: new ObjectId(), // dangling
+        configVersion: 21,
+      }),
+      getProviderDoc: async (id: string) => docs.get(id) ?? null,
+    })
+    await service.reloadFromDb()
+    // Primary stands alone — no fusion prefix.
+    expect(service.current()?.id).toContain('deepseek')
+    expect(service.status().secondaryProviderName).toBeUndefined()
+  })
+})

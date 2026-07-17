@@ -426,11 +426,16 @@ export function createAdminRouter(llmService: LlmService): Router {
     }
   })
 
-  // --- switch active provider/model ---
+  // --- switch active provider/model (+ optional secondary for fusion) ---
 
   router.put('/llm/active', async (req, res, next) => {
     try {
-      const body = (req.body ?? {}) as { providerId?: unknown; modelId?: unknown; verify?: unknown }
+      const body = (req.body ?? {}) as {
+        providerId?: unknown
+        modelId?: unknown
+        verify?: unknown
+        secondary?: unknown
+      }
       if (body.providerId !== null && typeof body.providerId !== 'string') {
         res.status(400).json({ error: 'validation', errors: ['providerId must be a string or null'] })
         return
@@ -440,29 +445,86 @@ export function createAdminRouter(llmService: LlmService): Router {
       const verify = body.verify === undefined ? true : Boolean(body.verify)
       const sub = actorSub(req)
 
-      if (providerId !== null && verify) {
-        const doc = await getProviderDoc(providerId)
+      // --- parse optional fusion secondary ---
+      // secondary: undefined = leave existing as-is; null = clear fusion;
+      // {providerId, modelId?} = enable fusion with this secondary.
+      let secondary: { providerId: string | null; modelId?: string } | null | undefined = undefined
+      if (body.secondary !== undefined) {
+        if (body.secondary === null) {
+          secondary = null
+        } else {
+          const sec = body.secondary as Record<string, unknown>
+          if (
+            sec &&
+            typeof sec === 'object' &&
+            (sec.providerId === null || typeof sec.providerId === 'string')
+          ) {
+            const secProviderId = sec.providerId as string | null
+            const secModelIdRaw = sec.modelId
+            const secModelId =
+              typeof secModelIdRaw === 'string' && secModelIdRaw.trim() ? secModelIdRaw.trim() : undefined
+            secondary = secProviderId === null ? null : { providerId: secProviderId, modelId: secModelId }
+          } else {
+            res
+              .status(400)
+              .json({ error: 'validation', errors: ['secondary must be null or { providerId, modelId? }'] })
+            return
+          }
+        }
+      }
+
+      // Fusion requires a primary — reject early with a clear message rather
+      // than silently dropping the secondary inside setActive.
+      if (providerId === null && secondary !== undefined && secondary !== null) {
+        res.status(400).json({ error: 'validation', errors: ['cannot set a secondary while disabling the primary'] })
+        return
+      }
+
+      /** Verifies one (providerId, modelId) target with a live test call.
+       *  Returns null on success, or sends an error response and returns a
+       *  non-null sentinel so the caller can early-return. */
+      async function verifyTarget(
+        target: 'primary' | 'secondary',
+        pid: string,
+        mid: string | undefined
+      ): Promise<null | 'sent'> {
+        const doc = await getProviderDoc(pid)
         if (!doc) {
-          res.status(404).json({ error: 'not_found' })
-          return
+          res.status(404).json({ error: 'not_found', target })
+          return 'sent'
         }
-        if (modelId && !doc.models.some((m) => m.id === modelId)) {
-          res.status(400).json({ error: 'unknown_model' })
-          return
+        if (mid && !doc.models.some((m) => m.id === mid)) {
+          res.status(400).json({ error: 'unknown_model', target })
+          return 'sent'
         }
-        const baseCfg = providerToLlmConfig(doc, modelId)
+        const baseCfg = providerToLlmConfig(doc, mid)
         const cfg = { ...baseCfg, timeoutMs: Math.min(baseCfg.timeoutMs ?? TEST_TIMEOUT_MS, TEST_TIMEOUT_MS) }
         try {
           const provider = llmService.buildEphemeral(cfg)
           await provider.translate({ text: TEST_WORD, sourceLang: 'en', targetLang: 'en' })
+          return null
         } catch (err) {
           const errorCode = err instanceof LlmProviderError ? err.code : 'network'
-          res.status(422).json({ error: 'verify_failed', errorCode })
-          return
+          res.status(422).json({ error: 'verify_failed', target, providerId: pid, errorCode })
+          return 'sent'
         }
       }
 
-      const result = await setActive(providerId, modelId, sub)
+      if (verify) {
+        if (providerId !== null) {
+          if (await verifyTarget('primary', providerId, modelId)) return
+        }
+        if (secondary && secondary.providerId !== null) {
+          // Don't re-verify an identical primary==secondary target.
+          const sameAsPrimary =
+            secondary.providerId === providerId && (secondary.modelId ?? modelId) === modelId
+          if (!sameAsPrimary) {
+            if (await verifyTarget('secondary', secondary.providerId, secondary.modelId)) return
+          }
+        }
+      }
+
+      const result = await setActive(providerId, modelId, sub, secondary)
       if (!result.ok) {
         const status = result.error === 'not_found' ? 404 : result.error === 'disabled' ? 409 : 400
         res.status(status).json({ error: result.error })
@@ -475,7 +537,16 @@ export function createAdminRouter(llmService: LlmService): Router {
         ip: reqIp(req),
         action: 'active.switch',
         target: providerId ? { providerId } : undefined,
-        diff: { activeProviderId: providerId, activeModelId: modelId ?? null },
+        diff: {
+          activeProviderId: providerId,
+          activeModelId: modelId ?? null,
+          ...(secondary !== undefined
+            ? {
+                secondaryProviderId: secondary?.providerId ?? null,
+                secondaryModelId: secondary?.modelId ?? null,
+              }
+            : {}),
+        },
       })
       res.json({ status: llmService.status() })
     } catch (err) {
