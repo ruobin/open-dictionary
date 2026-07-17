@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import { LANGUAGES } from '../shared/languages'
+import { MAX_LOOKUP_TEXT_LENGTH } from '../shared/limits'
 import { REPORT_RATE_LIMIT_RPM } from './config'
 import { CACHE_VERSION } from './translate'
 
@@ -15,7 +16,7 @@ import { CACHE_VERSION } from './translate'
  * collection and decides whether to purge/regenerate the cache entry.
  */
 const LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code))
-const MAX_TEXT_LENGTH = 256
+const MAX_TEXT_LENGTH = MAX_LOOKUP_TEXT_LENGTH
 const MAX_REASON_LENGTH = 500
 
 interface ReportDoc {

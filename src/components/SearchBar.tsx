@@ -5,6 +5,7 @@ import {
   DEFAULT_TARGET_LANG,
   LANGUAGES,
 } from '../../shared/languages'
+import { MAX_LOOKUP_TEXT_LENGTH } from '../../shared/limits'
 import { fetchSuggestions } from '../api/suggest'
 import { useI18n } from '../i18n/I18nContext'
 
@@ -82,7 +83,10 @@ export default function SearchBar({
   const userTypedRef = useRef(false)
 
   useEffect(() => {
-    setValue(initialValue)
+    // Clamp programmatic values (e.g. a long :term from a crafted deep link)
+    // so the input never holds more than the lookup-text limit the server
+    // enforces. onChange typing is already capped by the input's maxLength.
+    setValue(initialValue.slice(0, MAX_LOOKUP_TEXT_LENGTH))
     if (initialSourceLang !== undefined) setSourceLang(initialSourceLang)
     if (initialTargetLang !== undefined) setTargetLang(initialTargetLang)
     userTypedRef.current = false
@@ -189,6 +193,9 @@ export default function SearchBar({
             type="text"
             placeholder={t('search.placeholder')}
             value={value}
+            // Matches the server's lookup-text cap (shared/limits.ts) so a user
+            // can't type/paste something the backend would silently truncate.
+            maxLength={MAX_LOOKUP_TEXT_LENGTH}
             onChange={(e) => {
               userTypedRef.current = true
               setValue(e.target.value)

@@ -12,6 +12,7 @@ import type { TranslationCache } from './cache/translationCache'
 import type { LlmService } from './llm/service'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
 import { LANGUAGES } from '../shared/languages'
+import { MAX_LOOKUP_TEXT_LENGTH } from '../shared/limits'
 import {
   recordDictError,
   recordDictFallbackUsed,
@@ -87,7 +88,7 @@ export interface TranslateOutcome {
   tier: 'cache' | 'llm' | 'dictionary'
 }
 
-const MAX_TEXT_LENGTH = 256
+const MAX_TEXT_LENGTH = MAX_LOOKUP_TEXT_LENGTH
 
 // Whitelist of accepted language codes. Rejecting unknown `from`/`to` values
 // bounds the cache cardinality and prevents LLM-cost abuse (every distinct
