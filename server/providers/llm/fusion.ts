@@ -28,6 +28,16 @@ import {
  * so the translate tier falls through to the dictionary fallback. So enabling
  * fusion never makes the system *less* available than a single provider — at
  * worst it costs one extra paid call per uncached lookup.
+ *
+ * Merging: by default the PRIMARY provider does the merge — after both
+ * responses arrive, they're sent back to `primary.fuse()`, which asks the
+ * model to union + deduplicate them into one entry (handles paraphrased
+ * definitions and near-duplicate example sentences that a code heuristic
+ * can't). The deterministic {@link mergeContents} is kept ONLY as a fallback
+ * if the primary lacks a `fuse()` method or the fuse call itself fails, so a
+ * merge-step failure can never make fusion less available than a single
+ * provider. The fuse call runs in series after the two parallel calls, so
+ * fusion adds one extra primary-model round-trip to uncached lookup latency.
  */
 export interface FusionProviderConfig {
   primary: LlmProvider
@@ -54,12 +64,29 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
     if (ra && !rb) return ra
     if (rb && !ra) return rb
 
-    // Both succeeded — fuse their structured content.
+    // Both succeeded — fuse their structured content. Prefer the LLM-driven
+    // merge (primary.fuse); fall back to the deterministic code merge only
+    // if the primary can't fuse or the fuse call itself fails.
     const ca = (ra!.content as LlmTranslationContent) ?? { headword: '' }
     const cb = (rb!.content as LlmTranslationContent) ?? { headword: '' }
+    const parallelMeta = mergeMeta(ra!.meta, rb!.meta)
+
+    if (typeof primary.fuse === 'function') {
+      try {
+        const fused = await primary.fuse({ request: req, primary: ca, secondary: cb })
+        const meta = mergeMeta(parallelMeta, fused.meta)
+        return meta ? { content: fused.content, meta } : { content: fused.content }
+      } catch (err) {
+        // Don't let a merge-step failure break fusion — fall through to the
+        // deterministic code merge, which can't fail on well-formed input.
+        console.warn(
+          `[fusion] primary.fuse failed (${(err as Error)?.message ?? err}) — falling back to deterministic code merge`
+        )
+      }
+    }
+
     const merged = mergeContents(ca, cb)
-    const meta = mergeMeta(ra!.meta, rb!.meta)
-    return meta ? { content: merged, meta } : { content: merged }
+    return parallelMeta ? { content: merged, meta: parallelMeta } : { content: merged }
   }
 
   // moreExamples is a secondary follow-up feature; fusing it adds little value
@@ -68,7 +95,7 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
     return primary.moreExamples(req)
   }
 
-  return { id, translate, moreExamples }
+  return { id, translate, moreExamples, fuse: primary.fuse ? primary.fuse.bind(primary) : undefined }
 }
 
 /** Sums per-provider token usage when both report it (otherwise passes through). */

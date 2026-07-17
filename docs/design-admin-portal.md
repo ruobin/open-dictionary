@@ -944,17 +944,25 @@ section's exact interface/route/type claims over the source.
   results. If the secondary is missing/disabled/broken, fusion degrades to
   primary-alone (best-effort, never throws); `LlmServiceState` surfaces
   `secondaryProviderId`/`secondaryProviderName`/`secondaryModel`.
-- Merge strategy (pure, unit-tested in `fusion.test.ts`): both providers are
-  called via `Promise.allSettled`; meaningGroups are bucketed by
-  part-of-speech and senses deduped by definition similarity (token-Jaccard
-  ≥ 0.6) with CEFR/grammar/register filled from either side and examples
-  unioned; `typo` is only kept when *both* flag it (a real definition must
-  survive one model's false "typo" judgement); phonetic takes the longer IPA;
-  the remaining list fields (commonMistakes/collocations/wordFamily) are
-  unioned with case-insensitive dedupe. If one provider fails, the other's
-  result is used verbatim; if both fail, the error propagates to the
-  dictionary fallback — so fusion is never *less* available than a single
-  provider, at the cost of one extra paid call per uncached lookup.
+- Merge strategy: by default the **primary model** does the merge. After
+  both responses arrive, they're sent back to `primary.fuse()` (a new
+  optional `LlmProvider` method, implemented by the OpenAI-compatible
+  adapter in `openaiCompat.ts` via `buildFuseMessages`). Its prompt feeds
+  the model both JSON responses labeled "A (primary)" / "B (secondary)" and
+  instructs it to union + aggressively deduplicate into one entry following
+  the exact `LlmTranslationContent` schema — same intent as a code merge
+  (union collocations, fill metadata, longer-IPA-wins, typo only if both
+  flag it) but able to handle the semantic cases a heuristic can't:
+  paraphrased definitions folded into one sense, and near-duplicate example
+  sentences dropped. The deterministic `mergeContents()` (token-Jaccard
+  sense dedup) is retained **only as a fallback** — if the primary lacks a
+  `fuse()` method or the fuse call itself fails, the code merge runs so a
+  merge-step failure can never make fusion *less* available than a single
+  provider (`fusion.ts` logs the fallback). Tradeoff: the fuse call runs in
+  series after the two parallel calls, so fusion adds one extra
+  primary-model round-trip to uncached-lookup latency. Failure model
+  unchanged: one parallel provider fails → use the other verbatim (no
+  merge); both fail → re-throw → dictionary fallback.
 - Frontend: the Overview "Active provider" card (`ActiveSwitcher.tsx`) gained
   a **Secondary** dropdown; setting it (and hitting Switch) enables fusion,
   `— none —` is single-provider mode. The card heading becomes "Active

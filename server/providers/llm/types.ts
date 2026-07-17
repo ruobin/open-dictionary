@@ -108,6 +108,24 @@ export interface LlmTranslationResult {
 }
 
 /**
+ * "Fuse" (LLM-driven merge) request — given two structured responses for the
+ * same lookup (produced by the primary and secondary providers in fusion
+ * mode), ask a provider to merge + deduplicate them into one superior
+ * {@link LlmTranslationContent}. The original {@link LlmTranslationRequest}
+ * is included so the model has the language context for the merge prompt.
+ */
+export interface LlmFuseRequest {
+  request: LlmTranslationRequest
+  primary: LlmTranslationContent
+  secondary: LlmTranslationContent
+}
+
+export interface LlmFuseResult {
+  content: LlmTranslationContent
+  meta?: LlmUsageMeta
+}
+
+/**
  * "More examples like this" (to-do §3) — a follow-up call scoped to one
  * sense, optionally constrained by topic and/or level, rather than a full
  * translate() request.
@@ -157,4 +175,10 @@ export interface LlmProvider {
   readonly id: string
   translate(req: LlmTranslationRequest): Promise<LlmTranslationResult>
   moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult>
+  /** LLM-driven merge of two structured responses (fusion mode). Optional —
+   *  backed by any provider that exposes a raw chat completion (the
+   *  OpenAI-compatible adapter implements it). The {@link FusionProvider}
+   *  falls back to a deterministic code merge when this is absent or throws,
+   *  so fusion is never less available than a single provider. */
+  fuse?(req: LlmFuseRequest): Promise<LlmFuseResult>
 }

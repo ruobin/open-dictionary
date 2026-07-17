@@ -2,6 +2,8 @@ import {
   LlmProviderError,
   type CefrLevel,
   type LlmCommonMistake,
+  type LlmFuseRequest,
+  type LlmFuseResult,
   type LlmGradedExample,
   type LlmMeaningGroup,
   type LlmMoreExamplesRequest,
@@ -138,6 +140,73 @@ function buildMoreExamplesMessages(req: LlmMoreExamplesRequest): ChatMessage[] {
   return [
     { role: 'system', content: system },
     { role: 'user', content: task },
+  ]
+}
+
+/**
+ * Builds the "fuse" prompt — given two structured responses for the same
+ * lookup, ask the model to merge + deduplicate them into one superior entry.
+ * This is the LLM-driven merge used in fusion mode (the deterministic code
+ * merge in fusion.ts is only a fallback if this call fails). The schema is
+ * restated so the output conforms exactly to {@link LlmTranslationContent};
+ * the rules encode the same intent as the code merge (union + dedup, typo
+ * only if both flag it) but let the model handle the semantic cases
+ * (paraphrased definitions, near-duplicate example sentences) that
+ * token-Jaccard can't.
+ */
+function buildFuseMessages(req: LlmFuseRequest): ChatMessage[] {
+  const { text, sourceLang, targetLang } = req.request
+  const sourceName = languageName(sourceLang)
+  const targetName = languageName(targetLang)
+
+  const system = [
+    'You are a lexicographic editor for a language-learning dictionary.',
+    'Two dictionary models produced the two JSON responses below for the SAME lookup query.',
+    'Merge them into ONE JSON object that is strictly better than either alone: union the information, then aggressively deduplicate.',
+    'Respond with ONE value: a single JSON object (no markdown fences, no commentary) matching EXACTLY this shape:',
+    '{',
+    '  "headword": string,',
+    '  "translation"?: string,',
+    '  "phonetic"?: string,',
+    '  "meaningGroups"?: [{',
+    '    "partOfSpeech": string,',
+    '    "senses": [{',
+    '      "definition": string,',
+    '      "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2",',
+    '      "grammar"?: string,',
+    '      "register"?: string,',
+    '      "examples"?: [{ "text": string, "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2" }]',
+    '    }]',
+    '  }],',
+    '  "commonMistakes"?: [{ "wrong": string, "right": string, "note"?: string }],',
+    '  "collocations"?: string[],',
+    '  "wordFamily"?: string[],',
+    '  "typo"?: { "suggestion": string, "explanation"?: string }',
+    '}',
+    '',
+    'MERGING RULES (follow precisely):',
+    '- meaningGroups: combine both, grouped by part of speech. WITHIN each part of speech, MERGE senses that mean the same thing into a single sense — keep the clearest, most learner-appropriate definition; combine cefr/grammar/register (fill from whichever side had them); combine example sentences, DROPPING near-duplicate or paraphrased examples (keep only the most natural one of each meaning). Genuinely distinct senses stay separate. Order senses within a part of speech by importance for a learner.',
+    '- translation / phonetic: keep the more accurate and complete value; for phonetic prefer the longer IPA transcription.',
+    `- commonMistakes / collocations / wordFamily: union both lists, removing duplicates (case-insensitive) and keeping only the most natural entries.`,
+    '- typo: include the "typo" object ONLY if BOTH responses contain one; otherwise OMIT it entirely (a real definition must survive one model\'s false typo judgement).',
+    `- Preserve the original languages exactly — write definitions/notes in ${targetName} and example sentences in ${sourceName}; do NOT translate or reword them unnecessarily.`,
+    '- Omit any field with no content rather than emitting empty arrays or empty strings.',
+    '- On a perfect quality tie between the two responses, prefer Response A (primary).',
+  ].join('\n')
+
+  const user = [
+    `Query: "${text}" (sourceLang=${sourceLang}, targetLang=${targetLang})`,
+    '',
+    'Response A (primary):',
+    JSON.stringify(req.primary, null, 2),
+    '',
+    'Response B (secondary):',
+    JSON.stringify(req.secondary, null, 2),
+  ].join('\n')
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
   ]
 }
 
@@ -443,6 +512,17 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
       const messages = buildMoreExamplesMessages(req)
       const { content } = await callChat(messages, `moreExamples word="${req.word.slice(0, 60)}"`)
       return { examples: parseMoreExamplesContent(vendor, content) }
+    },
+    async fuse(req: LlmFuseRequest): Promise<LlmFuseResult> {
+      const messages = buildFuseMessages(req)
+      const { content, meta } = await callChat(messages, `fuse text="${req.request.text.slice(0, 60)}"`)
+      const parsed = parseContent(vendor, content)
+      // Same defensive guard as translate(): in same-language define mode the
+      // model occasionally re-introduces a translation field from the inputs.
+      if (req.request.sourceLang.toLowerCase() === req.request.targetLang.toLowerCase()) {
+        delete parsed.translation
+      }
+      return meta ? { content: parsed, meta } : { content: parsed }
     },
   }
 }

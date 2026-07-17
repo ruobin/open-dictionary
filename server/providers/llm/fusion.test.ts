@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
+  LlmFuseRequest,
+  LlmFuseResult,
   LlmMoreExamplesRequest,
   LlmMoreExamplesResult,
   LlmProvider,
@@ -8,7 +10,8 @@ import type {
 } from './types'
 import { createFusionProvider, definitionsSimilar, mergeContents } from './fusion'
 
-/** Minimal fake provider returning fixed content (or throwing). */
+/** Minimal fake provider returning fixed content (or throwing). No `fuse`
+ *  method → the FusionProvider falls back to the deterministic code merge. */
 function fakeProvider(
   id: string,
   content: LlmTranslationContent | null,
@@ -22,6 +25,28 @@ function fakeProvider(
     },
     async moreExamples(_req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
       return { examples: [] }
+    },
+  }
+}
+
+/** Fake provider with a controllable `fuse()` for testing the LLM-merge path.
+ *  `fuseImpl` receives the request; returns its result, or throws if it's null. */
+function fakeFusingProvider(
+  id: string,
+  content: LlmTranslationContent,
+  fuseImpl: ((req: LlmFuseRequest) => LlmFuseResult | Promise<LlmFuseResult>) | null
+): LlmProvider {
+  return {
+    id,
+    async translate() {
+      return { content }
+    },
+    async moreExamples() {
+      return { examples: [] }
+    },
+    async fuse(req: LlmFuseRequest): Promise<LlmFuseResult> {
+      if (fuseImpl === null) throw new Error(`${id}.fuse failed`)
+      return fuseImpl(req)
     },
   }
 }
@@ -161,7 +186,7 @@ describe('createFusionProvider', () => {
     expect(f.id).toBe('llm:fusion:llm:a:1+llm:b:2')
   })
 
-  it('merges content when both succeed and sums token usage', async () => {
+  it('falls back to code merge when primary has no fuse() — unions token usage', async () => {
     const f = createFusionProvider({
       primary: fakeProvider('llm:a:1', { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'to move' }] }] }, { promptTokens: 10, completionTokens: 5 }),
       secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }, { promptTokens: 8, completionTokens: 4 }),
@@ -170,6 +195,45 @@ describe('createFusionProvider', () => {
     const c = result.content as LlmTranslationContent
     expect(c.meaningGroups).toHaveLength(2)
     expect(result.meta).toEqual({ promptTokens: 18, completionTokens: 9 })
+  })
+
+  it('uses primary.fuse() to merge when it is present, returning its content + summed usage', async () => {
+    const fuseImpl = vi.fn(async (fusedReq: LlmFuseRequest): Promise<LlmFuseResult> => {
+      // The fuse call receives both structured responses + the original request.
+      expect(fusedReq.request.text).toBe('hello')
+      expect(fusedReq.primary.headword).toBe('run')
+      expect(fusedReq.secondary.headword).toBe('run')
+      return {
+        content: { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'merged sense' }] }] },
+        meta: { promptTokens: 50, completionTokens: 30 },
+      }
+    })
+    const f = createFusionProvider({
+      primary: fakeFusingProvider('llm:a:1', { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'to move' }] }] }, fuseImpl),
+      secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }, { promptTokens: 8, completionTokens: 4 }),
+    })
+    const result = await f.translate(req())
+    expect(fuseImpl).toHaveBeenCalledTimes(1)
+    const c = result.content as LlmTranslationContent
+    // The fuse result wins — not the code-merge union.
+    expect(c.meaningGroups).toEqual([{ partOfSpeech: 'verb', senses: [{ definition: 'merged sense' }] }])
+    // Meta sums the parallel calls (0 from primary fake + 12 from secondary) + fuse usage (80).
+    expect(result.meta).toEqual({ promptTokens: 58, completionTokens: 34 })
+  })
+
+  it('falls back to code merge when primary.fuse() throws', async () => {
+    const fuseImpl = vi.fn(async (): Promise<LlmFuseResult> => {
+      throw new Error('model overloaded')
+    })
+    const f = createFusionProvider({
+      primary: fakeFusingProvider('llm:a:1', { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'to move' }] }] }, fuseImpl),
+      secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }),
+    })
+    const result = await f.translate(req())
+    const c = result.content as LlmTranslationContent
+    // Fuse threw → deterministic code merge ran → union of both POS groups.
+    expect(c.meaningGroups).toHaveLength(2)
+    expect(fuseImpl).toHaveBeenCalledTimes(1)
   })
 
   it('degrades gracefully when the secondary fails — uses primary verbatim', async () => {

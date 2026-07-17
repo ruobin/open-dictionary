@@ -19,7 +19,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 - **Overview** — active provider + health, lookup/latency/fallback metrics, recent audit entries
 - **Providers** — runtime CRUD for LLM providers (encrypted keys, models, connection test, hot-swap the active provider/model without redeploy)
-- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; every uncached lookup calls both in parallel and merges their structured results (deduped senses, unioned examples/collocations) into one superior entry. Graceful degradation — if one fails, the other stands alone. Configured on the Overview page.
+- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; every uncached lookup calls both in parallel, then sends both responses back to the **primary model** to merge + deduplicate into one superior entry (folds paraphrased definitions, drops near-duplicate examples). Graceful degradation — if one fails the other stands alone, and if the merge call fails a deterministic code merge runs as a fallback. Configured on the Overview page.
 - **Latency lab** — on-demand multi-provider benchmarks with history and compare mode
 - **Playground** — direct LLM lookups (cache bypassed) to compare raw model output side-by-side before promoting a model
 - **Entries** — browse/search/delete cached translations (regenerate-on-next-lookup)
