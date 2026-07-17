@@ -17,6 +17,7 @@
     "start": "tsx server/index.ts",
     "llm:ping": "tsx scripts/llm-ping.ts",
     "prerender": "tsx scripts/prerender.ts",
+    "prerender:prod": "docker compose run --rm --no-deps --user root -v \"$PWD/scripts:/app/scripts\" -v \"$PWD/dist:/app/dist\" -e PUBLIC_BASE_URL=https://dict.ai-dictionary.org api node --import tsx scripts/prerender.ts",
     "eval": "tsx scripts/eval-harness.ts",
     "dev:all": "concurrently -n web,api -c blue,magenta \"npm:dev\" \"npm:server\"",
     "ext:install": "npm --prefix extension install",

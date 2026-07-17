@@ -319,8 +319,9 @@ Non-npm operational scripts (not run via npm):
 > ```bash
 > docker compose build api   # rebuild the API image from current source
 > docker compose up -d api   # recreate the container with the new image
-> npm run build                                                    # frontend
-> rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/    # publish SPA
+> npm run build                                                    # frontend bundle
+> npm run prerender:prod                                           # SEO pages (see below)
+> rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/    # publish SPA + prerendered pages
 > ```
 > Do **not** `npm start` the API directly on the host, and do not assume the
 > static host serving the SPA is anything other than that nginx web root —
@@ -341,6 +342,39 @@ In this deployment, that static host is nginx serving
 `/var/www/html/dict.ai-dictionary.org/`, published via
 `rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/` — see the
 callout above.
+
+#### SEO prerender (per-word static HTML + sitemap)
+
+`npm run build` alone ships a client-rendered SPA — fine for the app, but
+**poor for SEO** (word pages serve a bare `<div id="root">` shell with no
+per-word title/`<h1>`/structured data). `scripts/prerender.ts` fixes this by
+writing one static HTML file per cached en→en word (with proper
+`<title>`, `<meta description>`, `<link rel=canonical>`, JSON-LD
+`DefinedTerm`, and semantic `<h1>/<h3>/<ol>` markup), plus `/browse/<letter>`
+alphabetical index pages, a real `sitemap.xml`, and a `Sitemap:` line in
+`robots.txt`. The client uses `createRoot` (not hydrate), so React simply
+replaces the prerendered HTML on mount — no hydration-mismatch risk.
+
+It needs read access to the translation cache (Mongo), and **the prod Mongo
+is the `open-dictionary-mongo` container — reachable only on the compose
+network as hostname `mongo`, NOT on the host's `127.0.0.1:27017`** (that's
+an unrelated host mongod; the compose service publishes no port). So run the
+prerender in a throwaway container on the compose network (`npm run
+prerender:prod`), between `npm run build` and `rsync`:
+
+```bash
+npm run prerender:prod   # = docker compose run --rm --no-deps --user root \
+                         #     -v $PWD/scripts:/app/scripts -v $PWD/dist:/app/dist \
+                         #     -e PUBLIC_BASE_URL=https://dict.ai-dictionary.org \
+                         #     api node --import tsx scripts/prerender.ts
+```
+
+Only words already in the en→en LLM cache get a page — crawler traffic can
+never trigger a new LLM call. Re-run it whenever the cache grows so newly-
+cached words get indexed. The host nginx already has
+`absolute_redirect off; port_in_redirect off;` so the directory-style
+word pages redirect cleanly (no internal `:8443` port leaking into the
+`Location`).
 
 ### API server
 
