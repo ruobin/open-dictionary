@@ -314,34 +314,38 @@ Non-npm operational scripts (not run via npm):
 > not by running `npm start` on the host.** The API always runs as the
 > `open-dictionary-api` container from `docker-compose.yml`; `npm start` /
 > `npm run build && node ...` are for local dev/CI only and are **not** how
-> the live server gets (re)deployed. If you're an AI agent asked to "deploy"
-> or "redeploy" this app, that means:
+> the live server gets (re)deployed. If you're an AI agent (or human) asked
+> to "deploy" or "redeploy" this app, that means one command, run on the
+> prod host:
 > ```bash
-> docker compose build api   # rebuild the API image from current source
-> docker compose up -d api   # recreate the container with the new image
-> npm run build                                                    # frontend bundle
-> npm run prerender:prod                                           # SEO pages (see below)
-> rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/    # publish SPA + prerendered pages
+> npm run deploy:prod
 > ```
-> Do **not** `npm start` the API directly on the host, and do not assume the
-> static host serving the SPA is anything other than that nginx web root —
-> both are already fixed by the existing ops setup below.
+> That rebuilds the API image + recreates the container, builds the SPA,
+> regenerates the SEO prerender pages, and rsyncs everything to the nginx
+> web root. Deploy one side only with `npm run deploy:api` / `npm run deploy:web`.
+> The full sequence lives in [`scripts/deploy-prod.sh`](scripts/deploy-prod.sh)
+> (with guards + ordering enforced). Do **not** `npm start` the API directly
+> on the host, and do not assume the static host serving the SPA is anything
+> other than that nginx web root — both are already fixed by the ops setup below.
+
+### What `deploy:prod` does
+
+`scripts/deploy-prod.sh` runs, in order:
+
+1. **API**: `docker compose build api` → `docker compose up -d api` (rebuild image, recreate container — no-op if nothing changed).
+2. **SPA**: `npm run build` (⚠️ Vite empties `dist/` first).
+3. **SEO prerender**: `npm run prerender:prod` — regenerates per-word HTML into the same `dist/` (must run *before* rsync; the script enforces this so `rsync --delete` can never wipe the SEO pages off the live web root).
+4. **Publish**: `rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/` (override with `WEB_ROOT=…`).
+
+It fails fast if the web root doesn't exist (e.g. not on the prod host).
 
 ### Frontend (static)
 
-```bash
-npm run build
-```
-
-Drop `dist/` on any static host (Vercel, Netlify, S3+CloudFront, nginx…). The host must:
-
-- rewrite unknown paths to `/index.html` (SPA routing)
-- proxy `/api/*` to the API server
-
-In this deployment, that static host is nginx serving
-`/var/www/html/dict.ai-dictionary.org/`, published via
-`rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/` — see the
-callout above.
+`npm run build` produces a client-rendered SPA in `dist/`, droppable on any
+static host (Vercel, Netlify, S3+CloudFront, nginx…). The host must rewrite
+unknown paths to `/index.html` (SPA routing) and proxy `/api/*` to the API.
+In this deployment, that host is nginx serving
+`/var/www/html/dict.ai-dictionary.org/`, published by the deploy script.
 
 #### SEO prerender (per-word static HTML + sitemap)
 
@@ -358,29 +362,27 @@ replaces the prerendered HTML on mount — no hydration-mismatch risk.
 It needs read access to the translation cache (Mongo), and **the prod Mongo
 is the `open-dictionary-mongo` container — reachable only on the compose
 network as hostname `mongo`, NOT on the host's `127.0.0.1:27017`** (that's
-an unrelated host mongod; the compose service publishes no port). So run the
-prerender in a throwaway container on the compose network (`npm run
-prerender:prod`), between `npm run build` and `rsync`:
+an unrelated, empty host mongod; the compose service publishes no port). So
+`npm run prerender:prod` runs the script in a throwaway container on the
+compose network:
 
 ```bash
-npm run prerender:prod   # = docker compose run --rm --no-deps --user root \
-                         #     -v $PWD/scripts:/app/scripts -v $PWD/dist:/app/dist \
-                         #     -e PUBLIC_BASE_URL=https://dict.ai-dictionary.org \
-                         #     api node --import tsx scripts/prerender.ts
+npm run prerender:prod   # standalone — regenerate just the SEO pages into dist/
+                         # (deploy:prod already calls this; use it to refresh pages as the cache grows)
 ```
 
 Only words already in the en→en LLM cache get a page — crawler traffic can
-never trigger a new LLM call. Re-run it whenever the cache grows so newly-
-cached words get indexed. The host nginx already has
-`absolute_redirect off; port_in_redirect off;` so the directory-style
-word pages redirect cleanly (no internal `:8443` port leaking into the
-`Location`).
+never trigger a new LLM call. Re-run `npm run deploy:web` (or just
+`prerender:prod` + rsync) whenever the cache grows so newly-cached words get
+indexed. The host nginx has `absolute_redirect off; port_in_redirect off;`
+so the directory-style word pages redirect cleanly (no internal `:8443` port
+leaking into the `Location`).
 
 ### API server
 
-The actual production mechanism is `docker-compose.yml` (mongo + api, both
-containerized; see the file's header comment for the topology) — **not**
-`npm start`:
+The API runs via `docker-compose.yml` (mongo + api, both containerized; see
+the file's header comment for the topology) — **not** `npm start`. The deploy
+script handles this; the equivalent manual commands are:
 
 ```bash
 docker compose build api      # rebuild the image, does not touch the running container
