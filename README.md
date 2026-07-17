@@ -217,7 +217,7 @@ src/
                                   Entries, Reports, Audit (lazy-loaded, §Admin portal)
   styles/         app.css, admin.css
   vite‑env.d.ts   Vite / import.meta.env typings
-public/           favicon.svg, robots.txt
+public/           favicon.svg, favicon.png, favicon.jpeg, robots.txt
 scripts/
   llm‑ping.ts     Smoke‑test the active LLM provider
   eval‑harness.ts LLM output-quality eval harness (npm run eval)
@@ -279,6 +279,9 @@ docker‑compose.yml      Production stack (mongo + api) — see Production depl
 Dockerfile              Production API image
 .github/workflows/      CI (build + typecheck + smoke‑start)
 ```
+
+> **Docs index:** see [`docs/README.md`](docs/README.md) for a categorized index
+> of all long-form design, security, ops-planning, and asset how-to docs.
 
 ## Scripts
 
