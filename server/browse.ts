@@ -41,8 +41,9 @@ function eligibleWord(entry: DictionaryEntry | undefined): string | null {
   return entry.word
 }
 
-/** Reads the whole en→en LLM cache once and derives both the full nav-strip
- *  letter list and the requested letter's sorted/paginated word list.
+/** Reads the whole en→en cache (LLM + dictionary-fallback tiers) once and
+ *  derives both the full nav-strip letter list and the requested letter's
+ *  sorted/paginated word list.
  *  Returns null for a malformed `letter` param. */
 export async function getBrowsePage(
   docs: Pick<TranslationDoc, 'entries'>[],
@@ -95,7 +96,7 @@ export function createBrowseRouter(): Router {
       const docs = await db
         .collection<TranslationDoc>('translations')
         .find(
-          { sourceLang: 'en', targetLang: 'en', source: 'llm', version: CACHE_VERSION },
+          { sourceLang: 'en', targetLang: 'en', source: { $in: ['llm', 'dict'] }, version: CACHE_VERSION },
           { projection: { entries: 1 } }
         )
         .toArray()

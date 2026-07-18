@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   // en→en only (to-do §5 canonical-URL decision): translation-pair variants
   // aren't separately indexed yet, so only the canonical page is prerendered.
   const docs = await collection
-    .find({ sourceLang: 'en', targetLang: 'en', source: 'llm', version: CACHE_VERSION })
+    .find({ sourceLang: 'en', targetLang: 'en', source: { $in: ['llm', 'dict'] }, version: CACHE_VERSION })
     .toArray()
 
   const sitemapUrls: SitemapUrl[] = [
