@@ -1,12 +1,15 @@
 import type { DictionaryEntry } from '../server/translate'
 import { buildWordDescription, buildWordTitle } from '../shared/seo'
 import { wordHref } from '../shared/wordLink'
+import { bucketLetter, paginate, WORDS_PER_BROWSE_PAGE } from '../shared/browse'
 
 /**
  * Pure HTML-building helpers for scripts/prerender.ts. Kept dependency-free
  * (no Mongo/fs) so they're unit-testable like the rest of this codebase's
  * pure functions.
  */
+
+export { bucketLetter, paginate, WORDS_PER_BROWSE_PAGE }
 
 export function escapeHtml(value: string): string {
   return value
@@ -15,25 +18,6 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
-}
-
-export const WORDS_PER_BROWSE_PAGE = 200
-
-/** First-letter bucket for the alphabetical browse pages: 'a'-'z', or
- *  'other' for anything not starting with a plain ASCII letter. */
-export function bucketLetter(word: string): string {
-  const c = word.trim().toLowerCase().charAt(0)
-  return /[a-z]/.test(c) ? c : 'other'
-}
-
-/** Splits a sorted list into fixed-size pages (page 1 first). */
-export function paginate<T>(items: T[], pageSize: number): T[][] {
-  if (items.length === 0) return [[]]
-  const pages: T[][] = []
-  for (let i = 0; i < items.length; i += pageSize) {
-    pages.push(items.slice(i, i + pageSize))
-  }
-  return pages
 }
 
 function pickFirstDefinition(entry: DictionaryEntry): string | undefined {

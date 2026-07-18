@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { useI18n } from '../i18n/I18nContext'
 
@@ -34,7 +35,7 @@ export default function AboutPage() {
       <section className="about-section">
         <h2>{t('about.browseTitle')}</h2>
         <p>
-          <a href="/browse/a">{t('about.browseLink')}</a>.
+          <Link to="/browse/a">{t('about.browseLink')}</Link>.
         </p>
       </section>
     </div>

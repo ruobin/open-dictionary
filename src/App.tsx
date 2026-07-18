@@ -9,6 +9,7 @@ import WordPage from './pages/WordPage'
 import HistoryPage from './pages/HistoryPage'
 import AboutPage from './pages/AboutPage'
 import PrivacyPage from './pages/PrivacyPage'
+import BrowsePage from './pages/BrowsePage'
 
 const AdminApp = lazy(() => import('./pages/admin'))
 
@@ -30,6 +31,8 @@ function DictionaryApp() {
             <Route path="/history" element={<HistoryPage history={userData.history} />} />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/browse/:letter" element={<BrowsePage />} />
+            <Route path="/browse/:letter/:page" element={<BrowsePage />} />
           </Routes>
         </div>
         <Sidebar history={userData.history} favorites={favorites.favorites} />

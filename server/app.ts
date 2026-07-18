@@ -20,6 +20,7 @@ import { createSuggestRouter } from './suggest'
 import { createReportRouter } from './report'
 import { createWordOfDayRouter } from './wordOfDay'
 import { createMoreExamplesRouter } from './moreExamples'
+import { createBrowseRouter } from './browse'
 import { createAdminRouter } from './admin/router'
 import { createRequireAdmin } from './admin/auth'
 import type { LlmService } from './llm/service'
@@ -131,6 +132,7 @@ export function createApp({ llmService, dictionaryProvider, translationCache }: 
   app.use('/api', createReportRouter())
   app.use('/api', createWordOfDayRouter())
   app.use('/api', createMoreExamplesRouter())
+  app.use('/api', createBrowseRouter())
   app.use('/api', createFavoritesRouter(checkJwt))
 
   // Allowlist-only admin portal (design doc §17 Q1: no Auth0 RBAC/permissions

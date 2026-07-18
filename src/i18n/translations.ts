@@ -91,6 +91,16 @@ const en = {
   'about.browseTitle': 'Browse',
   'about.browseLink': 'Browse all words alphabetically',
 
+  'browse.title': 'Browse: {letter}',
+  'browse.docTitlePrefix': 'Browse words starting with ',
+  'browse.docTitleFallback': 'Browse — Open Dictionary',
+  'browse.docDescription': 'Alphabetical list of {count} word(s) starting with "{letter}" on Open Dictionary.',
+  'browse.pageOf': 'page {page} of {total}',
+  'browse.empty': 'No words yet for this letter.',
+  'browse.notFoundTitle': 'That letter isn\u2019t available',
+  'browse.previous': 'Previous',
+  'browse.next': 'Next',
+
   'privacy.title': 'Privacy',
   'privacy.docTitle': 'Privacy — Open Dictionary',
   'privacy.docDescription':
@@ -203,6 +213,16 @@ const zh: Dictionary = {
   'about.browseTitle': '浏览',
   'about.browseLink': '按字母顺序浏览所有单词',
 
+  'browse.title': '浏览：{letter}',
+  'browse.docTitlePrefix': '浏览以 ',
+  'browse.docTitleFallback': '浏览 — Open Dictionary',
+  'browse.docDescription': '以“{letter}”开头的 {count} 个单词的字母列表（Open Dictionary）。',
+  'browse.pageOf': '第 {page} / {total} 页',
+  'browse.empty': '该字母暂无单词。',
+  'browse.notFoundTitle': '该字母不可用',
+  'browse.previous': '上一页',
+  'browse.next': '下一页',
+
   'privacy.title': '隐私',
   'privacy.docTitle': '隐私 — Open Dictionary',
   'privacy.docDescription': 'Open Dictionary 及其 Chrome 扩展会向服务器发送什么，以及绝不收集什么。',
@@ -311,6 +331,16 @@ const ja: Dictionary = {
     ' リンクを使用してください——エントリーが審査のためにフラグされます。手作業では確認しきれない規模のコーパスにおいて、不正確なエントリーを見つける主な方法です。',
   'about.browseTitle': 'ブラウズ',
   'about.browseLink': 'すべての単語をアルファベット順で見る',
+
+  'browse.title': 'ブラウズ：{letter}',
+  'browse.docTitlePrefix': '「',
+  'browse.docTitleFallback': 'ブラウズ — Open Dictionary',
+  'browse.docDescription': '「{letter}」で始まる単語 {count} 件のアルファベット順リスト（Open Dictionary）。',
+  'browse.pageOf': '{page} / {total} ページ',
+  'browse.empty': 'この文字の単語はまだありません。',
+  'browse.notFoundTitle': 'この文字は利用できません',
+  'browse.previous': '前へ',
+  'browse.next': '次へ',
 
   'privacy.title': 'プライバシー',
   'privacy.docTitle': 'プライバシー — Open Dictionary',
@@ -423,6 +453,16 @@ const es: Dictionary = {
     ' en la parte inferior de cualquier página de palabra: marca la entrada para revisión. Esta es la forma principal de detectar entradas inexactas en un corpus demasiado grande para revisarlo a mano.',
   'about.browseTitle': 'Explorar',
   'about.browseLink': 'Explorar todas las palabras alfabéticamente',
+
+  'browse.title': 'Explorar: {letter}',
+  'browse.docTitlePrefix': 'Explorar palabras que empiezan con ',
+  'browse.docTitleFallback': 'Explorar — Open Dictionary',
+  'browse.docDescription': 'Lista alfabética de {count} palabra(s) que empiezan con "{letter}" en Open Dictionary.',
+  'browse.pageOf': 'página {page} de {total}',
+  'browse.empty': 'Todavía no hay palabras para esta letra.',
+  'browse.notFoundTitle': 'Esa letra no está disponible',
+  'browse.previous': 'Anterior',
+  'browse.next': 'Siguiente',
 
   'privacy.title': 'Privacidad',
   'privacy.docTitle': 'Privacidad — Open Dictionary',
