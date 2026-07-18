@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
+import ExtensionBanner from './components/ExtensionBanner'
 import { useUserData } from './hooks/useUserData'
 import { useFavorites } from './hooks/useFavorites'
 import Home from './pages/Home'
@@ -19,6 +20,7 @@ function DictionaryApp() {
 
   return (
     <div className="app-shell">
+      <ExtensionBanner />
       <Header />
       <main className="app-main">
         <div className="content">

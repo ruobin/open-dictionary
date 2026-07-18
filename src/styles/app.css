@@ -88,6 +88,25 @@ button { font-family: inherit; cursor: pointer; }
 /* Layout */
 .app-shell { min-height: 100vh; display: flex; flex-direction: column; }
 
+/* Extension promo banner */
+.ext-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 32px;
+  background: var(--red);
+  color: var(--on-accent);
+}
+.ext-banner-text { margin: 0; font-size: 14px; }
+.ext-banner-text strong { font-weight: 700; }
+.ext-banner-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ext-banner-cta { background: var(--on-accent); color: var(--red); }
+.ext-banner-cta:hover { background: color-mix(in srgb, var(--on-accent) 85%, transparent); }
+.ext-banner-dismiss { border-color: transparent; color: var(--on-accent); }
+.ext-banner-dismiss:hover { border-color: var(--on-accent); color: var(--on-accent); }
+
 .app-header {
   display: flex;
   align-items: center;
@@ -775,6 +794,7 @@ button { font-family: inherit; cursor: pointer; }
   .home-title { font-size: 36px; }
   .word-header { flex-direction: column; }
   .word-actions { align-items: flex-start; }
+  .ext-banner { justify-content: flex-start; padding: 10px 20px; }
 }
 
 /* --- Refinements: elegant, restrained polish --- */

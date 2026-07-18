@@ -29,6 +29,12 @@ const en = {
   'theme.systemLabel': 'System',
   'lang.aria': 'Interface language',
 
+  'banner.extensionTitle': 'Get faster lookups.',
+  'banner.extensionBody':
+    'Install the free Open Dictionary Chrome extension to look up words instantly, right from any page.',
+  'banner.extensionCta': 'Add to Chrome',
+  'banner.extensionDismiss': 'Dismiss',
+
   'home.title': 'Look up a word.',
   'home.subtitle':
     'AI-powered definitions, pronunciation, and examples — built for language learners.',
@@ -154,6 +160,11 @@ const zh: Dictionary = {
   'theme.systemLabel': '跟随系统',
   'lang.aria': '界面语言',
 
+  'banner.extensionTitle': '查词更快捷。',
+  'banner.extensionBody': '安装免费的 Open Dictionary Chrome 扩展，在任意网页上即时查词。',
+  'banner.extensionCta': '添加到 Chrome',
+  'banner.extensionDismiss': '关闭',
+
   'home.title': '查一个词。',
   'home.subtitle': 'AI 驱动的释义、发音与例句——专为语言学习者打造。',
   'home.wordOfDay': '每日一词',
@@ -271,6 +282,12 @@ const ja: Dictionary = {
   'theme.darkLabel': 'ダーク',
   'theme.systemLabel': 'システム',
   'lang.aria': '表示言語',
+
+  'banner.extensionTitle': 'もっと速く調べよう。',
+  'banner.extensionBody':
+    '無料の Open Dictionary Chrome 拡張機能をインストールすると、どのページからでもすぐに単語を調べられます。',
+  'banner.extensionCta': 'Chrome に追加',
+  'banner.extensionDismiss': '閉じる',
 
   'home.title': '単語を調べる。',
   'home.subtitle': 'AI による意味・発音・例文——語学学習者のために。',
@@ -391,6 +408,12 @@ const es: Dictionary = {
   'theme.darkLabel': 'Oscuro',
   'theme.systemLabel': 'Sistema',
   'lang.aria': 'Idioma de la interfaz',
+
+  'banner.extensionTitle': 'Busca palabras más rápido.',
+  'banner.extensionBody':
+    'Instala la extensión gratuita de Open Dictionary para Chrome y busca palabras al instante desde cualquier página.',
+  'banner.extensionCta': 'Añadir a Chrome',
+  'banner.extensionDismiss': 'Cerrar',
 
   'home.title': 'Busca una palabra.',
   'home.subtitle':
