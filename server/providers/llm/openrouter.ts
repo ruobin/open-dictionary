@@ -1,5 +1,6 @@
 import { type LlmProvider } from './types'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
+import { DEFAULT_OPENROUTER_TITLE } from '../../../shared/providerDefaults'
 
 /**
  * OpenRouter provider (OpenAI-compatible). Docs: https://openrouter.ai
@@ -26,12 +27,6 @@ export interface OpenRouterProviderConfig {
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 export const DEFAULT_OPENROUTER_MODEL = 'minimax/minimax-m3'
-
-/** App name shown next to OpenRouter dashboard log entries when no X-Title
- *  is configured. Lets operators see "Open Dictionary" traffic out of the
- *  box — set OPENROUTER_TITLE or add an X-Title header in the admin portal
- *  to override. */
-const DEFAULT_OPENROUTER_TITLE = 'Open Dictionary'
 
 /** Lowercased names of the two OpenRouter attribution headers; matched
  *  case-insensitively against `headers` so admin-portal input in any casing

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   createProvider,
   updateProvider,
@@ -8,6 +8,7 @@ import {
   type ProviderView,
   type ProviderModelInput,
 } from '../../api/admin'
+import { defaultHeadersForVendor } from '../../../shared/providerDefaults'
 import { describeApiError } from './adminErrors'
 import ApiKeyField from './ApiKeyField'
 
@@ -60,6 +61,26 @@ function newHeaderRow(name = '', value = ''): HeaderRow {
   return { key: `h${headerRowSeq}`, name, value }
 }
 
+/** Stable signature of a header-row set by (name, value), ignoring the React
+ *  `key` and row order — used to detect whether the user has customized the
+ *  rows since the defaults were applied. Empty string = no rows. */
+function headerRowsSig(rows: { name: string; value: string }[]): string {
+  return rows
+    .map((r) => `${r.name.trim()}=${r.value.trim()}`)
+    .filter((s) => s.length > 1) // drop "name=" with empty value
+    .sort()
+    .join('|')
+}
+
+/** The deployment's public origin — matches the server's PUBLIC_BASE_URL in
+ *  production (the server uses the same constant via shared/providerDefaults). */
+const APP_ORIGIN = typeof window !== 'undefined' ? window.location.origin : ''
+
+/** Builds HeaderRow[] for a vendor's defaults (with stable React keys). */
+function defaultHeaderRows(vendor: string): HeaderRow[] {
+  return defaultHeadersForVendor(vendor, APP_ORIGIN).map((h) => newHeaderRow(h.name, h.value))
+}
+
 /** Editor for both create and edit. PATCH requires the full field set (the
  *  server reuses the same validator for create and update — see
  *  server/admin/providersRepo.ts's validateProviderFields), so this always
@@ -73,13 +94,37 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
   const [models, setModels] = useState<ModelRow[]>(
     initial && initial.models.length > 0 ? initial.models.map(newModelRow) : [newModelRow()]
   )
-  const [headers, setHeaders] = useState<HeaderRow[]>(
-    initial?.headers ? Object.entries(initial.headers).map(([k, v]) => newHeaderRow(k, v)) : []
+  // Headers: db-saved values win when editing; otherwise pre-fill the
+  // vendor's default headers (e.g. OpenRouter's X-Title/HTTP-Referer) rather
+  // than leaving the section empty — makes the server's fallback defaults
+  // (server/providers/llm/openrouter.ts) visible and explicit instead of
+  // implicit. `lastDefaultsSig` tracks whether the current rows still match
+  // "the defaults we applied" so a later vendor change only swaps them when
+  // the operator hasn't customized anything (see handleVendorChange).
+  const [headers, setHeaders] = useState<HeaderRow[]>(() =>
+    initial?.headers && Object.keys(initial.headers).length > 0
+      ? Object.entries(initial.headers).map(([k, v]) => newHeaderRow(k, v))
+      : defaultHeaderRows(initial?.vendor ?? 'deepseek')
   )
+  const lastDefaultsSig = useRef(headerRowsSig(defaultHeaderRows(initial?.vendor ?? 'deepseek')))
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; ms?: number; errorCode?: string } | null>(null)
   const [errors, setErrors] = useState<string[]>([])
+
+  function handleVendorChange(newVendor: string): void {
+    setVendor(newVendor)
+    setHeaders((prev) => {
+      const currentSig = headerRowsSig(prev)
+      // Swap to the new vendor's defaults only if the header rows are empty
+      // or still match the defaults we last applied — an operator's
+      // hand-edited or custom headers are never overwritten.
+      if (currentSig !== '' && currentSig !== lastDefaultsSig.current) return prev
+      const next = defaultHeaderRows(newVendor)
+      lastDefaultsSig.current = headerRowsSig(next)
+      return next
+    })
+  }
 
   function updateModel(key: string, patch: Partial<ModelRow>): void {
     setModels((prev) => prev.map((m) => (m.key === key ? { ...m, ...patch } : m)))
@@ -220,7 +265,7 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
 
       <label className="admin-field">
         <span>Vendor</span>
-        <select className="admin-input" value={vendor} onChange={(e) => setVendor(e.target.value)}>
+        <select className="admin-input" value={vendor} onChange={(e) => handleVendorChange(e.target.value)}>
           {VENDOR_OPTIONS.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
         </select>
       </label>
@@ -273,9 +318,15 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
 
       <div className="admin-field">
         <span>Extra headers</span>
+        {vendor === 'openrouter' && (
+          <p className="admin-hint">
+            Pre-filled with OpenRouter's recommended attribution headers so this app's traffic is
+            distinguishable in the OpenRouter dashboard. Edit or remove as needed.
+          </p>
+        )}
         {headers.map((h) => (
           <div className="admin-header-row" key={h.key}>
-            <input className="admin-input" value={h.name} onChange={(e) => updateHeader(h.key, { name: e.target.value })} placeholder="referer" />
+            <input className="admin-input" value={h.name} onChange={(e) => updateHeader(h.key, { name: e.target.value })} placeholder="HTTP-Referer" />
             <input className="admin-input" value={h.value} onChange={(e) => updateHeader(h.key, { value: e.target.value })} placeholder="https://dict.ai-dictionary.org" />
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeHeader(h.key)}>Remove</button>
           </div>
