@@ -11,6 +11,10 @@ const LLM_BENCHMARKS_TTL_SECONDS = 90 * 24 * 60 * 60 // 90 days
 const LLM_LATENCY_PROBES_TTL_SECONDS = 30 * 24 * 60 * 60 // 30 days
 const ADMIN_AUDIT_TTL_SECONDS = 365 * 24 * 60 * 60 // 1 year
 
+// User activity log (docs/design-user-activity-log.md §3): highest-volume,
+// most privacy-sensitive collection in the app, so it gets the shortest TTL.
+const ACTIVITY_LOG_TTL_SECONDS = 180 * 24 * 60 * 60 // 180 days
+
 /** Connects to MongoDB and ensures required indexes (idempotent). */
 export async function connectMongo(uri: string, dbName = 'open-dictionary'): Promise<Db> {
   client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 })
@@ -112,4 +116,17 @@ async function ensureIndexes(db: Db): Promise<void> {
     { ts: 1 },
     { expireAfterSeconds: ADMIN_AUDIT_TTL_SECONDS, name: 'admin_audit_ttl' }
   )
+
+  // --- User activity log (docs/design-user-activity-log.md §3) ---
+
+  // One doc per public lookup: word, langs, tier, IP, parsed device info.
+  // TTL index on `ts` doubles as the sort index for newest-first cursor
+  // pagination (same precedent as admin_audit_ttl above); the `word` index
+  // supports the summary's per-word top-words aggregation.
+  const activityLog = db.collection('activity_log')
+  await activityLog.createIndex(
+    { ts: 1 },
+    { expireAfterSeconds: ACTIVITY_LOG_TTL_SECONDS, name: 'activity_log_ttl' }
+  )
+  await activityLog.createIndex({ word: 1 }, { name: 'activity_log_word' })
 }

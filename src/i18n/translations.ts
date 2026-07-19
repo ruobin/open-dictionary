@@ -124,6 +124,8 @@ const en = {
   'privacy.dataTitle': 'What is never collected',
   'privacy.dataP1':
     'No browsing history, no page content beyond an explicit selection, no advertising identifiers, and no data sold or shared with third parties for advertising.',
+  'privacy.activityP1':
+    'For internal product analytics only, each lookup is logged with the word searched, your IP address, and a coarse device/browser summary (never the raw browser identifier). This log is used only to understand which words are popular and how the app is growing, is visible only to site administrators, is kept for at most 180 days, and is never shared with third parties or used for advertising.',
 
 
   'report.thanks': 'Thanks — we\u2019ll take a look.',
@@ -250,6 +252,8 @@ const zh: Dictionary = {
   'privacy.dataTitle': '绝不收集的内容',
   'privacy.dataP1':
     '不收集浏览历史，不收集明确选中之外的页面内容，不收集广告标识符，也不会为广告目的出售或与第三方共享数据。',
+  'privacy.activityP1':
+    '仅用于内部产品分析：每次查询都会记录所搜索的单词、你的 IP 地址，以及粗粒度的设备/浏览器摘要（绝不记录原始浏览器标识字符串）。此记录仅用于了解哪些单词受欢迎以及应用的增长情况，仅站点管理员可见，最长保留 180 天，绝不与第三方共享或用于广告目的。',
 
 
   'report.thanks': '感谢反馈——我们会查看。',
@@ -376,6 +380,8 @@ const ja: Dictionary = {
   'privacy.dataTitle': '収集しない内容',
   'privacy.dataP1':
     '閲覧履歴、明示的な選択を超えるページコンテンツ、広告識別子は収集せず、広告目的でデータを販売したり第三者と共有したりすることもありません。',
+  'privacy.activityP1':
+    '社内向けのプロダクト分析のためだけに、各検索について検索された単語、あなたの IP アドレス、および大まかなデバイス/ブラウザの概要（生のブラウザ識別文字列は含みません）が記録されます。この記録は、どの単語が人気か、アプリがどのように成長しているかを把握する目的にのみ使用され、サイト管理者のみが閲覧でき、最長180日間保持され、第三者と共有されたり広告目的で使用されたりすることはありません。',
 
 
   'report.thanks': 'ありがとうございます——確認します。',
@@ -504,6 +510,8 @@ const es: Dictionary = {
   'privacy.dataTitle': 'Lo que nunca se recopila',
   'privacy.dataP1':
     'Ningún historial de navegación, ningún contenido de página más allá de una selección explícita, ningún identificador publicitario, y ningún dato vendido o compartido con terceros con fines publicitarios.',
+  'privacy.activityP1':
+    'Solo para fines de análisis interno del producto, cada búsqueda se registra con la palabra buscada, tu dirección IP y un resumen general del dispositivo/navegador (nunca el identificador de navegador sin procesar). Este registro se usa únicamente para entender qué palabras son populares y cómo crece la aplicación, solo es visible para los administradores del sitio, se conserva como máximo 180 días, y nunca se comparte con terceros ni se usa con fines publicitarios.',
 
 
   'report.thanks': 'Gracias — lo revisaremos.',

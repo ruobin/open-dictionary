@@ -576,3 +576,63 @@ export async function listReports(auth: AdminAuth, query: ListReportsQuery = {})
 export function dismissReport(auth: AdminAuth, id: string): Promise<void> {
   return adminFetch(auth, `/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+// --- user activity log (docs/design-user-activity-log.md) ---
+
+export type ActivityTier = 'cache' | 'llm' | 'dictionary'
+export type ActivityChannel = 'web' | 'extension' | 'other'
+
+export interface ActivityLogView {
+  id: string
+  ts: string
+  word: string
+  sourceLang: string
+  targetLang: string
+  tier: ActivityTier
+  latencyMs: number
+  ip: string
+  channel: ActivityChannel
+  device: { type: string; browser?: string; os?: string }
+}
+
+export interface ActivitySummary {
+  windowDays: number
+  totalLookups: number
+  uniqueIps: number
+  byTier: Record<string, number>
+  byChannel: Record<string, number>
+  byDeviceType: Record<string, number>
+  topWords: { word: string; count: number }[]
+  dailyCounts: { date: string; count: number }[]
+}
+
+export interface ListActivityQuery {
+  word?: string
+  tier?: ActivityTier
+  channel?: ActivityChannel
+  deviceType?: string
+  limit?: number
+  before?: string
+}
+
+export interface ListActivityResult {
+  entries: ActivityLogView[]
+  hasMore: boolean
+}
+
+export async function listActivity(auth: AdminAuth, query: ListActivityQuery = {}): Promise<ListActivityResult> {
+  const qs = new URLSearchParams()
+  if (query.word) qs.set('word', query.word)
+  if (query.tier) qs.set('tier', query.tier)
+  if (query.channel) qs.set('channel', query.channel)
+  if (query.deviceType) qs.set('deviceType', query.deviceType)
+  if (query.limit) qs.set('limit', String(query.limit))
+  if (query.before) qs.set('before', query.before)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return adminFetch<ListActivityResult>(auth, `/activity${suffix}`)
+}
+
+export function getActivitySummary(auth: AdminAuth, days?: number): Promise<ActivitySummary> {
+  const suffix = days ? `?days=${days}` : ''
+  return adminFetch(auth, `/activity/summary${suffix}`)
+}

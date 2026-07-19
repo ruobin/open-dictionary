@@ -64,6 +64,7 @@ controls, expanded from design doc §13:
 | CSRF | N/A — bearer tokens only, `credentials: false`, no cookies; unchanged from the rest of the API. |
 | Injection | Provider ids are validated as Mongo `ObjectId`s before use; `translations._id` (`GET/DELETE /entries/:id`) is validated against `/^[a-f0-9]{40}$/`; the `word` filter is regex-escaped (`escapeRegex()`) and always an anchored prefix match; all writes bind typed scalars, per the existing convention. |
 | Cache entries CRUD (`/api/admin/entries*`, `/api/admin/reports/summary`, docs/design-admin-cache-entries.md) | Same trust boundary as the rest of this table — no new auth model. Deletes are hard (no undo) but audited; batch delete is capped at 20 explicit ids per call, never a query-shaped bulk delete. Entry detail responses expose the same `DictionaryEntry` content already public via `/api/translate/:text` — no new data exposure. |
+| User activity log (`/api/admin/activity*`, docs/design-user-activity-log.md) | Same trust boundary — read-only, admin-only. **New PII surface**: unlike every other collection here, `activity_log` persists the client IP and a parsed device/browser/OS summary (never the raw `User-Agent`) for every public, unauthenticated `/api/translate/:text` request, disclosed on `/privacy`. Shortest TTL in the app (180 days) given the volume/sensitivity tradeoff. |
 
 **Operator setup required:** `ADMIN_USER_IDS` and `CONFIG_ENCRYPTION_KEY` are
 unset by default. With both unset, `/api/admin/*` fail-closed (every request

@@ -262,3 +262,35 @@
 }
 .admin-playground-results { display: flex; flex-direction: column; gap: 0; }
 .admin-playground-card .admin-page-actions { align-items: center; margin-bottom: 8px; }
+
+/* Activity (docs/design-user-activity-log.md) */
+.admin-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.admin-daily-bars { list-style: none; margin: 0; padding: 0; }
+.admin-daily-bars li {
+  display: grid;
+  grid-template-columns: 90px 1fr 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.admin-daily-bar-date { color: var(--muted); white-space: nowrap; }
+.admin-daily-bar-track {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.admin-daily-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--red);
+  min-width: 2px;
+}
+.admin-daily-bar-count { text-align: right; color: var(--ink-soft); }

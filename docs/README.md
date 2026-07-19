@@ -20,6 +20,7 @@ Read these for the *"why"* behind a subsystem.
 | [`design-translation-cache.md`](./design-translation-cache.md) | Full design rationale for the translation cache + LLM provider tier (the core lookup pipeline). |
 | [`design-admin-portal.md`](./design-admin-portal.md) | Admin portal design — runtime provider CRUD, latency lab, playground, audit log. See **§18** for as-built delta. |
 | [`design-admin-cache-entries.md`](./design-admin-cache-entries.md) | Admin **Entries / Reports** pages — browse/search/delete cached translations + triage user reports. See **§17** for as-built delta. |
+| [`design-user-activity-log.md`](./design-user-activity-log.md) | Admin **Activity** page — per-lookup activity log (word, IP, device) + aggregated summary for user-behavior/growth analytics. |
 | [`design-geo-load-balancing.md`](./design-geo-load-balancing.md) | Multi-region (SG / US / EU) deployment design — route each user to the nearest VPS. **Draft · not yet implemented.** |
 | [`ui-i18n-and-themes.md`](./ui-i18n-and-themes.md) | Dark/light theming + UI i18n design. |
 

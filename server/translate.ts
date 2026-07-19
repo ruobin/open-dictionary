@@ -20,6 +20,7 @@ import {
   recordLlmLatency,
   recordOutcome,
 } from './metrics'
+import { recordActivity } from './activityLog'
 
 /**
  * HTTP response shape. Mirrors the frontend `DictionaryEntry`
@@ -385,6 +386,20 @@ export function createTranslateRouter(
           '[translate]',
           JSON.stringify({ tier: outcome.tier, sourceLang, targetLang, textLength: text.length, latencyMs })
         )
+
+        // User activity log (docs/design-user-activity-log.md) — fire-and-forget,
+        // never awaited, never allowed to affect this response.
+        recordActivity({
+          word: text,
+          sourceLang,
+          targetLang,
+          tier: outcome.tier,
+          latencyMs,
+          ip: req.ip ?? 'unknown',
+          userAgent: req.get('user-agent'),
+          origin: req.get('origin'),
+        })
+
         res.json(outcome.entries)
       } catch (err) {
         if ((err as { code?: string })?.code === 'not_found') {

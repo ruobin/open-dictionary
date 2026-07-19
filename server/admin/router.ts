@@ -37,6 +37,7 @@ import {
   listReports,
   dismissReport,
 } from './entries'
+import { parseActivityQuery, parseSummaryDays, listActivity, getActivitySummary } from '../activityLog'
 import {
   LlmProviderError,
   DEFAULT_DEEPSEEK_MODEL,
@@ -797,6 +798,36 @@ export function createAdminRouter(llmService: LlmService): Router {
         },
       })
       res.json(result)
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  // --- user activity log (docs/design-user-activity-log.md) ---
+
+  router.get('/activity', async (req, res, next) => {
+    try {
+      const query = parseActivityQuery(req.query as Record<string, unknown>)
+      const result = await listActivity(query)
+      res.json(result)
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.get('/activity/summary', async (req, res, next) => {
+    try {
+      const days = parseSummaryDays(req.query as Record<string, unknown>)
+      const summary = await getActivitySummary(days)
+      res.json(summary)
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
         res.status(503).json({ error: 'mongo_unavailable' })

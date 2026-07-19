@@ -7,6 +7,7 @@ import Latency from './Latency'
 import Playground from './Playground'
 import Entries from './Entries'
 import Reports from './Reports'
+import Activity from './Activity'
 import Audit from './Audit'
 import '../../styles/admin.css'
 
@@ -23,6 +24,7 @@ export default function AdminApp() {
           <Route path="playground" element={<Playground />} />
           <Route path="entries" element={<Entries />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="activity" element={<Activity />} />
           <Route path="audit" element={<Audit />} />
         </Route>
       </Routes>
