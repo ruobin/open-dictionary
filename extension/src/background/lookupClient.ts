@@ -49,6 +49,24 @@ async function writeCache(storageKey: string, data: DictionaryEntry[]): Promise<
   }
 }
 
+/** Fire-and-forget client-cache hit beacon. Service workers prefer fetch+keepalive
+ *  over sendBeacon (less reliably available on the extension SW global). */
+function pingClientCacheHit(word: string, sourceLang: string, targetLang: string): void {
+  const body = JSON.stringify({ word, sourceLang, targetLang })
+  try {
+    void fetch(`${API_BASE}/api/activity-ping`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch(() => {
+      // best-effort
+    })
+  } catch {
+    // ignore
+  }
+}
+
 /** Looks up `rawWord` via the read-through cache → `/api/translate/:text`.
  *  Never throws — always resolves to a `LookupResponse` discriminated union
  *  so callers (the background message router) can forward it as-is. */
@@ -65,7 +83,10 @@ export async function lookupWord(
   const storageKey = `${src}:${tgt}:${word}`
 
   const cached = await readCache(storageKey)
-  if (cached) return { ok: true, entries: cached }
+  if (cached) {
+    pingClientCacheHit(word, src, tgt)
+    return { ok: true, entries: cached }
+  }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)

@@ -47,6 +47,9 @@ export const USERDATA_RATE_LIMIT_RPM = parseInt(process.env.USERDATA_RATE_LIMIT_
 export const SUGGEST_RATE_LIMIT_RPM = parseInt(process.env.SUGGEST_RATE_LIMIT_RPM ?? '60', 10) || 60
 export const BROWSE_RATE_LIMIT_RPM = parseInt(process.env.BROWSE_RATE_LIMIT_RPM ?? '60', 10) || 60
 export const REPORT_RATE_LIMIT_RPM = parseInt(process.env.REPORT_RATE_LIMIT_RPM ?? '10', 10) || 10
+// Client-cache activity beacons (POST /api/activity-ping) — cheap Mongo write only,
+// no LLM. Higher than translate so a session of repeated lookups isn't throttled away.
+export const ACTIVITY_PING_RATE_LIMIT_RPM = parseInt(process.env.ACTIVITY_PING_RATE_LIMIT_RPM ?? '60', 10) || 60
 export const WORD_OF_DAY_RATE_LIMIT_RPM = parseInt(process.env.WORD_OF_DAY_RATE_LIMIT_RPM ?? '30', 10) || 30
 export const MORE_EXAMPLES_RATE_LIMIT_RPM = Math.min(parseInt(process.env.MORE_EXAMPLES_RATE_LIMIT_RPM ?? '5', 10) || 5, LLM_RATE_LIMIT_MAX_RPM)
 

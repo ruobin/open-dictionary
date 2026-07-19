@@ -40,6 +40,7 @@ describe('activityLog: parseActivityQuery', () => {
     expect(parseActivityQuery({ tier: 'cache' }).tier).toBe('cache')
     expect(parseActivityQuery({ tier: 'llm' }).tier).toBe('llm')
     expect(parseActivityQuery({ tier: 'dictionary' }).tier).toBe('dictionary')
+    expect(parseActivityQuery({ tier: 'client-cache' }).tier).toBe('client-cache')
     expect(parseActivityQuery({ tier: 'bogus' }).tier).toBeUndefined()
   })
 

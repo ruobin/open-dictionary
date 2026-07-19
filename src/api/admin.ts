@@ -579,7 +579,7 @@ export function dismissReport(auth: AdminAuth, id: string): Promise<void> {
 
 // --- user activity log (docs/design-user-activity-log.md) ---
 
-export type ActivityTier = 'cache' | 'llm' | 'dictionary'
+export type ActivityTier = 'cache' | 'llm' | 'dictionary' | 'client-cache'
 export type ActivityChannel = 'web' | 'extension' | 'other'
 
 export interface ActivityLogView {

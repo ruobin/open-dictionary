@@ -18,6 +18,7 @@ import { createTranslateRouter } from './translate'
 import { createFavoritesRouter } from './favorites'
 import { createSuggestRouter } from './suggest'
 import { createReportRouter } from './report'
+import { createActivityPingRouter } from './activityPing'
 import { createWordOfDayRouter } from './wordOfDay'
 import { createMoreExamplesRouter } from './moreExamples'
 import { createBrowseRouter } from './browse'
@@ -88,7 +89,7 @@ export function createApp({ llmService, dictionaryProvider, translationCache }: 
       if (originAllowlist.includes(origin)) return cb(null, true)
       return cb(null, false)
     },
-    methods: ['GET', 'PUT', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: false,
     maxAge: 86400,
   }
@@ -130,6 +131,7 @@ export function createApp({ llmService, dictionaryProvider, translationCache }: 
   app.use('/api', createTranslateRouter(dictionaryProvider, translationCache))
   app.use('/api', createSuggestRouter())
   app.use('/api', createReportRouter())
+  app.use('/api', createActivityPingRouter())
   app.use('/api', createWordOfDayRouter())
   app.use('/api', createMoreExamplesRouter())
   app.use('/api', createBrowseRouter())

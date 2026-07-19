@@ -116,6 +116,32 @@ function writeCache(storageKey: string, data: DictionaryEntry[]): void {
   }
 }
 
+/** Fire-and-forget client-cache hit beacon (docs/design-user-activity-log.md §14).
+ *  Prefer sendBeacon so the ping survives navigation; fall back to keepalive fetch. */
+function pingClientCacheHit(word: string, sourceLang: string, targetLang: string): void {
+  const body = JSON.stringify({ word, sourceLang, targetLang })
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      const blob = new Blob([body], { type: 'application/json' })
+      if (navigator.sendBeacon('/api/activity-ping', blob)) return
+    }
+  } catch {
+    // fall through to fetch
+  }
+  try {
+    void fetch('/api/activity-ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch(() => {
+      // best-effort — never surface to the lookup caller
+    })
+  } catch {
+    // ignore
+  }
+}
+
 export async function lookupWord(
   rawWord: string,
   sourceLang: string = DEFAULT_SOURCE_LANG,
@@ -129,7 +155,10 @@ export async function lookupWord(
   const storageKey = `${src}:${tgt}:${word}`
 
   const cached = readCache(storageKey)
-  if (cached) return cached
+  if (cached) {
+    pingClientCacheHit(word, src, tgt)
+    return cached
+  }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)

@@ -54,7 +54,7 @@ describe('lookupClient.lookupWord', () => {
     expect(cached['dict:v1:en:en:hello']).toMatchObject({ data: entries })
   })
 
-  it('serves from cache on a second lookup without a second fetch', async () => {
+  it('serves from cache on a second lookup and beacons a client-cache ping', async () => {
     const entries = [{ word: 'hello' }]
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
@@ -68,7 +68,11 @@ describe('lookupClient.lookupWord', () => {
     const second = await lookupWord('hello', 'en', 'en')
 
     expect(second).toEqual({ ok: true, entries })
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]))
+    expect(urls.filter((u) => u.includes('/api/translate/')).length).toBe(1)
+    expect(urls.some((u) => u.includes('/api/activity-ping'))).toBe(true)
+    const pingCall = fetchSpy.mock.calls.find((c) => String(c[0]).includes('/api/activity-ping'))
+    expect(pingCall?.[1]).toMatchObject({ method: 'POST', keepalive: true })
   })
 
   it('treats an expired cache entry as a miss and re-fetches', async () => {

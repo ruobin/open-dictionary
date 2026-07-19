@@ -505,3 +505,30 @@ path is an insert nobody can lose sleep over).
 - **Alerting on traffic anomalies** (spike/drop) — out of scope, consistent with the
   admin portal's existing "no alerting infra" non-goal (`docs/design-admin-portal.md`
   §1 non-goals).
+
+---
+
+## 14. Client-cache hit beacon (shipped 2026-07-19, follow-up)
+
+**Problem:** the web app (`src/api/dictionary.ts` `localStorage`) and Chrome extension
+(`extension/src/background/lookupClient.ts` `chrome.storage.local`) both short-circuit
+lookups in the client without calling `GET /api/translate/:text`. Server-side
+`recordActivity()` never runs for those, so popular-word / growth stats systematically
+under-count repeat lookups.
+
+**Solution:** a tiny public beacon endpoint + one fire-and-forget call on every
+client-side cache hit.
+
+| Piece | Detail |
+|---|---|
+| Endpoint | `POST /api/activity-ping` body `{ word, sourceLang, targetLang }` → `204` |
+| Rate limit | `ACTIVITY_PING_RATE_LIMIT_RPM` (default 60/min/IP) — no LLM cost |
+| Validation | same `normalizeText` + `LANGUAGES` allowlist as translate |
+| Logged as | `tier: "client-cache"`, `latencyMs: 0`, same IP/device/channel as normal activity |
+| Web | `navigator.sendBeacon('/api/activity-ping', Blob)` with `fetch`+`keepalive` fallback |
+| Extension | `fetch(`${API_BASE}/api/activity-ping`, { method:'POST', keepalive:true })` |
+| CORS | `POST` (and `DELETE`) added to the express CORS methods list so extension beacons preflight cleanly |
+
+No new privacy disclosure needed beyond the existing "each lookup is logged" copy — a
+client-cache hit is still a user lookup of a word. Admin summary `byTier` surfaces
+`client-cache` alongside `cache` / `llm` / `dictionary` automatically.

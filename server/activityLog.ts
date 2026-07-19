@@ -10,7 +10,8 @@ import { parseUserAgent } from './util/userAgent'
  * failure-isolation posture as `cacheSetSafe()` in `server/translate.ts`.
  */
 
-export type ActivityTier = 'cache' | 'llm' | 'dictionary'
+/** `client-cache` = browser/extension localStorage hit reported via POST /api/activity-ping. */
+export type ActivityTier = 'cache' | 'llm' | 'dictionary' | 'client-cache'
 export type ActivityChannel = 'web' | 'extension' | 'other'
 
 export interface ActivityLogDoc {
@@ -99,7 +100,7 @@ export interface ActivitySummary {
 
 // --- Query parsing (§6) — pure, unit-tested without touching Mongo ---
 
-const TIERS = new Set<ActivityTier>(['cache', 'llm', 'dictionary'])
+const TIERS = new Set<ActivityTier>(['cache', 'llm', 'dictionary', 'client-cache'])
 const CHANNELS = new Set<ActivityChannel>(['web', 'extension', 'other'])
 const DEVICE_TYPES = new Set(['desktop', 'mobile', 'tablet', 'bot', 'unknown'])
 

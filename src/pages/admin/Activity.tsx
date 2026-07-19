@@ -81,8 +81,8 @@ export default function Activity() {
 
       <p className="admin-hint">
         Per-lookup activity log (word, IP, device) backing user-behavior and growth analytics.
-        Entries are kept for 180 days, then purged automatically. See
-        docs/design-user-activity-log.md.
+        Includes server lookups (cache/llm/dictionary) and client-cache hits beacons
+        (`client-cache`). Entries are kept for 180 days. See docs/design-user-activity-log.md.
       </p>
 
       {error && <div className="state-msg state-error">{error}</div>}
