@@ -13,6 +13,8 @@ export const LOCALE_NAMES: Record<Locale, string> = {
 const en = {
   'nav.about': 'About',
   'nav.privacy': 'Privacy',
+  'nav.menu': 'Menu',
+  'nav.interfaceLanguage': 'Interface language',
   'auth.login': 'Log in',
   'auth.logout': 'Log out',
   'auth.loading': '…',
@@ -146,6 +148,8 @@ type Dictionary = Record<TranslationKey, string>
 const zh: Dictionary = {
   'nav.about': '关于',
   'nav.privacy': '隐私',
+  'nav.menu': '菜单',
+  'nav.interfaceLanguage': '界面语言',
   'auth.login': '登录',
   'auth.logout': '退出登录',
   'auth.loading': '…',
@@ -271,6 +275,8 @@ const zh: Dictionary = {
 const ja: Dictionary = {
   'nav.about': '概要',
   'nav.privacy': 'プライバシー',
+  'nav.menu': 'メニュー',
+  'nav.interfaceLanguage': '表示言語',
   'auth.login': 'ログイン',
   'auth.logout': 'ログアウト',
   'auth.loading': '…',
@@ -399,6 +405,8 @@ const ja: Dictionary = {
 const es: Dictionary = {
   'nav.about': 'Acerca de',
   'nav.privacy': 'Privacidad',
+  'nav.menu': 'Menú',
+  'nav.interfaceLanguage': 'Idioma de la interfaz',
   'auth.login': 'Iniciar sesión',
   'auth.logout': 'Cerrar sesión',
   'auth.loading': '…',

@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import AuthButton from './AuthButton'
 import { useI18n } from '../i18n/I18nContext'
 import { LOCALES, LOCALE_NAMES, type Locale } from '../i18n/translations'
@@ -64,12 +65,40 @@ function LanguageSwitcher() {
 
 export default function Header() {
   const { t } = useI18n()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const location = useLocation()
+  // Click-outside handler — close the mobile dropdown when the user taps
+  // anywhere outside of it. Kept tiny rather than reaching for a library.
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close on route change so tapping a link in the menu dismisses it.
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function onPointerDown(e: MouseEvent | TouchEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('touchstart', onPointerDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('touchstart', onPointerDown)
+    }
+  }, [menuOpen])
+
   return (
     <header className="app-header">
       <Link to="/" className="brand">
         <span className="brand-mark">open</span>
         <span className="brand-name">·dictionary</span>
       </Link>
+
+      {/* Desktop / wide-screen nav: inline links + controls. */}
       <nav className="header-nav">
         <Link to="/about" className="header-nav-link">{t('nav.about')}</Link>
         <Link to="/privacy" className="header-nav-link">{t('nav.privacy')}</Link>
@@ -77,6 +106,52 @@ export default function Header() {
         <ThemeToggle />
         <AuthButton />
       </nav>
+
+      {/* Mobile nav: theme toggle stays out for one-tap access; everything
+          else collapses behind a hamburger dropdown. */}
+      <div className="header-mobile" ref={menuRef}>
+        <ThemeToggle />
+        <button
+          type="button"
+          className={`icon-btn header-menu-btn ${menuOpen ? 'is-open' : ''}`}
+          aria-label={t('nav.menu')}
+          aria-expanded={menuOpen}
+          aria-controls="mobile-menu"
+          onClick={() => setMenuOpen((o) => !o)}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {menuOpen ? (
+              <>
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </>
+            ) : (
+              <>
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </>
+            )}
+          </svg>
+        </button>
+        {menuOpen && (
+          <div className="header-menu" id="mobile-menu" role="menu">
+            <Link to="/about" className="header-menu-link" role="menuitem">
+              {t('nav.about')}
+            </Link>
+            <Link to="/privacy" className="header-menu-link" role="menuitem">
+              {t('nav.privacy')}
+            </Link>
+            <div className="header-menu-row">
+              <span className="header-menu-label">{t('nav.interfaceLanguage')}</span>
+              <LanguageSwitcher />
+            </div>
+            <div className="header-menu-auth">
+              <AuthButton />
+            </div>
+          </div>
+        )}
+      </div>
     </header>
   )
 }
