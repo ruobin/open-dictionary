@@ -91,6 +91,33 @@ describe('admin/providersRepo: validateProviderFields', () => {
     expect(result.ok).toBe(true)
   })
 
+  it('accepts OpenRouter per-model routing options', async () => {
+    const { validateProviderFields } = await freshRepo()
+    const result = validateProviderFields(
+      {
+        name: 'OpenRouter',
+        vendor: 'openrouter',
+        models: [
+          {
+            id: 'openai/gpt-5.6-luna',
+            options: { provider: { order: ['openai', 'azure'], allow_fallbacks: true } },
+          },
+        ],
+      },
+      true
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        models: [
+          {
+            options: { provider: { order: ['openai', 'azure'], allow_fallbacks: true } },
+          },
+        ],
+      },
+    })
+  })
+
   it('rejects an http baseUrl in prod for a public host', async () => {
     const { validateProviderFields } = await freshRepo()
     const result = validateProviderFields(

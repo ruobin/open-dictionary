@@ -35,9 +35,11 @@ export interface OpenAiCompatOptions {
   temperature?: number
   /** Include `response_format: { type: 'json_object' }`. Default true. */
   jsonMode?: boolean
+  /** Provider-specific request fields, such as OpenRouter routing preferences. */
+  extraBody?: Record<string, unknown>
 }
 
-export const DEFAULT_TIMEOUT_MS = 15_000
+export const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_TEMPERATURE = 0.2
 
 interface ChatMessage {
@@ -45,7 +47,7 @@ interface ChatMessage {
   content: string
 }
 
-function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
+export function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
   const { text, sourceLang, targetLang } = req
   const sameLang = sourceLang.toLowerCase() === targetLang.toLowerCase()
   const sourceName = languageName(sourceLang)
@@ -110,7 +112,7 @@ function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
   ]
 }
 
-function buildMoreExamplesMessages(req: LlmMoreExamplesRequest): ChatMessage[] {
+export function buildMoreExamplesMessages(req: LlmMoreExamplesRequest): ChatMessage[] {
   const { word, sourceLang, targetLang, senseDefinition, topic, cefr } = req
   const sourceName = languageName(sourceLang)
   const targetName = languageName(targetLang)
@@ -154,7 +156,7 @@ function buildMoreExamplesMessages(req: LlmMoreExamplesRequest): ChatMessage[] {
  * (paraphrased definitions, near-duplicate example sentences) that
  * token-Jaccard can't.
  */
-function buildFuseMessages(req: LlmFuseRequest): ChatMessage[] {
+export function buildFuseMessages(req: LlmFuseRequest): ChatMessage[] {
   const { text, sourceLang, targetLang } = req.request
   const sourceName = languageName(sourceLang)
   const targetName = languageName(targetLang)
@@ -210,7 +212,7 @@ function buildFuseMessages(req: LlmFuseRequest): ChatMessage[] {
   ]
 }
 
-function parseMoreExamplesContent(vendor: string, raw: string): LlmGradedExample[] {
+export function parseMoreExamplesContent(vendor: string, raw: string): LlmGradedExample[] {
   const stripped = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
   const start = stripped.indexOf('{')
   const end = stripped.lastIndexOf('}')
@@ -328,7 +330,7 @@ function nonEmptyStrings(value: unknown): string[] | undefined {
  *  Parsing is deliberately lenient/defensive field-by-field: a malformed or
  *  missing sub-field (e.g. a bad "cefr" value) is dropped rather than failing
  *  the whole response — a partially-rich entry beats no entry. */
-function parseContent(vendor: string, raw: string): LlmTranslationContent {
+export function parseContent(vendor: string, raw: string): LlmTranslationContent {
   const stripped = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
   const start = stripped.indexOf('{')
   const end = stripped.lastIndexOf('}')
@@ -410,7 +412,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
         messages.map((m) => `--- [${m.role}] ---\n${m.content}`).join('\n')
     )
 
-    const requestBody: Record<string, unknown> = { model, messages, temperature }
+    const requestBody: Record<string, unknown> = { model, messages, temperature, ...(options.extraBody ?? {}) }
     if (jsonMode) requestBody.response_format = { type: 'json_object' }
 
     // The abort timer must stay armed for the *entire* request/response

@@ -138,8 +138,8 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `DICTIONARY_API_BASE` | no | `https://www.dictionaryapi.com/api/v3` | Merriam-Webster fallback API |
 | `MONGODB_URI` | no | — | e.g. `mongodb://localhost:27017` |
 | `MONGODB_DB` | no | `open-dictionary` | |
-| `LLM_VENDOR` | no | `deepseek` | `deepseek` / `openrouter` / `glm` / `none` |
-| `LLM_REQUEST_TIMEOUT_MS` | no | `15000` | Per‑request LLM timeout (ms) |
+| `LLM_VENDOR` | no | `deepseek` | `deepseek` / `openrouter` / `glm` / `none` (admin also supports custom providers) |
+| `LLM_REQUEST_TIMEOUT_MS` | no | `30000` | Per‑request LLM timeout (ms) |
 | `LLM_DEBUG` | no | off | `true` prints full prompts and response bodies |
 | `PUBLIC_BASE_URL` | no | `http://localhost:5173` | Site origin — used only by `scripts/prerender.ts` for canonical URLs/sitemap |
 | `*_RATE_LIMIT_RPM` | no | see [Operational notes](#operational-notes) | Per-route per-IP rate limits: `TRANSLATE`, `MORE_EXAMPLES`, `FAVORITES`, `USERDATA`, `SUGGEST`, `WORD_OF_DAY`, `REPORT`, `ADMIN` prefixes |
@@ -190,6 +190,7 @@ All three vendors expose an OpenAI‑compatible Chat Completions API and share a
 - **OpenRouter** — access to many models through one API key. Default model MiniMax M3 (`minimax/minimax‑m3`).
 - **GLM / Z.AI** — direct Z.AI API (general or coding‑plan endpoints). Default model `glm‑5.2`.
 - **Custom OpenAI-compatible** (`openai-compat`) — any endpoint speaking the Chat Completions protocol; admin-portal only (requires a `baseUrl`).
+- **Custom OpenAI Responses** (`openai-responses`) — any endpoint speaking the OpenAI Responses protocol, including NewAPI's `gpt-5.6-terra`; admin-portal only (requires a `baseUrl`).
 
 **Env vars are the boot-time baseline only.** Once a provider is configured
 and made active through the [admin portal](#admin-portal), that DB-stored
@@ -198,6 +199,10 @@ no restart). If the DB config is missing or broken, the service falls back
 to the env baseline — see `server/llm/service.ts` and design doc §7.
 
 Set `LLM_DEBUG=true` to log every LLM request URL, the full prompt, response status/body, and elapsed time — useful for debugging timeouts or response quality.
+
+See [LLM provider operations](docs/llm-provider-operations.md) for timeout
+behavior, admin switching, NewAPI Responses support, OpenRouter routing, and
+production troubleshooting.
 
 ## Project layout
 

@@ -23,6 +23,7 @@ export interface OpenRouterProviderConfig {
   title?: string
   timeoutMs?: number
   temperature?: number
+  provider?: { order?: string[]; allow_fallbacks?: boolean }
 }
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -77,5 +78,6 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): LlmP
     headers,
     timeoutMs: config.timeoutMs,
     temperature: config.temperature,
+    extraBody: config.provider ? { provider: config.provider } : undefined,
   })
 }

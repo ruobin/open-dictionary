@@ -2,6 +2,7 @@ import { createGlmProvider } from './glm'
 import { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter'
 import { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
+import { createOpenAiResponsesProvider } from './responses'
 import { LlmProviderError, type LlmProvider } from './types'
 
 export type {
@@ -25,6 +26,8 @@ export { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 export type { DeepSeekProviderConfig } from './deepseek'
 export { createOpenAiCompatibleProvider, DEFAULT_TIMEOUT_MS } from './openaiCompat'
 export type { OpenAiCompatOptions } from './openaiCompat'
+export { createOpenAiResponsesProvider } from './responses'
+export type { OpenAiResponsesOptions } from './responses'
 export { createFusionProvider, mergeContents, definitionsSimilar } from './fusion'
 export type { FusionProviderConfig } from './fusion'
 
@@ -37,7 +40,7 @@ export interface LlmRegistryResult {
 }
 
 const DEFAULT_VENDOR = 'deepseek'
-const SUPPORTED_VENDORS = 'deepseek, openrouter, glm, none'
+const SUPPORTED_VENDORS = 'deepseek, openrouter, glm, openai-compat, openai-responses, none'
 
 function parsePositiveInt(value: string | undefined): number | undefined {
   if (!value) return undefined
@@ -152,7 +155,7 @@ export function createLlmProviderFromEnv(): LlmRegistryResult {
  * Admin portal (docs/design-admin-portal.md §4.1, §7.1).
  */
 export interface LlmProviderConfig {
-  /** "deepseek" | "openrouter" | "glm" | "openai-compat" */
+  /** "deepseek" | "openrouter" | "glm" | "openai-compat" | "openai-responses" */
   vendor: string
   apiKey: string
   model: string
@@ -162,6 +165,7 @@ export interface LlmProviderConfig {
   headers?: Record<string, string>
   timeoutMs?: number
   temperature?: number
+  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
 }
 
 /**
@@ -188,6 +192,7 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         headers: cfg.headers,
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
+        provider: cfg.options?.provider,
       })
 
     case 'glm':
@@ -211,6 +216,19 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         headers: cfg.headers,
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
+      })
+
+    case 'openai-responses':
+      if (!cfg.baseUrl) {
+        throw new LlmProviderError('not_configured', '"openai-responses" providers require a baseUrl')
+      }
+      return createOpenAiResponsesProvider({
+        vendor: 'openai-responses',
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        baseUrl: cfg.baseUrl,
+        headers: cfg.headers,
+        timeoutMs: cfg.timeoutMs,
       })
 
     default:

@@ -80,7 +80,7 @@ dictionary product:
 | Piece | Where | Relevance |
 |---|---|---|
 | Provider contract `LlmProvider { id, translate(), moreExamples() }` | `server/providers/llm/types.ts` | Unchanged. The portal manages *which implementation* is live. |
-| Vendor factories (all wrap one OpenAI-compatible adapter) | `deepseek.ts`, `openrouter.ts`, `glm.ts` → `openaiCompat.ts` | Reused verbatim to build providers from DB config. Also enables a generic "custom OpenAI-compatible" vendor for free. |
+| Vendor factories | `deepseek.ts`, `openrouter.ts`, `glm.ts` → `openaiCompat.ts`; `responses.ts` → OpenAI Responses | Reused verbatim to build providers from DB config. Also enables generic custom Chat Completions and Responses API providers. |
 | Env-only registry, read at boot | `server/providers/llm/index.ts` | Becomes the **fallback/seed** layer; DB config wins when present. |
 | Provider consumed via `app.locals.llm` | `server/translate.ts:371`, `server/moreExamples.ts:101` | Replaced by a hot-swappable `LlmService` (§7). |
 | In-memory metrics incl. avg LLM latency by vendor | `server/metrics.ts` | Extended with bounded latency samples → percentiles; exposed over an admin endpoint. |
@@ -142,8 +142,8 @@ Key decisions, argued in the sections that follow:
 {
   "_id": ObjectId,
   "name": "DeepSeek (prod key)",          // unique, human label
-  "vendor": "deepseek",                    // "deepseek" | "openrouter" | "glm" | "openai-compat"
-  "baseUrl": "https://api.deepseek.com",  // optional for known vendors (factory default), required for "openai-compat"
+  "vendor": "deepseek",                    // "deepseek" | "openrouter" | "glm" | "openai-compat" | "openai-responses"
+  "baseUrl": "https://api.deepseek.com",  // optional for known vendors (factory default), required for custom vendors
   "headers": {                             // optional vendor extras (OpenRouter attribution)
     "referer": "https://dict.ai-dictionary.org",
     "title": "open-dictionary"
@@ -166,7 +166,7 @@ Key decisions, argued in the sections that follow:
 }
 ```
 
-- `vendor: "openai-compat"` is the generic escape hatch: since every existing
+- `vendor: "openai-compat"` is the generic Chat Completions escape hatch; `vendor: "openai-responses"` supports the OpenAI Responses protocol. Since every existing
   vendor already goes through `createOpenAiCompatibleProvider()`, any
   OpenAI-compatible endpoint (Together, Groq, a self-hosted vLLM…) can be added
   from the panel with `name + baseUrl + apiKey + model` and zero code changes.
@@ -411,7 +411,7 @@ JSON errors in the existing `{ error: "…" }` style.
 | `POST /api/admin/llm/providers` | Create | Validates per §4.1; encrypts key; audits. |
 | `PATCH /api/admin/llm/providers/:id` | Update | `apiKey` absent ⇒ keep (§5.2); bumps `configVersion`; if `:id` is active, hot-reloads. |
 | `DELETE /api/admin/llm/providers/:id` | Delete | **409 `provider_active`** if it is the active provider — switch first. |
-| `POST /api/admin/llm/test` | One-shot connection test | Body: `{ providerId, modelId? }` **or** a full draft `{ vendor, baseUrl?, apiKey, model }` so a key can be validated *before* saving. Runs a single canonical `translate()` (the `llm-ping` logic, "serendipity" en→en) capped at `DEFAULT_TIMEOUT_MS` (15 s, aligned with production — see §18); returns `{ ok, ms, errorCode?, providerIdEcho }`; updates `lastTest` when `providerId` given. Synchronous — one call fits in a normal request. |
+| `POST /api/admin/llm/test` | One-shot connection test | Body: `{ providerId, modelId? }` **or** a full draft `{ vendor, baseUrl?, apiKey, model }` so a key can be validated *before* saving. Runs a single canonical `translate()` (the `llm-ping` logic, "serendipity" en→en) capped at `DEFAULT_TIMEOUT_MS` (30 s, aligned with production — see §18); returns `{ ok, ms, errorCode?, providerIdEcho }`; updates `lastTest` when `providerId` given. Synchronous — one call fits in a normal request. |
 | `POST /api/admin/llm/benchmark` | Start a benchmark job | §9.3. Returns `202 { runId }` or **409 `benchmark_in_progress`**. |
 | `GET  /api/admin/llm/benchmark/:runId` | Poll job | `{ status: running\|done\|error, completed, total, partial/summary }`. |
 | `GET  /api/admin/llm/benchmarks?providerId&limit` | Benchmark history | From `llm_benchmarks`, newest first. |
@@ -467,7 +467,7 @@ it only covers the **active** provider. Everything below exists to measure
   before it is ever stored),
 - the **verify-before-switch** step of `PUT /active`.
 
-The call is capped at `DEFAULT_TIMEOUT_MS` (15 s) via
+The call is capped at `DEFAULT_TIMEOUT_MS` (30 s) via
 `Math.min(cfg.timeoutMs ?? cap, cap)` — a **ceiling, not a floor**: the test
 never waits longer than the cap even when the provider's own per-model
 `timeoutMs` is higher. This keeps the admin UI synchronous/responsive, but
@@ -1021,20 +1021,20 @@ section's exact interface/route/type claims over the source.
 **Connection-test timeout cap — aligned with production (fixed 2026-07-11, post-Phase-3)**
 - As originally shipped, `POST /llm/test` and the verify path of
   `PUT /llm/active` hardcoded `TEST_TIMEOUT_MS = 10_000` — stricter than the
-  15 s `DEFAULT_TIMEOUT_MS` production actually uses (`openaiCompat.ts`). A
+  15 s `DEFAULT_TIMEOUT_MS` production used at the time (`openaiCompat.ts`). A
   provider whose backend answered in the 10–15 s band therefore *passed in
   production but failed the admin **Test** button* (and got blocked by
   verify-on-switch) with a false `errorCode: "timeout"`. Fixed by exporting
   `DEFAULT_TIMEOUT_MS` from `server/providers/llm/openaiCompat.ts` (re-exported
   through the `providers/llm` barrel) and setting
   `TEST_TIMEOUT_MS = DEFAULT_TIMEOUT_MS`, so both endpoints now cap at the same
-  15 s production uses. Commit `e44b1a2`.
+  production default. Commit `e44b1a2`.
 - The cap is applied as `Math.min(cfg.timeoutMs ?? cap, cap)` — a **ceiling,
-  not a floor** (§9.2). Raising a provider's per-model `timeoutMs` above 15 s
+  not a floor** (§9.2). Raising a provider's per-model `timeoutMs` above 30 s
   fixes/speeds real production lookups (they read the model's `timeoutMs`
   directly via `providerToLlmConfig`) but does **not** raise the Test/verify
   ceiling — deliberately, so the admin UI stays synchronous. Consequence: a
-  provider genuinely slower than 15 s can pass in production yet still show a
+  provider genuinely slower than 30 s can pass in production yet still show a
   Test/verify timeout.
 
 **Operational note — a legitimately slow provider (`grok-4.5` behind a gateway)**
@@ -1042,7 +1042,7 @@ section's exact interface/route/type claims over the source.
   self-hosted `new-api` gateway (`baseUrl https://new-api.ai-dictionary.org/v1`)
   whose channel for this model forwards upstream to a third-party reseller
   (`packyapi.com`). Real, **successful** completions through that channel were
-  observed at 11–21 s (occasionally longer) — routinely above even the 15 s
+  observed at 11–21 s (occasionally longer) — occasionally above the previous 15 s
   cap. Its `errorCode: "timeout"` from the Test button is therefore an accurate
   report of genuine upstream latency, not an app bug or a misconfiguration; the
   test cap moved the reported `ms` from ~10 000 to ~15 000 in lockstep with the
@@ -1053,7 +1053,7 @@ section's exact interface/route/type claims over the source.
   `mongosh` update to that model's `timeoutMs` (never touching the encrypted
   `apiKey`); no code change. Trade-offs accepted: (1) every cache miss routed to
   this provider carries that multi-second latency, a poor fit for a *primary*
-  dictionary provider; (2) the **Test** button still caps at 15 s (above), so it
+  dictionary provider; (2) the **Test** button now caps at 30 s (above), so it
   may keep reporting a timeout for this provider even though production lookups
   now succeed. Faster alternatives (DeepSeek / OpenRouter / GLM) remain the
   better default per the same latency observations.

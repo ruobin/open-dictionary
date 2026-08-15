@@ -25,6 +25,7 @@ const VENDOR_OPTIONS: { value: string; label: string }[] = [
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'glm', label: 'GLM (Z.AI)' },
   { value: 'openai-compat', label: 'Custom (OpenAI-compatible)' },
+  { value: 'openai-responses', label: 'Custom (OpenAI Responses API)' },
 ]
 
 interface ModelRow {
@@ -34,6 +35,7 @@ interface ModelRow {
   isDefault: boolean
   timeoutMs: string
   temperature: string
+  options?: ProviderModelInput['options']
 }
 
 let modelRowSeq = 0
@@ -46,6 +48,7 @@ function newModelRow(m?: ProviderModelInput): ModelRow {
     isDefault: m?.isDefault ?? false,
     timeoutMs: m?.timeoutMs ? String(m.timeoutMs) : '',
     temperature: m?.temperature !== undefined ? String(m.temperature) : '',
+    options: m?.options,
   }
 }
 
@@ -158,6 +161,7 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
         isDefault: m.isDefault,
         timeoutMs: m.timeoutMs.trim() ? Number(m.timeoutMs) : undefined,
         temperature: m.temperature.trim() ? Number(m.temperature) : undefined,
+        options: m.options,
       }))
   }
 
@@ -172,8 +176,8 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
     const errs: string[] = []
     if (!name.trim()) errs.push('Name is required')
     if (!vendor) errs.push('Vendor is required')
-    if (vendor === 'openai-compat' && !baseUrl.trim()) {
-      errs.push('Base URL is required for a custom OpenAI-compatible provider')
+    if ((vendor === 'openai-compat' || vendor === 'openai-responses') && !baseUrl.trim()) {
+      errs.push('Base URL is required for a custom OpenAI provider')
     }
     if (buildModelsPayload().length === 0) errs.push('At least one model is required')
     if (mode === 'create' && !apiKey.trim()) errs.push('API key is required')
@@ -271,7 +275,7 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
       </label>
 
       <label className="admin-field">
-        <span>Base URL {vendor === 'openai-compat' ? '(required)' : '(optional override)'}</span>
+          <span>Base URL {vendor === 'openai-compat' || vendor === 'openai-responses' ? '(required)' : '(optional override)'}</span>
         <input className="admin-input" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
       </label>
 

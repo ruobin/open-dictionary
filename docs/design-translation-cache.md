@@ -258,7 +258,7 @@ CACHE_SERVE_STALE_ON_ERROR=false
 # --- LLM (primary, vendor-agnostic) ---
 LLM_VENDOR=openai                           # openai | anthropic | gemini   (swap = no code change)
 LLM_MODEL=gpt-4o                            # part of cache key; bump to refresh answers
-LLM_REQUEST_TIMEOUT_MS=15000
+LLM_REQUEST_TIMEOUT_MS=30000
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
@@ -359,4 +359,3 @@ The code as landed differs from the above design in a few places:
 | Rate limits (§10) | Configurable via env, hard-capped for LLM endpoints: `TRANSLATE_RATE_LIMIT_RPM` and `MORE_EXAMPLES_RATE_LIMIT_RPM` (default 5, ceiling `LLM_RATE_LIMIT_MAX_RPM`=5 in `server/config.ts`), `FAVORITES_RATE_LIMIT_RPM` (120), `USERDATA_RATE_LIMIT_RPM` (60). | Makes per‑deployment tuning trivial while bounding LLM token spend. |
 | DeepSeek added as default LLM provider | — | `LLM_VENDOR` defaults to `deepseek` (model `deepseek-v4-flash`, base `https://api.deepseek.com`); OpenRouter and GLM are alternatives. Three OpenAI‑compatible providers share `openaiCompat.ts`. |
 | Free Dictionary API replaced by Merriam-Webster Collegiate (§4.2, §6) | `server/providers/dictionary.ts` now calls `https://www.dictionaryapi.com/api/v3/references/collegiate/json/{word}?key=…` (English-only). Definitions are parsed from MW's `shortdef` (mapped to a single meaning with `partOfSpeech`). Audio URLs are constructed from MW's `sound.audio` token using `https://media.merriam-webster.com/audio/prons/en/us/mp3/{subdir}/{audio}.mp3` where `{subdir}` follows MW's rule: `bix`/`gg`/`number`/first-letter of the filename. | The 30-day browser localStorage L1 still uses the Free Dictionary cache key prefix `dict:v1:` (stale naming, harmless). |
-

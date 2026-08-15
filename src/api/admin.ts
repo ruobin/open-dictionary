@@ -8,12 +8,23 @@ export class AdminApiError extends Error {
   status: number
   code: string
   errors?: string[]
-  constructor(status: number, code: string, errors?: string[]) {
+  target?: string
+  providerId?: string
+  errorCode?: string
+  constructor(
+    status: number,
+    code: string,
+    errors?: string[],
+    details?: { target?: string; providerId?: string; errorCode?: string }
+  ) {
     super(errors && errors.length > 0 ? errors.join('; ') : code)
     this.name = 'AdminApiError'
     this.status = status
     this.code = code
     this.errors = errors
+    this.target = details?.target
+    this.providerId = details?.providerId
+    this.errorCode = details?.errorCode
   }
 }
 
@@ -75,6 +86,7 @@ export interface ProviderModel {
   isDefault: boolean
   timeoutMs?: number
   temperature?: number
+  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
 }
 
 export interface ProviderView {
@@ -98,6 +110,7 @@ export interface ProviderModelInput {
   isDefault?: boolean
   timeoutMs?: number
   temperature?: number
+  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
 }
 
 export interface ProviderFormInput {
@@ -327,8 +340,14 @@ async function adminFetch<T>(auth: AdminAuth, path: string, init?: RequestInit):
   }
 
   if (!res.ok) {
-    const b = (body ?? {}) as { error?: string; errors?: string[] }
-    throw new AdminApiError(res.status, b.error ?? `http_${res.status}`, b.errors)
+    const b = (body ?? {}) as {
+      error?: string
+      errors?: string[]
+      target?: string
+      providerId?: string
+      errorCode?: string
+    }
+    throw new AdminApiError(res.status, b.error ?? `http_${res.status}`, b.errors, b)
   }
 
   return body as T

@@ -20,6 +20,11 @@ const MESSAGES: Record<string, string> = {
 export function describeApiError(err: unknown): string {
   if (err instanceof AdminApiError) {
     if (err.errors && err.errors.length > 0) return err.errors.join('; ')
+    if (err.code === 'verify_failed') {
+      const target = err.target ?? 'selected'
+      const reason = err.errorCode ?? 'error'
+      return `Verification failed for the ${target} provider (${reason}) — the provider was not switched.`
+    }
     return MESSAGES[err.code] ?? err.message
   }
   return err instanceof Error ? err.message : 'Something went wrong'

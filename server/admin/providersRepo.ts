@@ -37,6 +37,7 @@ export interface LlmProviderModel {
   isDefault: boolean
   timeoutMs?: number
   temperature?: number
+  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
 }
 
 export interface LlmProviderLastTest {
@@ -117,7 +118,7 @@ export function maskProvider(doc: LlmProviderDoc): LlmProviderView {
 
 // --- Validation (§4.1) — pure, unit-tested without touching Mongo ---
 
-const KNOWN_VENDORS = ['deepseek', 'openrouter', 'glm', 'openai-compat'] as const
+const KNOWN_VENDORS = ['deepseek', 'openrouter', 'glm', 'openai-compat', 'openai-responses'] as const
 const MAX_NAME_LEN = 64
 const MAX_MODELS = 20
 const MAX_MODEL_ID_LEN = 128
@@ -179,7 +180,36 @@ function validateModels(raw: unknown, errors: string[]): LlmProviderModel[] {
     const timeoutMs = typeof e.timeoutMs === 'number' && e.timeoutMs > 0 ? e.timeoutMs : undefined
     const temperature =
       typeof e.temperature === 'number' && e.temperature >= 0 && e.temperature <= 2 ? e.temperature : undefined
-    out.push({ id, label, isDefault, timeoutMs, temperature })
+    let options: LlmProviderModel['options']
+    if (e.options !== undefined) {
+      if (!e.options || typeof e.options !== 'object' || Array.isArray(e.options)) {
+        errors.push(`models[${i}].options must be an object`)
+      } else {
+        const provider = (e.options as Record<string, unknown>).provider
+        if (provider !== undefined) {
+          if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
+            errors.push(`models[${i}].options.provider must be an object`)
+          } else {
+            const rawProvider = provider as Record<string, unknown>
+            const order = rawProvider.order
+            if (order !== undefined && (!Array.isArray(order) || !order.every((value) => typeof value === 'string' && value.trim()))) {
+              errors.push(`models[${i}].options.provider.order must be an array of non-empty strings`)
+            }
+            const allowFallbacks = rawProvider.allow_fallbacks
+            if (allowFallbacks !== undefined && typeof allowFallbacks !== 'boolean') {
+              errors.push(`models[${i}].options.provider.allow_fallbacks must be a boolean`)
+            }
+            options = {
+              provider: {
+                ...(Array.isArray(order) ? { order: order.map((value) => value.trim()) } : {}),
+                ...(typeof allowFallbacks === 'boolean' ? { allow_fallbacks: allowFallbacks } : {}),
+              },
+            }
+          }
+        }
+      }
+    }
+    out.push({ id, label, isDefault, timeoutMs, temperature, ...(options ? { options } : {}) })
   })
   if (out.length === 0) return out
   if (defaultCount === 0) {
@@ -211,8 +241,8 @@ export function validateProviderFields(input: unknown, isProd: boolean): Validat
 
   let baseUrl: string | undefined
   const rawBaseUrl = typeof b.baseUrl === 'string' ? b.baseUrl.trim() : ''
-  if (vendor === 'openai-compat' && !rawBaseUrl) {
-    errors.push('baseUrl is required for vendor "openai-compat"')
+  if ((vendor === 'openai-compat' || vendor === 'openai-responses') && !rawBaseUrl) {
+    errors.push(`baseUrl is required for vendor "${vendor}"`)
   }
   if (rawBaseUrl) {
     try {
@@ -286,6 +316,7 @@ export function providerToLlmConfig(doc: LlmProviderDoc, modelId?: string | null
     headers: doc.headers,
     timeoutMs: model.timeoutMs,
     temperature: model.temperature,
+    options: model.options,
   }
 }
 
