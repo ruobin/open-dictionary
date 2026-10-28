@@ -1038,3 +1038,29 @@ button { font-family: inherit; cursor: pointer; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Placeholder shown under a partially streamed entry while the rest is still being written. */
+.entry-pending {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 42rem;
+  margin: 1rem 0 2rem;
+}
+.entry-pending span {
+  display: block;
+  height: 0.9rem;
+  border-radius: 0.45rem;
+  background: linear-gradient(90deg, var(--bg-soft) 25%, var(--line) 50%, var(--bg-soft) 75%);
+  background-size: 200% 100%;
+  animation: entry-pending-shimmer 1.4s ease-in-out infinite;
+}
+.entry-pending span:nth-child(2) {
+  width: 70%;
+}
+@keyframes entry-pending-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry-pending span { animation: none; }
+}

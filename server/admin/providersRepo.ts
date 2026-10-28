@@ -1,6 +1,7 @@
 import { ObjectId, type Db } from 'mongodb'
 import { getMongoDb } from '../db'
-import type { LlmProviderConfig } from '../providers/llm'
+import type { LlmModelOptions, LlmProviderConfig } from '../providers/llm'
+import { RESERVED_REQUEST_KEYS } from '../providers/llm/requestVariants'
 import { decryptSecret, encryptSecret, isEncryptionAvailable, maskSecret, type EncryptedSecret, type MaskedSecret } from './crypto'
 
 /**
@@ -37,7 +38,7 @@ export interface LlmProviderModel {
   isDefault: boolean
   timeoutMs?: number
   temperature?: number
-  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
+  options?: LlmModelOptions
 }
 
 export interface LlmProviderLastTest {
@@ -122,6 +123,7 @@ const KNOWN_VENDORS = ['deepseek', 'openrouter', 'glm', 'openai-compat', 'openai
 const MAX_NAME_LEN = 64
 const MAX_MODELS = 20
 const MAX_MODEL_ID_LEN = 128
+const MAX_REQUEST_BODY_JSON_LEN = 2_000
 
 export interface ValidatedProviderFields {
   name: string
@@ -185,7 +187,10 @@ function validateModels(raw: unknown, errors: string[]): LlmProviderModel[] {
       if (!e.options || typeof e.options !== 'object' || Array.isArray(e.options)) {
         errors.push(`models[${i}].options must be an object`)
       } else {
-        const provider = (e.options as Record<string, unknown>).provider
+        const rawOptions = e.options as Record<string, unknown>
+        const next: NonNullable<LlmProviderModel['options']> = {}
+
+        const provider = rawOptions.provider
         if (provider !== undefined) {
           if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
             errors.push(`models[${i}].options.provider must be an object`)
@@ -199,14 +204,42 @@ function validateModels(raw: unknown, errors: string[]): LlmProviderModel[] {
             if (allowFallbacks !== undefined && typeof allowFallbacks !== 'boolean') {
               errors.push(`models[${i}].options.provider.allow_fallbacks must be a boolean`)
             }
-            options = {
-              provider: {
-                ...(Array.isArray(order) ? { order: order.map((value) => value.trim()) } : {}),
-                ...(typeof allowFallbacks === 'boolean' ? { allow_fallbacks: allowFallbacks } : {}),
-              },
+            next.provider = {
+              ...(Array.isArray(order) ? { order: order.map((value) => value.trim()) } : {}),
+              ...(typeof allowFallbacks === 'boolean' ? { allow_fallbacks: allowFallbacks } : {}),
             }
           }
         }
+
+        const requestBody = rawOptions.requestBody
+        if (requestBody !== undefined) {
+          if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+            errors.push(`models[${i}].options.requestBody must be an object`)
+          } else {
+            const reserved = Object.keys(requestBody).filter((k) => RESERVED_REQUEST_KEYS.has(k))
+            let serialized = ''
+            try {
+              serialized = JSON.stringify(requestBody)
+            } catch {
+              errors.push(`models[${i}].options.requestBody must be JSON-serializable`)
+            }
+            if (reserved.length > 0) {
+              errors.push(`models[${i}].options.requestBody may not set: ${reserved.join(', ')}`)
+            } else if (serialized.length > MAX_REQUEST_BODY_JSON_LEN) {
+              errors.push(`models[${i}].options.requestBody must be at most ${MAX_REQUEST_BODY_JSON_LEN} characters of JSON`)
+            } else if (serialized) {
+              next.requestBody = requestBody as Record<string, unknown>
+            }
+          }
+        }
+
+        const stream = rawOptions.stream
+        if (stream !== undefined) {
+          if (typeof stream !== 'boolean') errors.push(`models[${i}].options.stream must be a boolean`)
+          else next.stream = stream
+        }
+
+        if (Object.keys(next).length > 0) options = next
       }
     }
     out.push({ id, label, isDefault, timeoutMs, temperature, ...(options ? { options } : {}) })

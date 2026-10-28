@@ -1,5 +1,6 @@
 import { type LlmProvider } from './types'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
+import { OPENROUTER_RUNGS } from './requestVariants'
 import { DEFAULT_OPENROUTER_TITLE } from '../../../shared/providerDefaults'
 
 /**
@@ -24,6 +25,9 @@ export interface OpenRouterProviderConfig {
   timeoutMs?: number
   temperature?: number
   provider?: { order?: string[]; allow_fallbacks?: boolean }
+  /** Extra request-body fields (model option `requestBody`). */
+  requestBody?: Record<string, unknown>
+  stream?: boolean
 }
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -79,5 +83,9 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): LlmP
     timeoutMs: config.timeoutMs,
     temperature: config.temperature,
     extraBody: config.provider ? { provider: config.provider } : undefined,
+    reasoningRungs: OPENROUTER_RUNGS,
+    requestBody: config.requestBody,
+    capOutput: true,
+    stream: config.stream,
   })
 }

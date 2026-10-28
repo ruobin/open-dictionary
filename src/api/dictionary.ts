@@ -1,3 +1,5 @@
+import { readSse } from '../../shared/sse'
+
 const CACHE_PREFIX = 'dict:v1:'
 const TTL_MS = 30 * 24 * 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 30000
@@ -185,4 +187,113 @@ export async function lookupWord(
   const data = (await res.json()) as DictionaryEntry[]
   writeCache(storageKey, data)
   return data
+}
+
+export interface StreamLookupOptions {
+  /** Called with progressively more complete entries while the server is still
+   *  writing the answer (translation first, then each part of speech). */
+  onPartial?: (entries: DictionaryEntry[]) => void
+  /** Aborts the request (e.g. the user navigated to another word). */
+  signal?: AbortSignal
+}
+
+/**
+ * Like {@link lookupWord}, but reads `/api/translate-stream/:text` (Server-Sent
+ * Events) so the page can show the translation and first senses as soon as the
+ * model has written them instead of waiting for the whole entry.
+ *
+ * Client-cache hits and every failure of the streaming transport itself (old
+ * server without the route, a proxy that mangles event streams, a connection
+ * cut before `done`) quietly fall back to the plain endpoint, which the server
+ * answers from its cache or the in-flight lookup — streaming is an
+ * enhancement, never a new way to fail.
+ */
+export async function lookupWordStream(
+  rawWord: string,
+  sourceLang: string = DEFAULT_SOURCE_LANG,
+  targetLang: string = DEFAULT_TARGET_LANG,
+  options: StreamLookupOptions = {}
+): Promise<DictionaryEntry[]> {
+  const word = rawWord.trim().toLowerCase()
+  if (!word) throw new LookupError('not_found', 'Empty word')
+
+  const src = (sourceLang || DEFAULT_SOURCE_LANG).toLowerCase()
+  const tgt = (targetLang || DEFAULT_TARGET_LANG).toLowerCase()
+  const storageKey = `${src}:${tgt}:${word}`
+
+  const cached = readCache(storageKey)
+  if (cached) {
+    pingClientCacheHit(word, src, tgt)
+    return cached
+  }
+
+  const controller = new AbortController()
+  const onCallerAbort = (): void => controller.abort()
+  if (options.signal?.aborted) throw new LookupError('network')
+  options.signal?.addEventListener('abort', onCallerAbort, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, FETCH_TIMEOUT_MS)
+
+  const qs = new URLSearchParams({ from: src, to: tgt })
+  const fallback = (): Promise<DictionaryEntry[]> => lookupWord(rawWord, sourceLang, targetLang)
+
+  try {
+    let res: Response
+    try {
+      res = await fetch(`/api/translate-stream/${encodeURIComponent(word)}?${qs.toString()}`, {
+        signal: controller.signal,
+        headers: { Accept: 'text/event-stream' },
+      })
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new LookupError(timedOut ? 'timeout' : 'network')
+      }
+      return await fallback()
+    }
+
+    if (res.status === 429) throw new LookupError('api_error', `API error: ${res.status}`)
+    const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
+    // 404 here may just mean "this server has no stream route"; the plain
+    // endpoint gives the authoritative answer (including a real not_found).
+    if (!res.ok || !isSse || !res.body) return await fallback()
+
+    let final: DictionaryEntry[] | null = null
+    let failure: LookupError | null = null
+    try {
+      await readSse(res.body, ({ event, data }) => {
+        let payload: unknown
+        try {
+          payload = JSON.parse(data)
+        } catch {
+          return
+        }
+        if (event === 'partial' && Array.isArray(payload)) {
+          if (!options.signal?.aborted) options.onPartial?.(payload as DictionaryEntry[])
+        } else if (event === 'done' && Array.isArray(payload)) {
+          final = payload as DictionaryEntry[]
+        } else if (event === 'error') {
+          const code = (payload as { error?: string } | null)?.error
+          failure = code === 'not_found' ? new LookupError('not_found') : new LookupError('api_error', `Stream error: ${code ?? 'unknown'}`)
+        }
+      })
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new LookupError(timedOut ? 'timeout' : 'network')
+      }
+      // Connection dropped mid-stream: fall through to the plain endpoint below.
+    }
+
+    if (failure) throw failure
+    if (final) {
+      writeCache(storageKey, final)
+      return final
+    }
+    return await fallback()
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', onCallerAbort)
+  }
 }

@@ -28,6 +28,8 @@ export default function WordPage({
   const favKey: FavoriteKey = { word, sourceLang, targetLang }
   const entry = status === 'success' ? data?.[0] : undefined
   const isTypo = Boolean(entry?.typo?.suggestion)
+  // While the server is still writing the entry, `data` holds a partial one.
+  const streamingEntry = status === 'loading' ? data?.[0] : undefined
 
   useEffect(() => {
     if (status === 'success' && word) {
@@ -60,7 +62,7 @@ export default function WordPage({
         />
       </div>
 
-      {status === 'loading' && <p className="state-msg">{t('word.loading')}</p>}
+      {status === 'loading' && !streamingEntry && <p className="state-msg">{t('word.loading')}</p>}
 
       {status === 'error' && error?.code === 'not_found' && (
         <div className="state-msg state-error">
@@ -126,6 +128,22 @@ export default function WordPage({
           isFavorite={favorites.isFavorite(favKey)}
           onToggleFavorite={() => favorites.toggle(favKey)}
         />
+      )}
+
+      {streamingEntry && (
+        <div aria-busy="true">
+          <WordEntry
+            entry={streamingEntry}
+            sourceLang={sourceLang}
+            targetLang={targetLang}
+            isFavorite={favorites.isFavorite(favKey)}
+            onToggleFavorite={() => favorites.toggle(favKey)}
+          />
+          <div className="entry-pending" aria-hidden="true">
+            <span />
+            <span />
+          </div>
+        </div>
       )}
     </div>
   )

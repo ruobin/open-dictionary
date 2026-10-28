@@ -80,13 +80,21 @@ export interface MaskedSecret {
   last4: string
 }
 
+/** Per-model request options (mirrors server LlmModelOptions). Round-tripped
+ *  unchanged by the provider form, which has no editor for them. */
+export interface ModelOptions {
+  provider?: { order?: string[]; allow_fallbacks?: boolean }
+  requestBody?: Record<string, unknown>
+  stream?: boolean
+}
+
 export interface ProviderModel {
   id: string
   label?: string
   isDefault: boolean
   timeoutMs?: number
   temperature?: number
-  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
+  options?: ModelOptions
 }
 
 export interface ProviderView {
@@ -110,7 +118,7 @@ export interface ProviderModelInput {
   isDefault?: boolean
   timeoutMs?: number
   temperature?: number
-  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
+  options?: ModelOptions
 }
 
 export interface ProviderFormInput {

@@ -3,7 +3,7 @@ import { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter
 import { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
 import { createOpenAiResponsesProvider } from './responses'
-import { LlmProviderError, type LlmProvider } from './types'
+import { LlmProviderError, type LlmModelOptions, type LlmProvider } from './types'
 
 export type {
   CefrLevel,
@@ -11,7 +11,9 @@ export type {
   LlmErrorCode,
   LlmGradedExample,
   LlmMeaningGroup,
+  LlmModelOptions,
   LlmProvider,
+  LlmTranslateOptions,
   LlmSense,
   LlmTranslationContent,
   LlmTranslationRequest,
@@ -165,7 +167,7 @@ export interface LlmProviderConfig {
   headers?: Record<string, string>
   timeoutMs?: number
   temperature?: number
-  options?: { provider?: { order?: string[]; allow_fallbacks?: boolean } }
+  options?: LlmModelOptions
 }
 
 /**
@@ -182,6 +184,8 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         baseUrl: cfg.baseUrl,
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
+        requestBody: cfg.options?.requestBody,
+        stream: cfg.options?.stream,
       })
 
     case 'openrouter':
@@ -193,6 +197,8 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
         provider: cfg.options?.provider,
+        requestBody: cfg.options?.requestBody,
+        stream: cfg.options?.stream,
       })
 
     case 'glm':
@@ -202,6 +208,8 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         baseUrl: cfg.baseUrl,
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
+        requestBody: cfg.options?.requestBody,
+        stream: cfg.options?.stream,
       })
 
     case 'openai-compat':
@@ -216,6 +224,8 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         headers: cfg.headers,
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
+        requestBody: cfg.options?.requestBody,
+        stream: cfg.options?.stream,
       })
 
     case 'openai-responses':
@@ -229,6 +239,8 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         baseUrl: cfg.baseUrl,
         headers: cfg.headers,
         timeoutMs: cfg.timeoutMs,
+        requestBody: cfg.options?.requestBody,
+        stream: cfg.options?.stream,
       })
 
     default:

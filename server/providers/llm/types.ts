@@ -105,6 +105,21 @@ export interface LlmTranslationResult {
   /** Provider-specific payload. For GLM this is an {@link LlmTranslationContent}. */
   content: unknown
   meta?: LlmUsageMeta
+  /** True when part of the answer is knowingly missing (e.g. the extras call
+   *  failed). The translate tier still serves it but does not cache it. */
+  incomplete?: boolean
+  /** Fusion mode: this result is a fast first answer; the promise resolves
+   *  with a better merged payload (or null if no improvement is available).
+   *  The translate tier writes the upgrade to the cache in the background. */
+  upgrade?: Promise<LlmTranslationContent | null>
+}
+
+export interface LlmTranslateOptions {
+  /** Called with a cumulative, best-effort snapshot of the answer as the model
+   *  streams it. Snapshots are display hints only — the resolved result of
+   *  translate() is always the authority. Providers that cannot stream simply
+   *  never call it. */
+  onPartial?: (partial: LlmTranslationContent) => void
 }
 
 /**
@@ -170,10 +185,25 @@ export class LlmProviderError extends Error {
   }
 }
 
+/**
+ * Per-model options stored with an admin-portal provider (llm_providers.models[].options).
+ */
+export interface LlmModelOptions {
+  /** OpenRouter routing preferences, forwarded as the request-body `provider` object. */
+  provider?: { order?: string[]; allow_fallbacks?: boolean }
+  /** Extra top-level request-body fields sent with every call (e.g.
+   *  `{ "thinking": { "type": "disabled" } }`, `{ "max_tokens": 3000 }`).
+   *  Setting any reasoning field (`thinking`, `reasoning`, `reasoning_effort`,
+   *  `enable_thinking`) turns off the built-in reasoning-off defaults. */
+  requestBody?: Record<string, unknown>
+  /** Set false to stop streaming the answer upstream for this model. */
+  stream?: boolean
+}
+
 export interface LlmProvider {
   /** Stable cache-key id, e.g. "llm:glm:glm-5.2". */
   readonly id: string
-  translate(req: LlmTranslationRequest): Promise<LlmTranslationResult>
+  translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult>
   moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult>
   /** LLM-driven merge of two structured responses (fusion mode). Optional —
    *  backed by any provider that exposes a raw chat completion (the

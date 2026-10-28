@@ -1,5 +1,6 @@
 import { type LlmProvider } from './types'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
+import { DEEPSEEK_RUNGS } from './requestVariants'
 
 /**
  * DeepSeek provider (OpenAI-compatible).
@@ -12,6 +13,9 @@ export interface DeepSeekProviderConfig {
   baseUrl?: string
   timeoutMs?: number
   temperature?: number
+  /** Extra request-body fields (model option `requestBody`). */
+  requestBody?: Record<string, unknown>
+  stream?: boolean
 }
 
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
@@ -25,5 +29,9 @@ export function createDeepSeekProvider(config: DeepSeekProviderConfig): LlmProvi
     baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
     timeoutMs: config.timeoutMs,
     temperature: config.temperature,
+    reasoningRungs: DEEPSEEK_RUNGS,
+    requestBody: config.requestBody,
+    capOutput: true,
+    stream: config.stream,
   })
 }

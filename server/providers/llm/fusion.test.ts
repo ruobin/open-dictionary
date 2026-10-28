@@ -186,18 +186,72 @@ describe('createFusionProvider', () => {
     expect(f.id).toBe('llm:fusion:llm:a:1+llm:b:2')
   })
 
-  it('falls back to code merge when primary has no fuse() — unions token usage', async () => {
+  it('returns the first answer immediately and merges both via the code merge in the background when primary has no fuse()', async () => {
     const f = createFusionProvider({
-      primary: fakeProvider('llm:a:1', { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'to move' }] }] }, { promptTokens: 10, completionTokens: 5 }),
-      secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }, { promptTokens: 8, completionTokens: 4 }),
+      primary: fakeProvider('llm:a:1', { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'to move' }] }] }),
+      secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }),
     })
     const result = await f.translate(req())
-    const c = result.content as LlmTranslationContent
-    expect(c.meaningGroups).toHaveLength(2)
-    expect(result.meta).toEqual({ promptTokens: 18, completionTokens: 9 })
+    // The immediate answer is a single model's, not the union.
+    expect((result.content as LlmTranslationContent).meaningGroups).toHaveLength(1)
+    // The union arrives as the upgrade.
+    const upgraded = await result.upgrade
+    expect(upgraded!.meaningGroups).toHaveLength(2)
   })
 
-  it('uses primary.fuse() to merge when it is present, returning its content + summed usage', async () => {
+  it('does not wait for the slower provider before answering', async () => {
+    let releaseSlow: () => void = () => {}
+    const slow: LlmProvider = {
+      id: 'llm:slow:1',
+      async translate() {
+        await new Promise<void>((resolve) => {
+          releaseSlow = resolve
+        })
+        return { content: { headword: 'run', translation: 'slow' } }
+      },
+      async moreExamples() {
+        return { examples: [] }
+      },
+    }
+    const f = createFusionProvider({
+      primary: slow,
+      secondary: fakeProvider('llm:fast:2', { headword: 'run', translation: 'fast' }),
+    })
+    const result = await f.translate(req())
+    expect((result.content as LlmTranslationContent).translation).toBe('fast')
+    releaseSlow()
+    const upgraded = await result.upgrade
+    expect(upgraded).not.toBeNull()
+  })
+
+  it('forwards only the primary\'s partial answers to onPartial', async () => {
+    const onPartial = vi.fn()
+    const primary: LlmProvider = {
+      id: 'llm:a:1',
+      async translate(_req, opts) {
+        opts?.onPartial?.({ headword: 'run', translation: 'primary-partial' })
+        return { content: { headword: 'run' } }
+      },
+      async moreExamples() {
+        return { examples: [] }
+      },
+    }
+    const secondary: LlmProvider = {
+      id: 'llm:b:2',
+      async translate(_req, opts) {
+        opts?.onPartial?.({ headword: 'run', translation: 'secondary-partial' })
+        return { content: { headword: 'run' } }
+      },
+      async moreExamples() {
+        return { examples: [] }
+      },
+    }
+    await createFusionProvider({ primary, secondary }).translate(req(), { onPartial })
+    expect(onPartial).toHaveBeenCalledTimes(1)
+    expect(onPartial).toHaveBeenCalledWith({ headword: 'run', translation: 'primary-partial' })
+  })
+
+  it('upgrade uses primary.fuse() when present', async () => {
     const fuseImpl = vi.fn(async (fusedReq: LlmFuseRequest): Promise<LlmFuseResult> => {
       // The fuse call receives both structured responses + the original request.
       expect(fusedReq.request.text).toBe('hello')
@@ -210,18 +264,16 @@ describe('createFusionProvider', () => {
     })
     const f = createFusionProvider({
       primary: fakeFusingProvider('llm:a:1', { headword: 'run', meaningGroups: [{ partOfSpeech: 'verb', senses: [{ definition: 'to move' }] }] }, fuseImpl),
-      secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }, { promptTokens: 8, completionTokens: 4 }),
+      secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }),
     })
     const result = await f.translate(req())
+    const upgraded = await result.upgrade
     expect(fuseImpl).toHaveBeenCalledTimes(1)
-    const c = result.content as LlmTranslationContent
     // The fuse result wins — not the code-merge union.
-    expect(c.meaningGroups).toEqual([{ partOfSpeech: 'verb', senses: [{ definition: 'merged sense' }] }])
-    // Meta sums the parallel calls (0 from primary fake + 12 from secondary) + fuse usage (80).
-    expect(result.meta).toEqual({ promptTokens: 58, completionTokens: 34 })
+    expect(upgraded!.meaningGroups).toEqual([{ partOfSpeech: 'verb', senses: [{ definition: 'merged sense' }] }])
   })
 
-  it('falls back to code merge when primary.fuse() throws', async () => {
+  it('upgrade falls back to the code merge when primary.fuse() throws', async () => {
     const fuseImpl = vi.fn(async (): Promise<LlmFuseResult> => {
       throw new Error('model overloaded')
     })
@@ -230,9 +282,9 @@ describe('createFusionProvider', () => {
       secondary: fakeProvider('llm:b:2', { headword: 'run', meaningGroups: [{ partOfSpeech: 'noun', senses: [{ definition: 'an act' }] }] }),
     })
     const result = await f.translate(req())
-    const c = result.content as LlmTranslationContent
+    const upgraded = await result.upgrade
     // Fuse threw → deterministic code merge ran → union of both POS groups.
-    expect(c.meaningGroups).toHaveLength(2)
+    expect(upgraded!.meaningGroups).toHaveLength(2)
     expect(fuseImpl).toHaveBeenCalledTimes(1)
   })
 
@@ -243,6 +295,7 @@ describe('createFusionProvider', () => {
     })
     const result = await f.translate(req())
     expect((result.content as LlmTranslationContent).translation).toBe('correr')
+    expect(await result.upgrade).toBeNull()
   })
 
   it('degrades gracefully when the primary fails — uses secondary verbatim', async () => {

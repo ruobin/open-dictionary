@@ -6,7 +6,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 **User-facing**
 
-- **Word lookup** (`/api/translate/:word?from=&to=`) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
+- **Word lookup** (`/api/translate/:word?from=&to=`, plus `/api/translate-stream/:word` which streams the entry to the page as the model writes it) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
 - **Autocomplete** (`/api/suggest`) — prefix suggestions from already-cached words
 - **Word of the day** (`/api/word-of-day`) — deterministic daily pick from the cache
 - **"More examples like this"** (`/api/more-examples`) — per-sense follow-up LLM call, optionally constrained by topic/CEFR level (cached 90 days)
@@ -240,7 +240,7 @@ server/
   index.ts        Boot: connect Mongo, create providers, listen + shutdown
   config.ts       Env reading + validation (loaded by both index and app)
   app.ts          Express app factory (middleware, routes, error handling)
-  translate.ts    /api/translate handler + read‑through cache orchestrator
+  translate.ts    /api/translate + /api/translate-stream handlers + read‑through cache orchestrator
   suggest.ts      /api/suggest — autocomplete over cached words
   wordOfDay.ts    /api/word-of-day
   moreExamples.ts /api/more-examples — per-sense follow-up LLM call
@@ -409,7 +409,7 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 
 ### Operational notes
 
-- Per‑IP rate limits (configurable via env): `/api/translate` 5 req/min, `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/admin/*` 30 req/min. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
+- Per‑IP rate limits (configurable via env): `/api/translate` and `/api/translate-stream` 5 req/min (shared), `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/admin/*` 30 req/min. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
 - Request body limit is 64 KB.
 - Stack traces are only served in `NODE_ENV=development`.
 - Lookup results are cached in MongoDB for **1 year** (TTL index); subsequent lookups of the same (word, sourceLang, targetLang) skip the LLM entirely.

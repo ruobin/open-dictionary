@@ -1,5 +1,6 @@
 import { type LlmProvider } from './types'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
+import { GLM_RUNGS } from './requestVariants'
 
 /**
  * Z.AI GLM provider (OpenAI-compatible). Docs: https://z.ai
@@ -16,6 +17,9 @@ export interface GlmProviderConfig {
   timeoutMs?: number
   /** Sampling temperature. */
   temperature?: number
+  /** Extra request-body fields (model option `requestBody`). */
+  requestBody?: Record<string, unknown>
+  stream?: boolean
 }
 
 const DEFAULT_BASE_URL = 'https://api.z.ai/api/paas/v4'
@@ -28,5 +32,9 @@ export function createGlmProvider(config: GlmProviderConfig): LlmProvider {
     baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
     timeoutMs: config.timeoutMs,
     temperature: config.temperature,
+    reasoningRungs: GLM_RUNGS,
+    requestBody: config.requestBody,
+    capOutput: true,
+    stream: config.stream,
   })
 }

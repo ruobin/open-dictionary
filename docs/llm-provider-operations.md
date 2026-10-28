@@ -13,6 +13,91 @@ credentials.
 - The active DB provider is built from its stored model configuration. It does
   not inherit `LLM_REQUEST_TIMEOUT_MS` from the environment.
 
+## Lookup Latency Design
+
+An uncached lookup is two **parallel** model calls, not one large one:
+
+- **core** — headword, translation, IPA, senses with graded examples, and the
+  typo check. The prompt asks for keys in display order, and this call is
+  streamed.
+- **extras** — common mistakes, collocations, word family. It runs concurrently,
+  so it adds almost no wall-clock time. If it fails, the entry is still served
+  but flagged `incomplete` and is **not cached** (otherwise the missing sections
+  would be frozen in for the cache TTL). A typo answer cancels the extras call.
+
+Other behaviors that matter when debugging a slow or odd lookup:
+
+- **Reasoning is switched off by default.** Hidden reasoning was the biggest
+  single cost (DeepSeek defaults to thinking at `high` effort). Each vendor sends
+  its documented "off" switch: DeepSeek/GLM `thinking: {type: "disabled"}`,
+  OpenRouter `reasoning: {effort: "none"}`, Responses `reasoning: {effort:
+  "none"}`. If a model rejects it with HTTP 400/422, the request steps down a
+  ladder (`none` → `minimal`/`low` → plain request) and the working rung is
+  remembered per provider instance, so a rejection costs one round trip once, not
+  on every lookup. A 400 that is unrelated to the switch does not downgrade
+  anything permanently (the rung is only remembered after a lower one succeeds).
+  GLM-5.3 models force thinking on, so they will land on the plain rung.
+- **`max_tokens` is a runaway guard only** (core 4096, extras 2048) and is sent
+  only for DeepSeek, GLM and OpenRouter — generic `openai-compat` gateways are
+  left alone because newer OpenAI models reject `max_tokens`. Reasoning tokens
+  count against it on several vendors, so keep it generous.
+- **Prompts have a constant system prefix.** Language names, mode and the term
+  go in the user message so providers' automatic prefix caching applies. Never
+  interpolate request data into the system strings in `prompts.ts`.
+- **Pronunciation audio** (Merriam-Webster, English source only) is fetched in
+  parallel with the LLM. If it is not back 1.5 s after the answer, the answer is
+  sent without it and the audio is merged into the cached entry when it arrives.
+- **Cache writes are off the response path.** The in-flight dedup entry stays
+  registered until they finish, so a request arriving in that window joins
+  rather than paying for a second LLM call.
+- **Fusion no longer blocks on the merge.** The first successful answer from
+  either model is returned and cached immediately; the fused entry (primary's
+  `fuse()` call, or the deterministic code merge if that fails) is produced in
+  the background and overwrites the cache entry for later lookups. The one user
+  who triggers an uncached lookup therefore sees a single-model answer.
+
+### Streaming endpoint
+
+`GET /api/translate-stream/:text?from=&to=` is the same lookup as
+`/api/translate/:text` delivered as Server-Sent Events: zero or more
+`partial` events (each a more complete `DictionaryEntry[]`), then `done` (final,
+identical to the `/translate` body), or `error` (`not_found` / `internal`). The
+web app uses it; the browser extension still uses `/translate`. It shares the
+5 req/min per-IP limiter and the in-flight dedup. Invalid input gets an ordinary
+JSON 4xx before any stream starts. The response sets `X-Accel-Buffering: no` so
+the host nginx does not buffer it — no nginx change is needed. If the stream
+transport fails in any way, the client falls back to `/translate`.
+
+Upstream, the core call streams from the model only when a listener is attached
+(the web path); admin tests, benchmarks and the eval harness use plain requests.
+If a gateway rejects `stream: true` (HTTP 400/422) the request is retried
+without it and streaming is disabled for that provider instance; a gateway that
+ignores `stream` and returns plain JSON also works.
+
+### Per-model request options
+
+Besides OpenRouter `provider` routing, a model entry's `options` may carry
+(validated in `server/admin/providersRepo.ts`; no UI editor yet — set via the
+admin API):
+
+```json
+{ "requestBody": { "thinking": { "type": "enabled" }, "max_tokens": 3000 },
+  "stream": false }
+```
+
+- `requestBody` — extra top-level request fields sent on every call. It may not
+  set `model`, `messages`, `input`, `stream`, `tools`, `tool_choice`,
+  `response_format`, `text` or `n`, and is limited to 2000 characters of JSON.
+  Setting any reasoning field (`thinking`, `reasoning`, `reasoning_effort`,
+  `enable_thinking`) turns the built-in reasoning-off defaults off for that
+  model.
+- `stream: false` — never stream this model upstream.
+
+Measured on the live DeepSeek + OpenRouter fusion config (2026-10-28), uncached,
+`en→zh`: previously 13.8 s / 39.3 s / 19.4 s for "serendipity" / "run" / "bank"
+(the 39 s case included a fuse call hitting its 30 s timeout); now 1.8 s / 2.0 s
+/ 2.1 s with the translation visible after about 0.5 s.
+
 ## Timeouts And Fallbacks
 
 - The shared default LLM timeout is 30 seconds (`DEFAULT_TIMEOUT_MS`). It

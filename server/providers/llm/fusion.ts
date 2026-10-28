@@ -6,10 +6,10 @@ import {
   type LlmMoreExamplesResult,
   type LlmProvider,
   type LlmSense,
+  type LlmTranslateOptions,
   type LlmTranslationContent,
   type LlmTranslationRequest,
   type LlmTranslationResult,
-  type LlmUsageMeta,
 } from './types'
 
 /**
@@ -19,74 +19,85 @@ import {
  * Fusion is implemented as an {@link LlmProvider} that wraps two underlying
  * providers. This keeps it transparent to the translate pipeline — caching,
  * metrics, audio-merge and dictionary fallback all work unchanged. The fusion
- * provider's own `id` becomes the Mongo cache key, so fused results are cached
- * distinctly from single-provider results (and swapping either model refreshes
- * them, since the id embeds both).
+ * provider's own `id` is what the admin UI and logs show.
  *
- * Both sub-calls run concurrently via Promise.allSettled. If one fails, the
- * other's result is used as-is; if both fail, the (first) error is re-thrown
- * so the translate tier falls through to the dictionary fallback. So enabling
- * fusion never makes the system *less* available than a single provider — at
- * worst it costs one extra paid call per uncached lookup.
+ * Latency: the user is NOT made to wait for the merge. Both providers run
+ * concurrently and the FIRST successful answer is returned immediately (and
+ * cached). The merge — LLM-driven via `primary.fuse()`, with the deterministic
+ * {@link mergeContents} as fallback — then runs in the background and is handed
+ * back as `result.upgrade`; the translate tier overwrites the cache entry with
+ * it, so every later lookup of that word gets the fused entry. The trade-off:
+ * the one user who triggers an uncached lookup sees a single-model answer
+ * instead of the fused one, in exchange for skipping the slower model and the
+ * extra full-length merge generation (previously ~2x or worse latency).
  *
- * Merging: by default the PRIMARY provider does the merge — after both
- * responses arrive, they're sent back to `primary.fuse()`, which asks the
- * model to union + deduplicate them into one entry (handles paraphrased
- * definitions and near-duplicate example sentences that a code heuristic
- * can't). The deterministic {@link mergeContents} is kept ONLY as a fallback
- * if the primary lacks a `fuse()` method or the fuse call itself fails, so a
- * merge-step failure can never make fusion less available than a single
- * provider. The fuse call runs in series after the two parallel calls, so
- * fusion adds one extra primary-model round-trip to uncached lookup latency.
+ * If one provider fails, the other's answer is used as-is (no upgrade); if
+ * both fail the primary's error is re-thrown so the translate tier falls
+ * through to the dictionary. Enabling fusion never makes the system less
+ * available than a single provider.
  */
 export interface FusionProviderConfig {
   primary: LlmProvider
   secondary: LlmProvider
 }
 
+/** Resolves with the first fulfilled promise; rejects (with the first
+ *  promise's error) only when all of them reject. */
+function firstFulfilled<T>(promises: Array<Promise<T>>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const errors: unknown[] = []
+    let failed = 0
+    promises.forEach((p, i) => {
+      p.then(resolve, (err: unknown) => {
+        errors[i] = err
+        failed += 1
+        if (failed === promises.length) reject(errors[0])
+      })
+    })
+  })
+}
+
 export function createFusionProvider(config: FusionProviderConfig): LlmProvider {
   const { primary, secondary } = config
   const id = `llm:fusion:${primary.id}+${secondary.id}`
 
-  async function translate(req: LlmTranslationRequest): Promise<LlmTranslationResult> {
-    const settled = await Promise.allSettled([primary.translate(req), secondary.translate(req)])
-    const [a, b] = settled
+  async function translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult> {
+    // Only the primary streams partials to the UI; the other model just races it.
+    const pa = primary.translate(req, opts)
+    const pb = secondary.translate(req)
 
-    // Both failed — re-throw so the translate tier falls back to the dictionary.
-    if (a.status === 'rejected' && b.status === 'rejected') {
-      throw a.reason instanceof Error ? a.reason : new Error(String(a.reason))
+    let first: LlmTranslationResult
+    try {
+      first = await firstFulfilled([pa, pb])
+    } catch (err) {
+      // Both failed — re-throw so the translate tier falls back to the dictionary.
+      throw err instanceof Error ? err : new Error(String(err))
     }
 
-    const ra = a.status === 'fulfilled' ? a.value : null
-    const rb = b.status === 'fulfilled' ? b.value : null
-
-    // Graceful degradation: if only one responded, use it verbatim (no merge).
-    if (ra && !rb) return ra
-    if (rb && !ra) return rb
-
-    // Both succeeded — fuse their structured content. Prefer the LLM-driven
-    // merge (primary.fuse); fall back to the deterministic code merge only
-    // if the primary can't fuse or the fuse call itself fails.
-    const ca = (ra!.content as LlmTranslationContent) ?? { headword: '' }
-    const cb = (rb!.content as LlmTranslationContent) ?? { headword: '' }
-    const parallelMeta = mergeMeta(ra!.meta, rb!.meta)
-
-    if (typeof primary.fuse === 'function') {
-      try {
-        const fused = await primary.fuse({ request: req, primary: ca, secondary: cb })
-        const meta = mergeMeta(parallelMeta, fused.meta)
-        return meta ? { content: fused.content, meta } : { content: fused.content }
-      } catch (err) {
-        // Don't let a merge-step failure break fusion — fall through to the
-        // deterministic code merge, which can't fail on well-formed input.
-        console.warn(
-          `[fusion] primary.fuse failed (${(err as Error)?.message ?? err}) — falling back to deterministic code merge`
-        )
+    const upgrade = (async (): Promise<LlmTranslationContent | null> => {
+      const [a, b] = await Promise.allSettled([pa, pb])
+      if (a.status !== 'fulfilled' || b.status !== 'fulfilled') return null
+      const ca = (a.value.content as LlmTranslationContent) ?? { headword: '' }
+      const cb = (b.value.content as LlmTranslationContent) ?? { headword: '' }
+      if (typeof primary.fuse === 'function') {
+        try {
+          const fused = await primary.fuse({ request: req, primary: ca, secondary: cb })
+          return fused.content
+        } catch (err) {
+          // Don't let a merge-step failure break fusion — fall through to the
+          // deterministic code merge, which can't fail on well-formed input.
+          console.warn(
+            `[fusion] primary.fuse failed (${(err as Error)?.message ?? err}) — falling back to deterministic code merge`
+          )
+        }
       }
-    }
+      return mergeContents(ca, cb)
+    })().catch((err: unknown) => {
+      console.warn(`[fusion] background merge failed: ${(err as Error)?.message ?? err}`)
+      return null
+    })
 
-    const merged = mergeContents(ca, cb)
-    return parallelMeta ? { content: merged, meta: parallelMeta } : { content: merged }
+    return { ...first, upgrade }
   }
 
   // moreExamples is a secondary follow-up feature; fusing it adds little value
@@ -96,14 +107,6 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
   }
 
   return { id, translate, moreExamples, fuse: primary.fuse ? primary.fuse.bind(primary) : undefined }
-}
-
-/** Sums per-provider token usage when both report it (otherwise passes through). */
-function mergeMeta(a: LlmUsageMeta | undefined, b: LlmUsageMeta | undefined): LlmUsageMeta | undefined {
-  if (!a && !b) return undefined
-  const pt = (a?.promptTokens != null ? a.promptTokens : 0) + (b?.promptTokens != null ? b.promptTokens : 0)
-  const ct = (a?.completionTokens != null ? a.completionTokens : 0) + (b?.completionTokens != null ? b.completionTokens : 0)
-  return { promptTokens: pt, completionTokens: ct }
 }
 
 // ---------------------------------------------------------------------------

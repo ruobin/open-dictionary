@@ -118,6 +118,39 @@ describe('admin/providersRepo: validateProviderFields', () => {
     })
   })
 
+  it('accepts per-model requestBody and stream options', async () => {
+    const { validateProviderFields } = await freshRepo()
+    const result = validateProviderFields(
+      {
+        name: 'DeepSeek',
+        vendor: 'deepseek',
+        models: [{ id: 'deepseek-v4-flash', options: { requestBody: { thinking: { type: 'disabled' }, max_tokens: 3000 }, stream: false } }],
+      },
+      true
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        models: [{ options: { requestBody: { thinking: { type: 'disabled' }, max_tokens: 3000 }, stream: false } }],
+      },
+    })
+  })
+
+  it('rejects requestBody keys the adapter owns, non-object bodies, oversized bodies and non-boolean stream', async () => {
+    const { validateProviderFields } = await freshRepo()
+    const check = (options: unknown) =>
+      validateProviderFields({ name: 'X', vendor: 'deepseek', models: [{ id: 'x', options }] }, true)
+
+    const reserved = check({ requestBody: { model: 'evil', messages: [], stream: true } })
+    expect(reserved.ok).toBe(false)
+    expect(JSON.stringify(reserved)).toContain('may not set: model, messages, stream')
+
+    expect(check({ requestBody: ['a'] }).ok).toBe(false)
+    expect(check({ requestBody: 'thinking' }).ok).toBe(false)
+    expect(check({ requestBody: { big: 'x'.repeat(3000) } }).ok).toBe(false)
+    expect(check({ stream: 'yes' }).ok).toBe(false)
+  })
+
   it('rejects an http baseUrl in prod for a public host', async () => {
     const { validateProviderFields } = await freshRepo()
     const result = validateProviderFields(

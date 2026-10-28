@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { lookupWord, type DictionaryEntry, type LookupError } from '../api/dictionary'
+import { lookupWordStream, type DictionaryEntry, type LookupError } from '../api/dictionary'
 
 export type LookupStatus = 'idle' | 'loading' | 'success' | 'error'
 
 export interface DictionaryState {
   status: LookupStatus
+  /** Final entries once `status` is 'success'. While 'loading', holds the
+   *  best-so-far partial entry when the server is streaming one (else null). */
   data: DictionaryEntry[] | null
   error: LookupError | null
 }
@@ -27,9 +29,16 @@ export function useDictionary(
     }
 
     let cancelled = false
+    const controller = new AbortController()
     setState({ status: 'loading', data: null, error: null })
 
-    lookupWord(word, sourceLang, targetLang)
+    lookupWordStream(word, sourceLang, targetLang, {
+      signal: controller.signal,
+      onPartial: (partial) => {
+        if (cancelled) return
+        setState((prev) => (prev.status === 'loading' ? { status: 'loading', data: partial, error: null } : prev))
+      },
+    })
       .then((data) => {
         if (cancelled) return
         setState({ status: 'success', data, error: null })
@@ -41,6 +50,7 @@ export function useDictionary(
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [word, sourceLang, targetLang])
 

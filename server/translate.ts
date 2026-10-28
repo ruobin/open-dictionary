@@ -195,65 +195,101 @@ async function cacheSetSafe(
   }
 }
 
-/** Best-effort: fetch audio URLs from the Free Dictionary API and merge into the
- *  LLM-produced entries. Only attempts for English source words (the dict API is
- *  English-only). Failures are silently ignored — the entry just has no audio.
- *  The merged result is cached so future lookups include the audio. */
-async function mergeAudioFromDictionary(
-  req: TranslateRequest,
-  entries: DictionaryEntry[],
-  dictionary: DictionaryProvider
-): Promise<DictionaryEntry[]> {
-  if (req.sourceLang.toLowerCase() !== 'en') return entries
+/** How long, after the LLM answer is ready, to keep waiting for the (parallel)
+ *  pronunciation-audio lookup before answering without it. */
+const AUDIO_GRACE_MS = 1_500
+
+/** Best-effort: fetch audio URLs from the Free Dictionary API. Only attempts for
+ *  English source words (the dict API is English-only). NEVER rejects — a
+ *  failure just means the entry has no audio. Started in parallel with the LLM
+ *  call so it adds no latency in the common case. */
+async function fetchAudioPhonetics(req: TranslateRequest, dictionary: DictionaryProvider): Promise<Phonetic[]> {
+  if (req.sourceLang.toLowerCase() !== 'en') return []
   try {
     const raw = await dictionary.define({ text: req.text, sourceLang: req.sourceLang })
     if (!Array.isArray(raw) || raw.length === 0) {
       if (LLM_DEBUG) {
         console.log(`[dict-audio] no entries from dictionary for "${req.text}" (sourceLang=${req.sourceLang})`)
       }
-      return entries
+      return []
     }
     const dictPhonetics = (raw[0] as DictionaryEntry)?.phonetics ?? []
-    if (dictPhonetics.length === 0) {
-      if (LLM_DEBUG) {
-        console.log(`[dict-audio] dictionary entry for "${req.text}" has no phonetics field`)
-      }
-      return entries
-    }
     const audioPhonetics = dictPhonetics.filter((p) => Boolean(p.audio))
-    if (audioPhonetics.length === 0) {
-      if (LLM_DEBUG) {
-        console.log(`[dict-audio] dictionary returned ${dictPhonetics.length} phonetics for "${req.text}" but none have audio URLs`)
-      }
-      return entries
-    }
     if (LLM_DEBUG) {
-      console.log(`[dict-audio] merged ${audioPhonetics.length} audio URL(s) into "${req.text}"`)
+      console.log(`[dict-audio] "${req.text}": ${dictPhonetics.length} phonetics, ${audioPhonetics.length} with audio`)
     }
-    return entries.map((entry, i) =>
-      i === 0
-        ? { ...entry, phonetics: [...(entry.phonetics ?? []), ...audioPhonetics] }
-        : entry
-    )
+    return audioPhonetics
   } catch (err) {
     if (LLM_DEBUG) {
       const message = err instanceof Error ? err.message : String(err)
       console.log(`[dict-audio] dictionary call failed for "${req.text}": ${message}`)
     }
-    return entries
+    return []
   }
 }
+
+function withAudio(entries: DictionaryEntry[], audio: Phonetic[]): DictionaryEntry[] {
+  if (audio.length === 0) return entries
+  return entries.map((entry, i) =>
+    i === 0 ? { ...entry, phonetics: [...(entry.phonetics ?? []), ...audio] } : entry
+  )
+}
+
+/** Resolves with the promise's value, or `null` if it is not ready within `ms`. */
+function withinGrace<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(null)
+      }
+    )
+  })
+}
+
+type PartialListener = (entries: DictionaryEntry[]) => void
 
 /**
  * In-flight request dedup (to-do §9): concurrent lookups for the same
  * (text, sourceLang, targetLang) share one underlying `doTranslate()` call
  * instead of each fanning out to the cache/LLM/dictionary — protects a
- * popular uncached word from a stampede of simultaneous LLM calls.
+ * popular uncached word from a stampede of simultaneous LLM calls. Joiners also
+ * receive the streamed partial answers (the latest one immediately on join).
+ * An entry stays registered until its background work (cache writes, fusion
+ * upgrade) has settled, so a request arriving between "response sent" and
+ * "cache written" joins instead of launching a duplicate paid LLM call.
  */
-const inFlight = new Map<string, Promise<TranslateOutcome>>()
+interface InFlight {
+  promise: Promise<TranslateOutcome>
+  listeners: Set<PartialListener>
+  last?: DictionaryEntry[]
+}
+const inFlight = new Map<string, InFlight>()
 
 function inFlightKey(req: TranslateRequest): string {
   return `${req.sourceLang}|${req.targetLang}|${req.text}`
+}
+
+function subscribe(state: InFlight, listener: PartialListener | undefined): void {
+  if (!listener) return
+  state.listeners.add(listener)
+  if (state.last) {
+    try {
+      listener(state.last)
+    } catch {
+      // a broken listener (e.g. a closed socket) must never affect the lookup
+    }
+  }
+}
+
+export interface TranslateHooks {
+  /** Called with progressively more complete entries while the LLM is still writing. */
+  onPartial?: PartialListener
 }
 
 /**
@@ -265,30 +301,61 @@ export function translate(
   req: TranslateRequest,
   llm: LlmProvider | null,
   dictionary: DictionaryProvider,
-  cache?: TranslationCache | null
+  cache?: TranslationCache | null,
+  hooks: TranslateHooks = {}
 ): Promise<TranslateOutcome> {
   const key = inFlightKey(req)
   const existing = inFlight.get(key)
-  if (existing) return existing
+  if (existing) {
+    subscribe(existing, hooks.onPartial)
+    return existing.promise
+  }
 
-  const promise = doTranslate(req, llm, dictionary, cache)
-    .then((outcome) => {
-      recordOutcome(outcome.tier)
-      return outcome
-    })
-    .finally(() => {
-      inFlight.delete(key)
-    })
-  inFlight.set(key, promise)
-  return promise
+  const state: InFlight = { promise: undefined as unknown as Promise<TranslateOutcome>, listeners: new Set() }
+  subscribe(state, hooks.onPartial)
+  const background: Array<Promise<unknown>> = []
+  const emit: PartialListener = (entries) => {
+    state.last = entries
+    for (const listener of state.listeners) {
+      try {
+        listener(entries)
+      } catch {
+        // see subscribe()
+      }
+    }
+  }
+
+  state.promise = doTranslate(req, llm, dictionary, cache, emit, background).then((outcome) => {
+    recordOutcome(outcome.tier)
+    return outcome
+  })
+  inFlight.set(key, state)
+
+  const release = (): void => {
+    if (background.length === 0) inFlight.delete(key)
+    else void Promise.allSettled(background).then(() => inFlight.delete(key))
+  }
+  state.promise.then(release, release)
+  return state.promise
 }
 
 async function doTranslate(
   req: TranslateRequest,
   llm: LlmProvider | null,
   dictionary: DictionaryProvider,
-  cache?: TranslationCache | null
+  cache: TranslationCache | null | undefined,
+  emit: PartialListener,
+  background: Array<Promise<unknown>>
 ): Promise<TranslateOutcome> {
+  // Cache writes for one lookup are serialised so a late audio/fusion
+  // write can never be overtaken by (and lost to) the first write.
+  let writeChain: Promise<void> = Promise.resolve()
+  const enqueueWrite = (fn: () => Promise<void>): void => {
+    if (!cache) return
+    writeChain = writeChain.then(fn)
+    background.push(writeChain)
+  }
+
   // Tier 0 — cache
   if (cache) {
     try {
@@ -302,17 +369,60 @@ async function doTranslate(
   // Tier 1 — LLM (primary)
   if (llm) {
     const started = Date.now()
+    // Pronunciation audio is independent of the LLM answer — fetch it concurrently.
+    const audioPromise = fetchAudioPhonetics(req, dictionary)
     try {
-      const result = await llm.translate(req)
+      const result = await llm.translate(req, {
+        onPartial: (partial) => {
+          const preview = adaptLlm(partial)
+          if (preview.some((e) => e.word || e.meanings.length > 0)) emit(preview)
+        },
+      })
       recordLlmLatency(llm.id, Date.now() - started)
       const content = result.content as LlmTranslationContent
       let entries = adaptLlm(content)
       const isTypoResponse = entries.some((e) => Boolean(e.typo?.suggestion))
       if (entries.some((e) => e.word || e.meanings.length > 0)) {
+        let lateAudio: Promise<Phonetic[]> | null = null
         if (!isTypoResponse) {
-          entries = await mergeAudioFromDictionary(req, entries, dictionary)
+          const audio = await withinGrace(audioPromise, AUDIO_GRACE_MS)
+          if (audio) entries = withAudio(entries, audio)
+          else lateAudio = audioPromise
         }
-        await cacheSetSafe(cache, req, entries, 'llm')
+
+        // Partial answers (extras call failed) are served but never cached —
+        // caching would freeze the missing sections in for the cache TTL.
+        if (!result.incomplete) {
+          const firstEntries = entries
+          enqueueWrite(() => cacheSetSafe(cache, req, firstEntries, 'llm'))
+          if (lateAudio) {
+            const pending = lateAudio
+            enqueueWrite(async () => {
+              const audio = await pending
+              if (audio.length > 0) await cacheSetSafe(cache, req, withAudio(firstEntries, audio), 'llm')
+            })
+          }
+        }
+
+        // Fusion: a fast first answer was returned; the merged entry arrives
+        // later and replaces the cached one for every subsequent lookup.
+        if (result.upgrade) {
+          const upgrade = result.upgrade
+          background.push(
+            upgrade
+              .then(async (merged) => {
+                if (!merged) return
+                let upgraded = adaptLlm(merged)
+                if (!upgraded.some((e) => e.word || e.meanings.length > 0)) return
+                if (!upgraded.some((e) => Boolean(e.typo?.suggestion))) {
+                  upgraded = withAudio(upgraded, await audioPromise)
+                }
+                enqueueWrite(() => cacheSetSafe(cache, req, upgraded, 'llm'))
+                await writeChain
+              })
+              .catch((err: unknown) => console.warn('[translate] fusion upgrade failed (non-fatal):', err))
+          )
+        }
         return { entries, tier: 'llm' }
       }
     } catch (err) {
@@ -337,11 +447,72 @@ async function doTranslate(
     throw err
   }
   const entries = raw as DictionaryEntry[]
-  await cacheSetSafe(cache, req, entries, 'dict')
+  enqueueWrite(() => cacheSetSafe(cache, req, entries, 'dict'))
   return { entries, tier: 'dictionary' }
 }
 
-/** Builds the /api router with GET /translate/:text mounted under /api. */
+interface ParsedLookup {
+  text: string
+  sourceLang: string
+  targetLang: string
+}
+
+/** Validates `:text` + `from`/`to`. Sends the error response itself and
+ *  returns null when the request is invalid. */
+function parseLookup(req: Request, res: Response): ParsedLookup | null {
+  const text = normalizeText(req.params.text)
+  if (!text) {
+    res.status(404).json({ error: 'not_found' })
+    return null
+  }
+  const sourceLang = normalizeLang(typeof req.query.from === 'string' ? req.query.from : undefined, 'en')
+  const targetLang = normalizeLang(typeof req.query.to === 'string' ? req.query.to : undefined, 'en')
+  if (sourceLang === null || targetLang === null) {
+    res.status(400).json({ error: 'invalid_language' })
+    return null
+  }
+  return { text, sourceLang, targetLang }
+}
+
+function logAndRecord(
+  req: Request,
+  lookup: ParsedLookup,
+  outcome: TranslateOutcome,
+  latencyMs: number,
+  extra: Record<string, unknown> = {}
+): void {
+  // Structured per-request log (design doc §12) — textLength, never text.
+  console.log(
+    '[translate]',
+    JSON.stringify({
+      tier: outcome.tier,
+      sourceLang: lookup.sourceLang,
+      targetLang: lookup.targetLang,
+      textLength: lookup.text.length,
+      latencyMs,
+      ...extra,
+    })
+  )
+
+  // User activity log (docs/design-user-activity-log.md) — fire-and-forget,
+  // never awaited, never allowed to affect this response.
+  recordActivity({
+    word: lookup.text,
+    sourceLang: lookup.sourceLang,
+    targetLang: lookup.targetLang,
+    tier: outcome.tier,
+    latencyMs,
+    ip: req.ip ?? 'unknown',
+    userAgent: req.get('user-agent'),
+    origin: req.get('origin'),
+  })
+}
+
+function writeSse(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+}
+
+/** Builds the /api router with GET /translate/:text and GET /translate-stream/:text mounted under /api. */
 export function createTranslateRouter(
   dictionary: DictionaryProvider,
   cache?: TranslationCache | null
@@ -353,27 +524,12 @@ export function createTranslateRouter(
     translateLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const text = normalizeText(req.params.text)
-        if (!text) {
-          res.status(404).json({ error: 'not_found' })
-          return
-        }
-        const sourceLang = normalizeLang(
-          typeof req.query.from === 'string' ? req.query.from : undefined,
-          'en'
-        )
-        const targetLang = normalizeLang(
-          typeof req.query.to === 'string' ? req.query.to : undefined,
-          'en'
-        )
-        if (sourceLang === null || targetLang === null) {
-          res.status(400).json({ error: 'invalid_language' })
-          return
-        }
+        const lookup = parseLookup(req, res)
+        if (!lookup) return
 
         const llm = (req.app.locals.llmService as LlmService).current()
         const started = Date.now()
-        const outcome = await translate({ text, sourceLang, targetLang }, llm, dictionary, cache)
+        const outcome = await translate(lookup, llm, dictionary, cache)
         const latencyMs = Date.now() - started
 
         if (outcome.entries.length === 0) {
@@ -381,25 +537,7 @@ export function createTranslateRouter(
           return
         }
 
-        // Structured per-request log (design doc §12) — textLength, never text.
-        console.log(
-          '[translate]',
-          JSON.stringify({ tier: outcome.tier, sourceLang, targetLang, textLength: text.length, latencyMs })
-        )
-
-        // User activity log (docs/design-user-activity-log.md) — fire-and-forget,
-        // never awaited, never allowed to affect this response.
-        recordActivity({
-          word: text,
-          sourceLang,
-          targetLang,
-          tier: outcome.tier,
-          latencyMs,
-          ip: req.ip ?? 'unknown',
-          userAgent: req.get('user-agent'),
-          origin: req.get('origin'),
-        })
-
+        logAndRecord(req, lookup, outcome, latencyMs)
         res.json(outcome.entries)
       } catch (err) {
         if ((err as { code?: string })?.code === 'not_found') {
@@ -410,6 +548,68 @@ export function createTranslateRouter(
       }
     }
   )
+
+  /**
+   * Same lookup as /translate/:text, delivered as Server-Sent Events so the
+   * page can paint the headword/translation/first senses while the LLM is
+   * still writing the rest:
+   *
+   *   event: partial  data: DictionaryEntry[]   (0..n, each more complete than the last)
+   *   event: done     data: DictionaryEntry[]   (final; identical to the /translate body)
+   *   event: error    data: { error: "not_found" | "internal" }
+   *
+   * Cache hits send just `done`. Validation errors are ordinary JSON responses
+   * with a 4xx status, before any stream starts. Shares translateLimiter and
+   * the in-flight dedup with /translate.
+   */
+  router.get('/translate-stream/:text', translateLimiter, async (req: Request, res: Response) => {
+    const lookup = parseLookup(req, res)
+    if (!lookup) return
+
+    res.status(200)
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache, no-transform')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no') // tell nginx not to buffer this response
+    res.flushHeaders()
+
+    let closed = false
+    res.on('close', () => {
+      closed = true
+    })
+    const send = (event: string, data: unknown): void => {
+      if (!closed) writeSse(res, event, data)
+    }
+
+    const started = Date.now()
+    let firstPartialMs: number | undefined
+    try {
+      const llm = (req.app.locals.llmService as LlmService).current()
+      const outcome = await translate(lookup, llm, dictionary, cache, {
+        onPartial: (entries) => {
+          firstPartialMs ??= Date.now() - started
+          send('partial', entries)
+        },
+      })
+      const latencyMs = Date.now() - started
+
+      if (outcome.entries.length === 0) {
+        send('error', { error: 'not_found' })
+      } else {
+        logAndRecord(req, lookup, outcome, latencyMs, { stream: true, ...(firstPartialMs !== undefined ? { firstPartialMs } : {}) })
+        send('done', outcome.entries)
+      }
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'not_found') {
+        send('error', { error: 'not_found' })
+      } else {
+        console.error('[api] GET /translate-stream ->', err)
+        send('error', { error: 'internal' })
+      }
+    } finally {
+      if (!closed) res.end()
+    }
+  })
 
   return router
 }

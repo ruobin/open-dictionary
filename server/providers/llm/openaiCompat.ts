@@ -1,21 +1,24 @@
 import {
   LlmProviderError,
-  type CefrLevel,
-  type LlmCommonMistake,
   type LlmFuseRequest,
   type LlmFuseResult,
-  type LlmGradedExample,
-  type LlmMeaningGroup,
   type LlmMoreExamplesRequest,
   type LlmMoreExamplesResult,
   type LlmProvider,
-  type LlmSense,
-  type LlmTranslationContent,
+  type LlmTranslateOptions,
   type LlmTranslationRequest,
   type LlmTranslationResult,
   type LlmUsageMeta,
 } from './types'
-import { languageName } from '../../../shared/languages'
+import {
+  buildFuseMessages,
+  buildMoreExamplesMessages,
+  type ChatMessage,
+} from './prompts'
+import { parseContent, parseMoreExamplesContent } from './parse'
+import { runTranslate, type Transport } from './translateFlow'
+import { readSse } from '../../../shared/sse'
+import { buildLadder, CORE_MAX_TOKENS, EXTRAS_MAX_TOKENS } from './requestVariants'
 
 /**
  * Shared adapter for any OpenAI-compatible Chat Completions API. Both the GLM
@@ -37,215 +40,36 @@ export interface OpenAiCompatOptions {
   jsonMode?: boolean
   /** Provider-specific request fields, such as OpenRouter routing preferences. */
   extraBody?: Record<string, unknown>
+  /** Vendor "reasoning off" request variants, most aggressive first, ending in
+   *  `{}`. A variant the model rejects (400/422) steps down to the next; see
+   *  requestVariants.ts. Default: none (plain request). */
+  reasoningRungs?: Array<Record<string, unknown>>
+  /** Admin-supplied extra top-level request fields (model option `requestBody`).
+   *  Always sent; setting any reasoning field here disables the built-in rungs. */
+  requestBody?: Record<string, unknown>
+  /** Send `max_tokens` runaway caps. Default false — some gateways reject
+   *  `max_tokens` for newer OpenAI models (they want `max_completion_tokens`). */
+  capOutput?: boolean
+  /** Stream the core call upstream so partial answers can be shown early.
+   *  Default true; falls back to a plain request if the gateway rejects it. */
+  stream?: boolean
 }
 
 export const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_TEMPERATURE = 0.2
 
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
-
-export function buildMessages(req: LlmTranslationRequest): ChatMessage[] {
-  const { text, sourceLang, targetLang } = req
-  const sameLang = sourceLang.toLowerCase() === targetLang.toLowerCase()
-  const sourceName = languageName(sourceLang)
-  const targetName = languageName(targetLang)
-
-  const task = sameLang
-    ? `Define and explain the ${sourceName} word or expression "${text}" for a learner. ` +
-      `Source and target language are both ${sourceName} here — this is a DEFINITION request, not translation. Omit the "translation" field entirely.`
-    : `Translate the ${sourceName} word or expression "${text}" into ${targetName} and explain it for a learner.`
-
-  const system = [
-    'You are a precise multilingual dictionary and translation engine built for language learners.',
-    'Respond with ONE value: a single JSON object (no markdown fences, no commentary) matching this shape:',
-    '{',
-    '  "headword": string,            // the queried term, as given',
-    '  "translation"?: string,        // best short translation into the target language; omit when defining in the same language',
-    '  "phonetic"?: string,           // IPA transcription when known',
-    '  "meaningGroups"?: [',
-    '    {',
-    '      "partOfSpeech": string,    // e.g. "noun", "verb" — a SEPARATE group per part of speech',
-    '                                 // ("run" as a verb and "run" as a noun are TWO groups, not one)',
-    '      "senses": [',
-    '        {',
-    '          "definition": string,        // in targetLang',
-    '          "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2",   // difficulty of this sense',
-    '          "grammar"?: string,          // e.g. "countable", "transitive", "[+ that clause]", "irregular: go, went, gone"',
-    '          "register"?: string,         // e.g. "formal", "informal", "slang", "dated", "UK", "US"',
-    '          "examples"?: [{ "text": string, "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2" }]',
-    '                                       // 2-3 example sentences in sourceLang, EACH AT A DIFFERENT CEFR level',
-    '        }',
-    '      ]                              // 1-3 senses per group, most common first',
-    '    }',
-    '  ],                                 // 1-3 groups, most common part of speech first',
-    '  "commonMistakes"?: [{ "wrong": string, "right": string, "note"?: string }],',
-    '                                     // learner-corpus-style corrections, e.g. { "wrong": "make a photo", "right": "take a photo" }',
-    '                                     // note in targetLang; omit entirely if there is no well-known common mistake',
-    '  "collocations"?: string[],         // fixed expressions this word commonly appears in, e.g. "heavy rain", "commit a crime"',
-    '  "wordFamily"?: string[],           // related words, e.g. run -> "runner", "running", "rerun"',
-    '  "typo"?: { "suggestion": string, "explanation"?: string }  // only present when the input is an obvious typo',
-    '}',
-    `Write "definition"/"note" text in ${targetName} and all example sentences in ${sourceName}. Keep it concise and accurate.`,
-    'Each "collocations" and "wordFamily" entry MUST be ONLY the bare word/phrase itself — no parenthetical',
-    'part-of-speech labels (write "runner", never "runner (noun)") and no slash-separated alternatives',
-    '(write one concrete phrase like "run for president", never "run for president/mayor"). Each entry is',
-    'rendered as a clickable link to that exact term\'s own page, so it must be a clean, independently',
-    'look-up-able word or phrase.',
-    'Only include "commonMistakes", "collocations", and "wordFamily" when you have a genuinely useful, well-known answer — omit them rather than inventing something generic.',
-    '',
-    'TYPO DETECTION: Before answering, check whether the input is an OBVIOUS typo of a real',
-    `${sourceName} word — e.g. missing letters ("helo" → "hello"), transposed letters ("teh" → "the"),`,
-    'or a single common misspelling. If it is, return ONLY:',
-    `  { "headword": <the original input>, "typo": { "suggestion": <the corrected word>, "explanation": <a short note in ${targetName}, e.g. "Did you mean …?"> } }`,
-    'Omit every other field in this case.',
-    `Do NOT flag dialectal variants (e.g. "colour" vs "color"), proper nouns, brand names, abbreviations,`,
-    `rare or technical terms, slang, code identifiers, or words from a language other than ${sourceName} as typos.`,
-    'When in doubt, translate normally.',
-  ].join('\n')
-
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: task },
-  ]
-}
-
-export function buildMoreExamplesMessages(req: LlmMoreExamplesRequest): ChatMessage[] {
-  const { word, sourceLang, targetLang, senseDefinition, topic, cefr } = req
-  const sourceName = languageName(sourceLang)
-  const targetName = languageName(targetLang)
-
-  const constraints: string[] = []
-  if (topic) constraints.push(`about the topic "${topic}"`)
-  if (cefr) constraints.push(`at approximately CEFR level ${cefr}`)
-  const constraintText = constraints.length > 0 ? ` ${constraints.join(' and ')}` : ''
-
-  const task =
-    `Give 3 NEW example sentences in ${sourceName} for the ${sourceName} word or expression "${word}", ` +
-    `specifically for the sense defined (in ${targetName}) as: "${senseDefinition}".${constraintText} ` +
-    'Do not reuse generic textbook examples — vary the sentences from each other and from what a dictionary would show by default.'
-
-  const system = [
-    'You are a precise multilingual dictionary and translation engine built for language learners.',
-    'Respond with ONE value: a single JSON object (no markdown fences, no commentary) matching this shape:',
-    '{',
-    '  "examples": [{ "text": string, "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2" }]',
-    '}',
-    'Return exactly 3 examples, each a complete natural sentence using the word/expression as given, matching the specified sense only.',
-    cefr
-      ? `All 3 examples should be roughly at CEFR level ${cefr}.`
-      : 'Vary the CEFR level across the 3 examples (e.g. one easier, one harder).',
-  ].join('\n')
-
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: task },
-  ]
-}
-
-/**
- * Builds the "fuse" prompt — given two structured responses for the same
- * lookup, ask the model to merge + deduplicate them into one superior entry.
- * This is the LLM-driven merge used in fusion mode (the deterministic code
- * merge in fusion.ts is only a fallback if this call fails). The schema is
- * restated so the output conforms exactly to {@link LlmTranslationContent};
- * the rules encode the same intent as the code merge (union + dedup, typo
- * only if both flag it) but let the model handle the semantic cases
- * (paraphrased definitions, near-duplicate example sentences) that
- * token-Jaccard can't.
- */
-export function buildFuseMessages(req: LlmFuseRequest): ChatMessage[] {
-  const { text, sourceLang, targetLang } = req.request
-  const sourceName = languageName(sourceLang)
-  const targetName = languageName(targetLang)
-
-  const system = [
-    'You are a lexicographic editor for a language-learning dictionary.',
-    'Two dictionary models produced the two JSON responses below for the SAME lookup query.',
-    'Merge them into ONE JSON object that is strictly better than either alone: union the information, then aggressively deduplicate.',
-    'Respond with ONE value: a single JSON object (no markdown fences, no commentary) matching EXACTLY this shape:',
-    '{',
-    '  "headword": string,',
-    '  "translation"?: string,',
-    '  "phonetic"?: string,',
-    '  "meaningGroups"?: [{',
-    '    "partOfSpeech": string,',
-    '    "senses": [{',
-    '      "definition": string,',
-    '      "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2",',
-    '      "grammar"?: string,',
-    '      "register"?: string,',
-    '      "examples"?: [{ "text": string, "cefr"?: "A1"|"A2"|"B1"|"B2"|"C1"|"C2" }]',
-    '    }]',
-    '  }],',
-    '  "commonMistakes"?: [{ "wrong": string, "right": string, "note"?: string }],',
-    '  "collocations"?: string[],',
-    '  "wordFamily"?: string[],',
-    '  "typo"?: { "suggestion": string, "explanation"?: string }',
-    '}',
-    '',
-    'MERGING RULES (follow precisely):',
-    '- meaningGroups: combine both, grouped by part of speech. WITHIN each part of speech, MERGE senses that mean the same thing into a single sense — keep the clearest, most learner-appropriate definition; combine cefr/grammar/register (fill from whichever side had them); combine example sentences, DROPPING near-duplicate or paraphrased examples (keep only the most natural one of each meaning). Genuinely distinct senses stay separate. Order senses within a part of speech by importance for a learner.',
-    '- translation / phonetic: keep the more accurate and complete value; for phonetic prefer the longer IPA transcription.',
-    `- commonMistakes / collocations / wordFamily: union both lists, removing duplicates (case-insensitive) and keeping only the most natural entries.`,
-    '- typo: include the "typo" object ONLY if BOTH responses contain one; otherwise OMIT it entirely (a real definition must survive one model\'s false typo judgement).',
-    `- Preserve the original languages exactly — write definitions/notes in ${targetName} and example sentences in ${sourceName}; do NOT translate or reword them unnecessarily.`,
-    '- Omit any field with no content rather than emitting empty arrays or empty strings.',
-    '- On a perfect quality tie between the two responses, prefer Response A (primary).',
-  ].join('\n')
-
-  const user = [
-    `Query: "${text}" (sourceLang=${sourceLang}, targetLang=${targetLang})`,
-    '',
-    'Response A (primary):',
-    JSON.stringify(req.primary, null, 2),
-    '',
-    'Response B (secondary):',
-    JSON.stringify(req.secondary, null, 2),
-  ].join('\n')
-
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: user },
-  ]
-}
-
-export function parseMoreExamplesContent(vendor: string, raw: string): LlmGradedExample[] {
-  const stripped = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
-  const start = stripped.indexOf('{')
-  const end = stripped.lastIndexOf('}')
-  if (start === -1 || end === -1 || end <= start) {
-    throw new LlmProviderError('bad_response', `${vendor} response did not contain a JSON object`)
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stripped.slice(start, end + 1))
-  } catch {
-    throw new LlmProviderError('bad_response', `${vendor} response was not valid JSON`)
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    throw new LlmProviderError('bad_response', `${vendor} response JSON was not an object`)
-  }
-
-  const obj = parsed as Record<string, unknown>
-  return Array.isArray(obj.examples)
-    ? obj.examples.map(parseGradedExample).filter((e): e is LlmGradedExample => Boolean(e))
-    : []
-}
-
-interface ChatChoice {
-  message?: { content?: string }
-}
 interface ChatUsage {
   prompt_tokens?: number
   completion_tokens?: number
 }
 interface ChatResponseBody {
-  choices?: ChatChoice[]
+  choices?: Array<{ message?: { content?: string } }>
   usage?: ChatUsage
+}
+interface ChatStreamChunk {
+  choices?: Array<{ delta?: { content?: string } }>
+  usage?: ChatUsage
+  error?: { message?: string; code?: unknown }
 }
 
 interface ChatResult {
@@ -253,132 +77,26 @@ interface ChatResult {
   meta?: LlmUsageMeta
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined
+interface ChatCall {
+  label: string
+  maxTokens: number
+  stream: boolean
+  onText?: (accumulated: string) => void
+  signal?: AbortSignal
 }
 
-const CEFR_LEVELS = new Set<string>(['A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
-
-function asCefr(value: unknown): CefrLevel | undefined {
-  const s = asString(value)
-  return s && CEFR_LEVELS.has(s) ? (s as CefrLevel) : undefined
-}
-
-function parseGradedExample(value: unknown): LlmGradedExample | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const v = value as Record<string, unknown>
-  const text = asString(v.text)?.trim()
-  if (!text) return undefined
-  const cefr = asCefr(v.cefr)
-  return cefr ? { text, cefr } : { text }
-}
-
-function parseSense(value: unknown): LlmSense | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const v = value as Record<string, unknown>
-  const definition = asString(v.definition)?.trim()
-  if (!definition) return undefined
-
-  const sense: LlmSense = { definition }
-  const cefr = asCefr(v.cefr)
-  if (cefr) sense.cefr = cefr
-  const grammar = asString(v.grammar)?.trim()
-  if (grammar) sense.grammar = grammar
-  const register = asString(v.register)?.trim()
-  if (register) sense.register = register
-  if (Array.isArray(v.examples)) {
-    const examples = v.examples
-      .map(parseGradedExample)
-      .filter((e): e is LlmGradedExample => Boolean(e))
-    if (examples.length > 0) sense.examples = examples
-  }
-  return sense
-}
-
-function parseMeaningGroup(value: unknown): LlmMeaningGroup | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const v = value as Record<string, unknown>
-  const partOfSpeech = asString(v.partOfSpeech)?.trim()
-  if (!partOfSpeech) return undefined
-  const senses = Array.isArray(v.senses)
-    ? v.senses.map(parseSense).filter((s): s is LlmSense => Boolean(s))
-    : []
-  if (senses.length === 0) return undefined
-  return { partOfSpeech, senses }
-}
-
-function parseCommonMistake(value: unknown): LlmCommonMistake | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const v = value as Record<string, unknown>
-  const wrong = asString(v.wrong)?.trim()
-  const right = asString(v.right)?.trim()
-  if (!wrong || !right) return undefined
-  const note = asString(v.note)?.trim()
-  return note ? { wrong, right, note } : { wrong, right }
-}
-
-function nonEmptyStrings(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const strings = value
-    .filter((s): s is string => typeof s === 'string')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-  return strings.length > 0 ? strings : undefined
-}
-
-/** Extracts the first JSON object from a model reply, tolerating fences/prose.
- *  Parsing is deliberately lenient/defensive field-by-field: a malformed or
- *  missing sub-field (e.g. a bad "cefr" value) is dropped rather than failing
- *  the whole response — a partially-rich entry beats no entry. */
-export function parseContent(vendor: string, raw: string): LlmTranslationContent {
-  const stripped = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
-  const start = stripped.indexOf('{')
-  const end = stripped.lastIndexOf('}')
-  if (start === -1 || end === -1 || end <= start) {
-    throw new LlmProviderError('bad_response', `${vendor} response did not contain a JSON object`)
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stripped.slice(start, end + 1))
-  } catch {
-    throw new LlmProviderError('bad_response', `${vendor} response was not valid JSON`)
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    throw new LlmProviderError('bad_response', `${vendor} response JSON was not an object`)
-  }
-
-  const obj = parsed as Record<string, unknown>
-
-  const meaningGroups = Array.isArray(obj.meaningGroups)
-    ? obj.meaningGroups.map(parseMeaningGroup).filter((g): g is LlmMeaningGroup => Boolean(g))
+function usageMeta(usage: ChatUsage | undefined): LlmUsageMeta | undefined {
+  return typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number'
+    ? { promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens }
     : undefined
-  const commonMistakes = Array.isArray(obj.commonMistakes)
-    ? obj.commonMistakes.map(parseCommonMistake).filter((m): m is LlmCommonMistake => Boolean(m))
-    : undefined
-  const collocations = nonEmptyStrings(obj.collocations)
-  const wordFamily = nonEmptyStrings(obj.wordFamily)
+}
 
-  let typo: LlmTranslationContent['typo']
-  if (obj.typo && typeof obj.typo === 'object') {
-    const t = obj.typo as Record<string, unknown>
-    const suggestion = asString(t.suggestion)?.trim()
-    if (suggestion) {
-      const explanation = asString(t.explanation)?.trim()
-      typo = explanation ? { suggestion, explanation } : { suggestion }
-    }
-  }
-
-  return {
-    headword: asString(obj.headword) ?? '',
-    translation: asString(obj.translation),
-    phonetic: asString(obj.phonetic),
-    ...(meaningGroups && meaningGroups.length > 0 ? { meaningGroups } : {}),
-    ...(commonMistakes && commonMistakes.length > 0 ? { commonMistakes } : {}),
-    ...(collocations ? { collocations } : {}),
-    ...(wordFamily ? { wordFamily } : {}),
-    ...(typo ? { typo } : {}),
-  }
+function isBadRequest(err: unknown): boolean {
+  return (
+    err instanceof LlmProviderError &&
+    err.code === 'api_error' &&
+    (err.status === 400 || err.status === 422)
+  )
 }
 
 function isDebugFromEnv(): boolean {
@@ -399,30 +117,61 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
 
   if (!apiKey) throw new LlmProviderError('not_configured', `${vendor} API key is not set`)
 
-  /** Shared POST /chat/completions + timeout/error handling for both
-   *  translate() and moreExamples() — only the message-building and
-   *  response-parsing differ between them. */
-  async function callChat(messages: ChatMessage[], logLabel: string): Promise<ChatResult> {
+  const ladder = buildLadder(options.reasoningRungs ?? [{}], options.requestBody)
+  let streamEnabled = options.stream ?? true
+
+  /** One POST /chat/completions (streaming or not) with timeout/error handling.
+   *  `extraBody` is the current rung of the reasoning-off ladder. */
+  async function callChat(
+    messages: ChatMessage[],
+    call: ChatCall,
+    extraBody: Record<string, unknown>
+  ): Promise<ChatResult> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    const onCallerAbort = (): void => controller.abort()
+    if (call.signal) {
+      if (call.signal.aborted) controller.abort()
+      else call.signal.addEventListener('abort', onCallerAbort, { once: true })
+    }
     const started = Date.now()
     const url = `${baseUrl}/chat/completions`
     dbg(
-      `→ POST ${url} model=${model} timeout=${timeoutMs}ms ${logLabel}\n` +
+      `→ POST ${url} model=${model} timeout=${timeoutMs}ms stream=${call.stream} ${call.label}\n` +
         messages.map((m) => `--- [${m.role}] ---\n${m.content}`).join('\n')
     )
 
-    const requestBody: Record<string, unknown> = { model, messages, temperature, ...(options.extraBody ?? {}) }
+    const requestBody: Record<string, unknown> = {
+      model,
+      messages,
+      temperature,
+      ...(options.extraBody ?? {}),
+      ...(options.capOutput ? { max_tokens: call.maxTokens } : {}),
+      ...extraBody,
+    }
     if (jsonMode) requestBody.response_format = { type: 'json_object' }
+    if (call.stream) requestBody.stream = true
+
+    const abortError = (elapsed: number, phase: string): LlmProviderError =>
+      timedOut
+        ? new LlmProviderError(
+            'timeout',
+            `${vendor} request to ${url} timed out after ${elapsed}ms (limit ${timeoutMs}ms) — ${phase}`
+          )
+        : new LlmProviderError('network', `${vendor} request to ${url} was aborted`)
 
     // The abort timer must stay armed for the *entire* request/response
     // lifecycle, not just until fetch() resolves with headers. A vendor can
     // send a 200 promptly and then stall (or never finish) streaming the
     // body — if the timer were cleared as soon as headers arrived, the
-    // subsequent res.json()/res.text() call would have no timeout
-    // protection at all and could hang indefinitely (observed in prod: a
-    // request stuck for 10+ minutes). So the whole fetch + body-read is
-    // wrapped in one try/finally that only clears the timer at the end.
+    // subsequent body read would have no timeout protection at all and could
+    // hang indefinitely (observed in prod: a request stuck for 10+ minutes).
+    // So the whole fetch + body-read is wrapped in one try/finally that only
+    // clears the timer at the end.
     try {
       let res: Response
       try {
@@ -431,6 +180,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
+            ...(call.stream ? { Accept: 'text/event-stream' } : {}),
             ...(headers ?? {}),
           },
           body: JSON.stringify(requestBody),
@@ -439,11 +189,8 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
       } catch (err) {
         const elapsed = Date.now() - started
         if (err instanceof Error && err.name === 'AbortError') {
-          dbg(`← TIMEOUT after ${elapsed}ms — no response received from ${url}`)
-          throw new LlmProviderError(
-            'timeout',
-            `${vendor} request to ${url} timed out after ${elapsed}ms (limit ${timeoutMs}ms) — no response received`
-          )
+          dbg(`← ABORT after ${elapsed}ms (timedOut=${timedOut})`)
+          throw abortError(elapsed, 'no response received')
         }
         dbg(`← NETWORK ERROR after ${elapsed}ms:`, err)
         throw new LlmProviderError(
@@ -452,8 +199,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
         )
       }
 
-      const elapsed = Date.now() - started
-      dbg(`← ${res.status} in ${elapsed}ms`)
+      dbg(`← ${res.status} in ${Date.now() - started}ms`)
 
       if (!res.ok) {
         const detail = await res.text().catch(() => '')
@@ -465,17 +211,53 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
         )
       }
 
+      const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
+      if (call.stream && isSse && res.body) {
+        let accumulated = ''
+        let usage: ChatUsage | undefined
+        let streamError: string | undefined
+        try {
+          await readSse(res.body, (msg) => {
+            if (msg.data === '[DONE]') return
+            let chunk: ChatStreamChunk
+            try {
+              chunk = JSON.parse(msg.data) as ChatStreamChunk
+            } catch {
+              return
+            }
+            if (chunk.error) streamError = chunk.error.message ?? 'stream error'
+            if (chunk.usage) usage = chunk.usage
+            const delta = chunk.choices?.[0]?.delta?.content
+            if (typeof delta === 'string' && delta) {
+              accumulated += delta
+              call.onText?.(accumulated)
+            }
+          })
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            throw abortError(Date.now() - started, 'response stream did not finish')
+          }
+          throw err
+        }
+        if (streamError && !accumulated.trim()) {
+          throw new LlmProviderError('api_error', `${vendor} stream error: ${streamError}`.slice(0, 240))
+        }
+        if (!accumulated.trim()) {
+          throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
+        }
+        dbg(`← stream complete in ${Date.now() - started}ms (${accumulated.length} chars)`)
+        const meta = usageMeta(usage)
+        return meta ? { content: accumulated, meta } : { content: accumulated }
+      }
+
+      // Non-streaming — also the path taken when a gateway ignores `stream: true`
+      // and replies with a plain JSON body.
       let responseBody: ChatResponseBody
       try {
         responseBody = (await res.json()) as ChatResponseBody
       } catch (err) {
-        const bodyElapsed = Date.now() - started
         if (err instanceof Error && err.name === 'AbortError') {
-          dbg(`← TIMEOUT after ${bodyElapsed}ms — response body did not finish streaming from ${url}`)
-          throw new LlmProviderError(
-            'timeout',
-            `${vendor} request to ${url} timed out after ${bodyElapsed}ms (limit ${timeoutMs}ms) — response body did not finish streaming`
-          )
+          throw abortError(Date.now() - started, 'response body did not finish streaming')
         }
         throw err
       }
@@ -484,40 +266,63 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
         dbg(`← no message content; body: ${JSON.stringify(responseBody).slice(0, 500)}`)
         throw new LlmProviderError('bad_response', `${vendor} response had no message content`)
       }
-      const usage = responseBody?.usage
-      const meta: LlmUsageMeta | undefined =
-        typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number'
-          ? { promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens }
-          : undefined
-      return { content, meta }
+      if (call.stream) call.onText?.(content)
+      const meta = usageMeta(responseBody?.usage)
+      return meta ? { content, meta } : { content }
     } finally {
       clearTimeout(timer)
+      call.signal?.removeEventListener('abort', onCallerAbort)
     }
   }
 
+  /** callChat through the reasoning-off ladder, with a plain-request fallback
+   *  if the gateway rejects streaming outright. */
+  async function send(
+    messages: ChatMessage[],
+    call: Omit<ChatCall, 'stream'> & { wantStream?: boolean }
+  ): Promise<ChatResult> {
+    const base = { label: call.label, maxTokens: call.maxTokens, onText: call.onText, signal: call.signal }
+    if (call.wantStream && streamEnabled) {
+      try {
+        return await ladder.run((rung) => callChat(messages, { ...base, stream: true }, rung))
+      } catch (err) {
+        if (!isBadRequest(err)) throw err
+        const result = await ladder.run((rung) => callChat(messages, { ...base, stream: false }, rung))
+        // Only blame streaming once the same request succeeds without it.
+        streamEnabled = false
+        console.warn(`[${vendor}] gateway rejected stream:true — streaming disabled for ${id}`)
+        return result
+      }
+    }
+    return ladder.run((rung) => callChat(messages, { ...base, stream: false }, rung))
+  }
+
+  const transport: Transport = (messages, call) =>
+    send(messages, {
+      label: call.label,
+      maxTokens: call.kind === 'core' ? CORE_MAX_TOKENS : EXTRAS_MAX_TOKENS,
+      wantStream: Boolean(call.onText),
+      onText: call.onText,
+      signal: call.signal,
+    })
+
   return {
     id,
-    async translate(req: LlmTranslationRequest): Promise<LlmTranslationResult> {
-      const messages = buildMessages(req)
-      const { content, meta } = await callChat(messages, `text="${req.text.slice(0, 60)}"`)
-      const parsed = parseContent(vendor, content)
-      // Defensive: the model occasionally includes a "translation" even in
-      // same-language define mode despite the prompt saying to omit it. The
-      // UI shows this field whenever it's truthy, so a same-language
-      // hallucination would visibly (and wrongly) render a translation.
-      if (req.sourceLang.toLowerCase() === req.targetLang.toLowerCase()) {
-        delete parsed.translation
-      }
-      return meta ? { content: parsed, meta } : { content: parsed }
+    translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult> {
+      return runTranslate(vendor, transport, req, opts)
     },
     async moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
-      const messages = buildMoreExamplesMessages(req)
-      const { content } = await callChat(messages, `moreExamples word="${req.word.slice(0, 60)}"`)
+      const { content } = await send(buildMoreExamplesMessages(req), {
+        label: `moreExamples word="${req.word.slice(0, 60)}"`,
+        maxTokens: EXTRAS_MAX_TOKENS,
+      })
       return { examples: parseMoreExamplesContent(vendor, content) }
     },
     async fuse(req: LlmFuseRequest): Promise<LlmFuseResult> {
-      const messages = buildFuseMessages(req)
-      const { content, meta } = await callChat(messages, `fuse text="${req.request.text.slice(0, 60)}"`)
+      const { content, meta } = await send(buildFuseMessages(req), {
+        label: `fuse text="${req.request.text.slice(0, 60)}"`,
+        maxTokens: CORE_MAX_TOKENS,
+      })
       const parsed = parseContent(vendor, content)
       // Same defensive guard as translate(): in same-language define mode the
       // model occasionally re-introduces a translation field from the inputs.
