@@ -270,6 +270,21 @@ describe('chat adapter — streaming', () => {
     expect(fetchMock.mock.calls.every(([, init]) => !bodyOf(init).stream)).toBe(true)
   })
 
+  it('never paints a typo answer: no partial for a bare headword, only the final result', async () => {
+    const typo = '{"headword":"recieve","typo":{"suggestion":"receive","explanation":"Did you mean receive?"}}'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchFn>(async (_u, init) => (kindOf(init) === 'core' ? chatSse(split(typo, 9)) : completion(EXTRAS)))
+    )
+    const partials: unknown[] = []
+    const result = await createDeepSeekProvider({ apiKey: 'k' }).translate(
+      { text: 'recieve', sourceLang: 'en', targetLang: 'en' },
+      { onPartial: (p) => partials.push(p) }
+    )
+    expect(partials).toEqual([])
+    expect(result.content).toMatchObject({ typo: { suggestion: 'receive' } })
+  })
+
   it('options.stream=false disables upstream streaming', async () => {
     const fetchMock = vi.fn<FetchFn>(async (_u, init) => completion(kindOf(init) === 'core' ? CORE : EXTRAS))
     vi.stubGlobal('fetch', fetchMock)

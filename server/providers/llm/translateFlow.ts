@@ -78,7 +78,11 @@ export async function runTranslate(
     ? (accumulated: string): void => {
         const partial = extractPartialContent(accumulated)
         // A typo answer is a correction nudge, not an entry — never paint it as one.
+        // A bare headword isn't worth painting either (and is exactly what a
+        // typo answer looks like until its `typo` key arrives), so wait for
+        // something substantive: a translation or the first finished sense group.
         if (!partial || partial.typo) return
+        if (!partial.translation && !partial.meaningGroups?.length) return
         const snapshot = JSON.stringify(partial)
         if (snapshot === lastSnapshot) return
         lastSnapshot = snapshot
