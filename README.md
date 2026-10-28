@@ -19,7 +19,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 - **Overview** — active provider + health, lookup/latency/fallback metrics, recent audit entries
 - **Providers** — runtime CRUD for LLM providers (encrypted keys, models, connection test, hot-swap the active provider/model without redeploy)
-- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; every uncached lookup calls both in parallel, then sends both responses back to the **primary model** to merge + deduplicate into one superior entry (folds paraphrased definitions, drops near-duplicate examples). Graceful degradation — if one fails the other stands alone, and if the merge call fails a deterministic code merge runs as a fallback. Configured on the Overview page.
+- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; every uncached lookup calls both in parallel and answers with whichever finishes first. The two answers are then merged (the **primary model** folds paraphrased definitions and drops near-duplicate examples; a deterministic code merge is the fallback) **in the background**, and the merged entry overwrites the cached one for every later lookup — so the merge never makes a user wait. Graceful degradation — if one provider fails the other stands alone. Configured on the Overview page.
 - **Latency lab** — on-demand multi-provider benchmarks with history and compare mode
 - **Playground** — direct LLM lookups (cache bypassed) to compare raw model output side-by-side before promoting a model
 - **Entries** — browse/search/delete cached translations (regenerate-on-next-lookup)
@@ -41,15 +41,18 @@ See [docs/design-translation-cache.md](docs/design-translation-cache.md) for the
 ## Architecture (lookup flow)
 
 ```
-browser  →  localStorage L1  →  GET /api/translate/:word?from=&to=
+browser  →  localStorage L1  →  GET /api/translate-stream/:word?from=&to=   (SSE; web app)
+   │                                 GET /api/translate/:word?from=&to=          (plain JSON; extension, and the web app's fallback)
    │                                         │
    │                           ┌────────── [Mongo cache] ──── hit → return
    │                           │        miss ↓
-   │                           │   [LLM tier] (primary, or primary + secondary merged in fusion mode)
+   │                           │   [LLM tier] two parallel calls — core (translation, IPA, senses; streamed)
+   │                           │        + extras (mistakes, collocations, word family); in fusion mode the
+   │                           │        first answer wins and the merge happens in the background
    │                           │        error ↓
    │                           │   [Merriam-Webster] (English-only, fallback only on LLM failure)
    │                           │
-   │←── normalized DictionaryEntry[] JSON ─── (cached for 1 year)
+   │←── normalized DictionaryEntry[] (SSE `partial` events as it is written, then `done`) ─── (cached for 1 year)
 ```
 
 Favorites: `GET/POST/DELETE /api/favorites`, keyed by **(user, word, sourceLang, targetLang)**. **All favorites routes require a valid Auth0 access token**; the caller's identity is the verified JWT `sub` (never a client-supplied identity header, which would be spoofable). Anonymous users are prompted to log in before favoriting.
@@ -184,7 +187,9 @@ Set `LLM_VENDOR=none` to run with only the dictionary fallback (no LLM calls).
 
 ## LLM providers
 
-All three vendors expose an OpenAI‑compatible Chat Completions API and share a single adapter (`server/providers/llm/openaiCompat.ts`). Swapping or adding a vendor requires a small wrapper (~30 lines) and a new registry case — no changes to the cache, route, or UI.
+All three vendors expose an OpenAI‑compatible Chat Completions API and share a single adapter (`server/providers/llm/openaiCompat.ts`); the OpenAI Responses protocol has its own adapter (`responses.ts`). Both run the same lookup flow (`translateFlow.ts`: parallel core + extras calls, upstream streaming, partial-answer snapshots). Swapping or adding a vendor requires a small wrapper (~30 lines) and a new registry case — no changes to the cache, route, or UI.
+
+Lookups are tuned for latency: hidden model reasoning is switched off per vendor (with an automatic step-down if a model rejects the setting), output is capped as a runaway guard, and every system prompt is constant so provider prefix caching applies. Per-model overrides (`options.requestBody`, `options.stream`) and the full design are in [`docs/llm-provider-operations.md`](docs/llm-provider-operations.md#lookup-latency-design).
 
 - **DeepSeek** (default) — model `deepseek-v4-flash`. Endpoint `https://api.deepseek.com`.
 - **OpenRouter** — access to many models through one API key. Default model MiniMax M3 (`minimax/minimax‑m3`).
@@ -233,6 +238,7 @@ scripts/
 shared/
   languages.ts    Language list + code‑to‑name helper (single source of truth)
   favorites.ts    FavoriteKey interface
+  sse.ts          Server‑Sent‑Events reader shared by the server (upstream LLM streams) and the web app (/api/translate-stream)
   wordLink.ts     Canonical /word/:term URL builder
   seo.ts          Shared SEO/meta helpers
 extension/        Browser extension (separate npm workspace — npm run ext:build)
@@ -253,7 +259,14 @@ server/
   providers/
     llm/
       types.ts          LlmProvider interface + error types
-      openaiCompat.ts   Shared OpenAI‑compatible adapter
+      openaiCompat.ts   Shared OpenAI‑compatible (Chat Completions) adapter
+      responses.ts      OpenAI Responses adapter
+      translateFlow.ts  Lookup flow shared by both adapters: parallel core + extras calls, partial snapshots
+      prompts.ts        Prompt builders (constant system prefixes; request data only in user messages)
+      parse.ts          Lenient JSON parsing of model output
+      streamJson.ts     Incremental JSON scanner behind the streamed partial answers
+      requestVariants.ts  Reasoning-off step-down ladder, max_tokens guards, admin requestBody layering
+      fusion.ts         Two-provider fusion (first answer wins, merge in background)
       deepseek.ts       DeepSeek wrapper
       openrouter.ts     OpenRouter wrapper
       glm.ts            Z.AI GLM wrapper
@@ -459,7 +472,7 @@ Implementation notes** for exactly what shipped vs. what's deferred) and
   4. `docker compose up -d api` to pick up the new env values.
   5. Visit `/admin`.
 - Pages:
-  - **Overview** — active provider, health, lookup/latency metrics, recent changes. The "Active provider" card also has an optional **Secondary** dropdown that enables **LLM fusion** (pair a second provider/model — lookups call both in parallel and merge results).
+  - **Overview** — active provider, health, lookup/latency metrics, recent changes. The "Active provider" card also has an optional **Secondary** dropdown that enables **LLM fusion** (pair a second provider/model — lookups call both in parallel, answer with the first to finish, and cache the merged entry in the background).
   - **Providers** — CRUD, encrypted keys, models, connection test, hot-swap active provider/model
   - **Latency lab** — on-demand benchmarks, compare providers, promote a winner
   - **Playground** — look up a word via a *direct LLM call* (translation cache

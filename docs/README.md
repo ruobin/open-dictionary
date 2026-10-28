@@ -38,6 +38,7 @@ Read these for the *"why"* behind a subsystem.
 
 | Doc | What it covers |
 |---|---|
+| [`llm-provider-operations.md`](./llm-provider-operations.md) | Production LLM provider behavior: config sources, timeouts/fallbacks, admin switching, NewAPI/Responses and OpenRouter notes, and the **lookup latency design** (parallel core/extras calls, reasoning-off ladder, streaming endpoint, fusion upgrade). |
 | [`to-do-geo-load-balancing.md`](./to-do-geo-load-balancing.md) | Phase-by-phase implementation checklist for `design-geo-load-balancing.md` (provisioning, mesh, routing, cutover). |
 
 ---

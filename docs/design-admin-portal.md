@@ -524,9 +524,12 @@ word list.
 
 - `ms` is wall-clock around `provider.translate()` — exactly what
   `recordLlmLatency` measures in production, so numbers are apples-to-apples
-  with §9.1. (Calls are non-streaming JSON-mode completions, so total time is
-  the user-relevant number; TTFB only becomes interesting if streaming is ever
-  adopted — noted as future work.)
+  with §9.1. (Benchmark and test calls are plain non-streaming JSON-mode
+  completions, so total time is the relevant number. Production lookups from
+  the web app now stream (2026-10-28), but the Latency Lab deliberately does not
+  pass a partial-answer listener, so it measures the same total-time path. Note
+  that `translate()` is now two parallel calls — core + extras — so a benchmark's
+  `tokensOut` is the sum of both.)
 - Small adapter change: `openaiCompat.ts` surfaces the vendor-reported
   `usage` (token counts) on the result as optional
   `meta?: { promptTokens, completionTokens }` — backward-compatible, lets the
@@ -967,6 +970,21 @@ section's exact interface/route/type claims over the source.
   a **Secondary** dropdown; setting it (and hitting Switch) enables fusion,
   `— none —` is single-provider mode. The card heading becomes "Active
   providers (fusion)" and a hint explains the parallel-merge behavior.
+- **Update 2026-10-28 — the merge no longer blocks the user.** The "fuse runs
+  in series after the two parallel calls" tradeoff above was measured on
+  production (DeepSeek + OpenRouter) at 14-39 s per uncached lookup, including
+  fuse calls hitting the 30 s timeout. `FusionProvider.translate()` now returns
+  the **first successful** answer from either provider immediately and exposes
+  the merge as `result.upgrade` (a promise of the merged `LlmTranslationContent`,
+  or `null` when one provider failed). `server/translate.ts` caches the fast
+  answer, then overwrites the cache entry with the upgrade when it resolves
+  (`primary.fuse()`, else the deterministic `mergeContents()`), so every later
+  lookup gets the fused entry. Consequences: the user who triggers an uncached
+  lookup sees a single-model answer; only the primary's streamed partials reach
+  the UI; token usage in the result is the first answer's, not the sum. The
+  failure model is unchanged. Measured afterwards: ~2 s per lookup, merge
+  landing about 4 s later in the background. See
+  `docs/llm-provider-operations.md` ("Lookup Latency Design").
 
 **Benchmark runner (`server/admin/benchmark.ts`) — matches §9.3 closely**
 - One addition beyond the original design: a defensive `MAX_TARGETS = 10`
