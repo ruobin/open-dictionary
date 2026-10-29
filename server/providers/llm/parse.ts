@@ -119,7 +119,7 @@ export interface LlmExtras {
   wordFamily?: string[]
 }
 
-function extrasFromObject(obj: Record<string, unknown>): LlmExtras {
+export function extrasFromObject(obj: Record<string, unknown>): LlmExtras {
   const commonMistakes = Array.isArray(obj.commonMistakes)
     ? obj.commonMistakes.map(parseCommonMistake).filter((m): m is LlmCommonMistake => Boolean(m))
     : undefined

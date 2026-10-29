@@ -9,7 +9,13 @@ export interface DictionaryState {
    *  best-so-far partial entry when the server is streaming one (else null). */
   data: DictionaryEntry[] | null
   error: LookupError | null
+  /** True when the answer was streamed in (or took long enough to feel like it),
+   *  so the page should reveal its text progressively. Instant cache hits: false. */
+  animate: boolean
 }
+
+/** A lookup slower than this is revealed progressively even if no partial arrived. */
+const SLOW_LOOKUP_MS = 250
 
 export function useDictionary(
   word: string,
@@ -20,32 +26,38 @@ export function useDictionary(
     status: word ? 'loading' : 'idle',
     data: null,
     error: null,
+    animate: false,
   })
 
   useEffect(() => {
     if (!word) {
-      setState({ status: 'idle', data: null, error: null })
+      setState({ status: 'idle', data: null, error: null, animate: false })
       return
     }
 
     let cancelled = false
     const controller = new AbortController()
-    setState({ status: 'loading', data: null, error: null })
+    setState({ status: 'loading', data: null, error: null, animate: false })
+    const startedAt = Date.now()
+    let sawPartial = false
 
     lookupWordStream(word, sourceLang, targetLang, {
       signal: controller.signal,
       onPartial: (partial) => {
         if (cancelled) return
-        setState((prev) => (prev.status === 'loading' ? { status: 'loading', data: partial, error: null } : prev))
+        sawPartial = true
+        setState((prev) =>
+          prev.status === 'loading' ? { status: 'loading', data: partial, error: null, animate: true } : prev
+        )
       },
     })
       .then((data) => {
         if (cancelled) return
-        setState({ status: 'success', data, error: null })
+        setState({ status: 'success', data, error: null, animate: sawPartial || Date.now() - startedAt > SLOW_LOOKUP_MS })
       })
       .catch((error: LookupError) => {
         if (cancelled) return
-        setState({ status: 'error', data: null, error })
+        setState({ status: 'error', data: null, error, animate: false })
       })
 
     return () => {

@@ -1,6 +1,7 @@
 import type { Meaning } from '../api/dictionary'
 import MoreExamplesButton from './MoreExamplesButton'
 import { useI18n } from '../i18n/I18nContext'
+import { LiveText, useLive } from './LiveText'
 
 export default function PosSection({
   meaning,
@@ -15,6 +16,7 @@ export default function PosSection({
 }) {
   const { partOfSpeech, definitions = [], synonyms = [] } = meaning
   const { t } = useI18n()
+  const { streaming } = useLive()
 
   return (
     <section className="pos-section">
@@ -23,7 +25,9 @@ export default function PosSection({
         {definitions.map((d, i) => (
           <li key={i} className="def-item">
             <div className="def-head">
-              <p className="def-text">{d.definition}</p>
+              <p className="def-text">
+                <LiveText text={d.definition} />
+              </p>
               {d.cefr && (
                 <span className="cefr-badge" data-level={d.cefr}>
                   {d.cefr}
@@ -40,7 +44,7 @@ export default function PosSection({
               <ul className="def-examples">
                 {d.examples.map((ex, j) => (
                   <li key={j} className="def-example">
-                    &quot;{ex.text}&quot;
+                    &quot;<LiveText text={ex.text} />&quot;
                     {ex.cefr && (
                       <span className="cefr-badge cefr-badge-sm" data-level={ex.cefr}>
                         {ex.cefr}
@@ -50,13 +54,15 @@ export default function PosSection({
                 ))}
               </ul>
             )}
-            <MoreExamplesButton
-              word={word}
-              sourceLang={sourceLang}
-              targetLang={targetLang}
-              definition={d.definition}
-              cefr={d.cefr}
-            />
+            {!streaming && (
+              <MoreExamplesButton
+                word={word}
+                sourceLang={sourceLang}
+                targetLang={targetLang}
+                definition={d.definition}
+                cefr={d.cefr}
+              />
+            )}
           </li>
         ))}
       </ol>

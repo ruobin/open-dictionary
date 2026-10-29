@@ -4,6 +4,7 @@ import PosSection from './PosSection'
 import ReportButton from './ReportButton'
 import { wordHref } from '../../shared/wordLink'
 import { useI18n } from '../i18n/I18nContext'
+import { LiveText } from './LiveText'
 import type { DictionaryEntry, Phonetic } from '../api/dictionary'
 
 type PhoneticWithAudio = Phonetic & { audio: string }
@@ -54,7 +55,11 @@ export default function WordEntry({
         <div>
           <h1 className="headword">{entry.word}</h1>
           {phoneticText && <p className="phonetic">{phoneticText}</p>}
-          {entry.translation && <p className="translation">{entry.translation}</p>}
+          {entry.translation && (
+            <p className="translation">
+              <LiveText text={entry.translation} />
+            </p>
+          )}
         </div>
         <div className="word-actions">
           <div className="audio-row">
@@ -88,10 +93,14 @@ export default function WordEntry({
           <ul className="common-mistakes-list">
             {entry.commonMistakes.map((m, i) => (
               <li key={i}>
-                <span className="mistake-wrong">{m.wrong}</span>
+                <span className="mistake-wrong"><LiveText text={m.wrong} /></span>
                 <span className="mistake-arrow" aria-hidden="true">→</span>
-                <span className="mistake-right">{m.right}</span>
-                {m.note && <p className="mistake-note">{m.note}</p>}
+                <span className="mistake-right"><LiveText text={m.right} /></span>
+                {m.note && (
+                  <p className="mistake-note">
+                    <LiveText text={m.note} />
+                  </p>
+                )}
               </li>
             ))}
           </ul>
@@ -103,7 +112,9 @@ export default function WordEntry({
           <h3 className="chips-label">{t('word.collocations')}</h3>
           <div className="chips">
             {entry.collocations.map((c, i) => (
-              <Link key={i} className="chip" to={wordHref(c)}>{c}</Link>
+              <Link key={i} className="chip" to={wordHref(c)}>
+                <LiveText text={c} />
+              </Link>
             ))}
           </div>
         </section>
@@ -114,7 +125,9 @@ export default function WordEntry({
           <h3 className="chips-label">{t('word.wordFamily')}</h3>
           <div className="chips">
             {entry.wordFamily.map((w, i) => (
-              <Link key={i} className="chip" to={wordHref(w)}>{w}</Link>
+              <Link key={i} className="chip" to={wordHref(w)}>
+                <LiveText text={w} />
+              </Link>
             ))}
           </div>
         </section>

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import SearchBar from '../components/SearchBar'
 import WordEntry from '../components/WordEntry'
+import { LiveProvider, StreamCaret } from '../components/LiveText'
 import { useDictionary } from '../hooks/useDictionary'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { buildWordDescription, buildWordTitle } from '../../shared/seo'
@@ -23,13 +24,14 @@ export default function WordPage({
   const word = (term || '').toLowerCase()
   const sourceLang = searchParams.get('from') || 'en'
   const targetLang = searchParams.get('to') || 'en'
-  const { status, data, error } = useDictionary(word, sourceLang, targetLang)
+  const { status, data, error, animate } = useDictionary(word, sourceLang, targetLang)
 
   const favKey: FavoriteKey = { word, sourceLang, targetLang }
   const entry = status === 'success' ? data?.[0] : undefined
   const isTypo = Boolean(entry?.typo?.suggestion)
   // While the server is still writing the entry, `data` holds a partial one.
   const streamingEntry = status === 'loading' ? data?.[0] : undefined
+  const shownEntry = streamingEntry ?? (entry && !isTypo ? entry : undefined)
 
   useEffect(() => {
     if (status === 'success' && word) {
@@ -120,30 +122,26 @@ export default function WordPage({
         </div>
       )}
 
-      {status === 'success' && data && data.length > 0 && !data[0].typo?.suggestion && (
-        <WordEntry
-          entry={data[0]}
-          sourceLang={sourceLang}
-          targetLang={targetLang}
-          isFavorite={favorites.isFavorite(favKey)}
-          onToggleFavorite={() => favorites.toggle(favKey)}
-        />
-      )}
-
-      {streamingEntry && (
-        <div aria-busy="true">
-          <WordEntry
-            entry={streamingEntry}
-            sourceLang={sourceLang}
-            targetLang={targetLang}
-            isFavorite={favorites.isFavorite(favKey)}
-            onToggleFavorite={() => favorites.toggle(favKey)}
-          />
-          <div className="entry-pending" aria-hidden="true">
-            <span />
-            <span />
+      {shownEntry && (
+        // One WordEntry instance for the whole lookup (streaming -> done), so the
+        // reveal animation carries on through completion instead of restarting.
+        <LiveProvider value={{ animate, streaming: status === 'loading' }}>
+          <div aria-busy={status === 'loading'}>
+            <WordEntry
+              key={word}
+              entry={shownEntry}
+              sourceLang={sourceLang}
+              targetLang={targetLang}
+              isFavorite={favorites.isFavorite(favKey)}
+              onToggleFavorite={() => favorites.toggle(favKey)}
+            />
+            {status === 'loading' && (
+              <p className="entry-pending">
+                <StreamCaret />
+              </p>
+            )}
           </div>
-        </div>
+        </LiveProvider>
       )}
     </div>
   )

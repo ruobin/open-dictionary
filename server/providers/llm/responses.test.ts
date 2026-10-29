@@ -152,11 +152,16 @@ describe('OpenAI Responses provider', () => {
     }
   })
 
-  it('streams the core call and reports partial answers as they complete', async () => {
+  it('streams both calls and reports partial answers as they grow', async () => {
     const chunks = ['{"headword":"run","translation":"跑",', '"meaningGroups":[{"partOfSpeech":"verb","senses":[{"definition":"to move fast"}]}]}']
     const fetchMock = vi.fn<FetchFn>(async (_url, init) => {
-      if (kindOf(init) === 'extras') return json(EXTRAS)
       expect(bodyOf(init).stream).toBe(true)
+      if (kindOf(init) === 'extras') {
+        return sse([
+          { type: 'response.output_text.delta', delta: EXTRAS },
+          { type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } },
+        ])
+      }
       return sse([
         ...chunks.map((delta) => ({ type: 'response.output_text.delta', delta })),
         { type: 'response.completed', response: { usage: { input_tokens: 9, output_tokens: 4 } } },
@@ -167,11 +172,10 @@ describe('OpenAI Responses provider', () => {
 
     const result = await makeProvider().translate({ ...REQ, targetLang: 'zh' }, { onPartial: (p) => partials.push(p) })
 
-    expect(partials.length).toBeGreaterThanOrEqual(2)
+    expect(partials.length).toBeGreaterThanOrEqual(1)
     expect(partials[0]).toMatchObject({ headword: 'run', translation: '跑' })
-    expect(partials[partials.length - 1]).toMatchObject({ meaningGroups: [{ partOfSpeech: 'verb' }] })
     expect(result.content).toMatchObject({ headword: 'run', translation: '跑', collocations: ['run away'] })
-    expect(result.meta).toEqual({ promptTokens: 9 + 0, completionTokens: 4 + 0 })
+    expect(result.meta).toEqual({ promptTokens: 10, completionTokens: 5 })
   })
 
   it('falls back to a plain request, and stops streaming, when the gateway rejects stream:true', async () => {

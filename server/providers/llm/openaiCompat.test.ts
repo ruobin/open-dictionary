@@ -43,6 +43,22 @@ function chatSse(deltas: string[], usage?: { prompt_tokens: number; completion_t
   return new Response(lines.join(''), { headers: { 'content-type': 'text/event-stream' } })
 }
 
+/** An SSE body whose chunks arrive `delayMs` apart, like a real model. */
+function chatSseSlow(deltas: string[], delayMs: number): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const d of deltas) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: d } }] })}\n\n`))
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+  return new Response(stream, { headers: { 'content-type': 'text/event-stream' } })
+}
+
 const REQ = { text: 'run', sourceLang: 'en', targetLang: 'zh' }
 
 describe('chat adapter — request shape', () => {
@@ -223,28 +239,76 @@ describe('chat adapter — streaming', () => {
     return Array.from({ length: n }, (_, i) => text.slice(i * size, (i + 1) * size))
   }
 
-  it('streams only the core call, and only when a listener is attached', async () => {
-    const fetchMock = vi.fn<FetchFn>(async (_u, init) => {
-      if (kindOf(init) === 'extras') {
-        expect(bodyOf(init).stream).toBeUndefined()
-        return completion(EXTRAS)
-      }
-      expect(bodyOf(init).stream).toBe(true)
-      return chatSse(split(CORE, 7))
-    })
+  it('streams both calls when a listener is attached, and neither when it is not', async () => {
+    const fetchMock = vi.fn<FetchFn>(async (_u, init) =>
+      kindOf(init) === 'extras' ? chatSse(split(EXTRAS, 5)) : chatSse(split(CORE, 7))
+    )
     vi.stubGlobal('fetch', fetchMock)
-    const partials: Array<{ headword: string; translation?: string; meaningGroups?: unknown[] }> = []
+    const partials: Array<{ headword: string; translation?: string; meaningGroups?: unknown[]; collocations?: string[] }> = []
 
     const result = await createDeepSeekProvider({ apiKey: 'k' }).translate(REQ, { onPartial: (p) => partials.push(p) })
 
+    expect(fetchMock.mock.calls.every(([, init]) => bodyOf(init).stream === true)).toBe(true)
     expect(result.content).toMatchObject({ headword: 'run', translation: '跑', collocations: ['run away'] })
-    expect(partials.length).toBeGreaterThanOrEqual(2)
-    // Snapshots only ever grow, and the translation shows up before the senses.
+    expect(partials.length).toBeGreaterThanOrEqual(1)
+    // The translation shows up before the senses, and snapshots never repeat.
     const firstWithTranslation = partials.findIndex((p) => p.translation)
     const firstWithGroups = partials.findIndex((p) => p.meaningGroups?.length)
     expect(firstWithTranslation).toBeGreaterThanOrEqual(0)
-    expect(firstWithTranslation).toBeLessThan(firstWithGroups)
-    expect(new Set(partials.map((p) => JSON.stringify(p))).size).toBe(partials.length) // no duplicate snapshots
+    if (firstWithGroups >= 0) expect(firstWithTranslation).toBeLessThanOrEqual(firstWithGroups)
+    expect(new Set(partials.map((p) => JSON.stringify(p))).size).toBe(partials.length)
+
+    fetchMock.mockClear()
+    fetchMock.mockImplementation(async (_u, init) => completion(kindOf(init) === 'core' ? CORE : EXTRAS))
+    await createDeepSeekProvider({ apiKey: 'k' }).translate(REQ)
+    expect(fetchMock.mock.calls.every(([, init]) => bodyOf(init).stream === undefined)).toBe(true)
+  })
+
+  it('shows the definition growing inside a still-open sense, token by token', async () => {
+    const core = '{"headword":"run","translation":"跑","meaningGroups":[{"partOfSpeech":"verb","senses":[{"definition":"to move quickly on foot"}]}]}'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchFn>(async (_u, init) => (kindOf(init) === 'core' ? chatSseSlow(core.match(/.{1,5}/g)!, 20) : completion(EXTRAS)))
+    )
+    const defs: string[] = []
+    await createDeepSeekProvider({ apiKey: 'k' }).translate(REQ, {
+      onPartial: (p) => {
+        const d = p.meaningGroups?.[0]?.senses[0]?.definition
+        if (d && d !== defs[defs.length - 1]) defs.push(d)
+      },
+    })
+    expect(defs.length).toBeGreaterThanOrEqual(2)
+    for (const d of defs) expect('to move quickly on foot'.startsWith(d)).toBe(true)
+    for (let i = 1; i < defs.length; i += 1) expect(defs[i].length).toBeGreaterThan(defs[i - 1].length)
+  })
+
+  it('holds the extras back until the core answer is complete, so the page only grows downward', async () => {
+    const core = '{"headword":"run","translation":"跑","meaningGroups":[{"partOfSpeech":"verb","senses":[{"definition":"to move quickly on foot"}]}]}'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchFn>(async (_u, init) =>
+        kindOf(init) === 'core' ? chatSseSlow(core.match(/.{1,8}/g)!, 25) : chatSse([EXTRAS]) // extras land first
+      )
+    )
+    const seen: Array<{ hasSense: boolean; hasExtras: boolean }> = []
+    await createDeepSeekProvider({ apiKey: 'k' }).translate(REQ, {
+      onPartial: (p) =>
+        seen.push({ hasSense: Boolean(p.meaningGroups?.length), hasExtras: Boolean(p.collocations?.length) }),
+    })
+    expect(seen.length).toBeGreaterThanOrEqual(1)
+    // Extras may only appear in a snapshot that already carries the finished senses.
+    for (const snap of seen) if (snap.hasExtras) expect(snap.hasSense).toBe(true)
+  })
+
+  it('throttles snapshots: a burst of chunks collapses into few partials', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchFn>(async (_u, init) => (kindOf(init) === 'core' ? chatSse(CORE.split('')) : completion(EXTRAS)))
+    )
+    const partials: unknown[] = []
+    await createDeepSeekProvider({ apiKey: 'k' }).translate(REQ, { onPartial: (p) => partials.push(p) })
+    expect(partials.length).toBeGreaterThanOrEqual(1)
+    expect(partials.length).toBeLessThan(CORE.length / 4)
   })
 
   it('accepts a gateway that ignores stream:true and answers with plain JSON', async () => {

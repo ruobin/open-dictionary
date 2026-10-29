@@ -6,7 +6,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 **User-facing**
 
-- **Word lookup** (`/api/translate/:word?from=&to=`, plus `/api/translate-stream/:word` which streams the entry to the page as the model writes it) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
+- **Word lookup** (`/api/translate/:word?from=&to=`, plus `/api/translate-stream/:word` which streams the entry to the page token by token as the model writes it, with a chat-style reveal animation) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
 - **Autocomplete** (`/api/suggest`) — prefix suggestions from already-cached words
 - **Word of the day** (`/api/word-of-day`) — deterministic daily pick from the cache
 - **"More examples like this"** (`/api/more-examples`) — per-sense follow-up LLM call, optionally constrained by topic/CEFR level (cached 90 days)
@@ -264,7 +264,7 @@ server/
       translateFlow.ts  Lookup flow shared by both adapters: parallel core + extras calls, partial snapshots
       prompts.ts        Prompt builders (constant system prefixes; request data only in user messages)
       parse.ts          Lenient JSON parsing of model output
-      streamJson.ts     Incremental JSON scanner behind the streamed partial answers
+      streamJson.ts     Repairs half-written model JSON into token-level partial snapshots
       requestVariants.ts  Reasoning-off step-down ladder, max_tokens guards, admin requestBody layering
       fusion.ts         Two-provider fusion (first answer wins, merge in background)
       deepseek.ts       DeepSeek wrapper

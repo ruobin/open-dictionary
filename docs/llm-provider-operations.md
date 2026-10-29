@@ -68,11 +68,44 @@ JSON 4xx before any stream starts. The response sets `X-Accel-Buffering: no` so
 the host nginx does not buffer it — no nginx change is needed. If the stream
 transport fails in any way, the client falls back to `/translate`.
 
-Upstream, the core call streams from the model only when a listener is attached
-(the web path); admin tests, benchmarks and the eval harness use plain requests.
-If a gateway rejects `stream: true` (HTTP 400/422) the request is retried
+**Token-level partials.** When a listener is attached (the web path), BOTH model
+calls stream upstream. `streamJson.ts` repairs the half-written JSON on every
+snapshot — it closes the open string and brackets and drops a dangling key,
+comma or half-typed literal — so a `partial` can contain a definition that is
+still being written. Snapshots are throttled to one per 60 ms
+(`PARTIAL_INTERVAL_MS` in `translateFlow.ts`); only a snapshot that was actually
+sent starts a new interval. They are display hints: the resolved result is
+always the authority, and a typo answer never produces a partial.
+
+**Extras are held back until the core call finishes.** Common mistakes,
+collocations and word family render *below* the senses, so showing them earlier
+would push the senses down the page while they fill in. Content therefore only
+ever grows downward; the extras (usually already finished by then) appear right
+after the senses and are animated in by the page.
+
+Upstream, a gateway that rejects `stream: true` (HTTP 400/422) is retried
 without it and streaming is disabled for that provider instance; a gateway that
-ignores `stream` and returns plain JSON also works.
+ignores `stream` and returns plain JSON also works (the page then just reveals
+the finished text with the same animation). Admin tests, benchmarks and the eval
+harness pass no listener and use plain requests.
+
+### Web page animation
+
+`src/components/LiveText.tsx`. Every streamed string (translation, definitions,
+examples, mistakes, chips) is a `<LiveText>`. It reveals newly arrived characters
+over a few frames — about 90 chars/s, speeding up in proportion to the backlog
+so a burst never leaves the text trailing the model — and a blinking caret shows
+under the entry while the lookup is in flight. Rules:
+
+- **Instant results do not animate.** `useDictionary` sets `animate` only when at
+  least one partial arrived or the lookup took longer than 250 ms; a cache hit
+  renders in full.
+- **One `WordEntry` instance per lookup** (streaming → done), so the animation
+  carries on through completion instead of restarting. Pieces that mounted while
+  animating finish revealing even after the answer is complete.
+- "More examples" is hidden while streaming (it would act on a half-written
+  definition).
+- `prefers-reduced-motion` disables the reveal and the caret blink.
 
 ### Per-model request options
 
