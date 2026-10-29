@@ -318,6 +318,9 @@ export function translate(
   subscribe(state, hooks.onPartial)
   const background: Array<Promise<unknown>> = []
   const emit: PartialListener = (entries) => {
+    // A model that is still writing after the answer was chosen (fusion's
+    // slower provider) must not push stale snapshots after the result.
+    if (state.settled) return
     state.last = entries
     for (const listener of state.listeners) {
       try {
@@ -611,7 +614,10 @@ export function createTranslateRouter(
         send('error', { error: 'internal' })
       }
     } finally {
-      if (!closed) res.end()
+      // Mark closed first so a straggling partial can never write after end().
+      const alreadyClosed = closed
+      closed = true
+      if (!alreadyClosed) res.end()
     }
   })
 

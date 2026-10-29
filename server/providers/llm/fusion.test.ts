@@ -8,7 +8,7 @@ import type {
   LlmTranslationContent,
   LlmTranslationRequest,
 } from './types'
-import { createFusionProvider, definitionsSimilar, mergeContents } from './fusion'
+import { PRIMARY_GRACE_MS, createFusionProvider, definitionsSimilar, mergeContents } from './fusion'
 
 /** Minimal fake provider returning fixed content (or throwing). No `fuse`
  *  method → the FusionProvider falls back to the deterministic code merge. */
@@ -249,6 +249,99 @@ describe('createFusionProvider', () => {
     await createFusionProvider({ primary, secondary }).translate(req(), { onPartial })
     expect(onPartial).toHaveBeenCalledTimes(1)
     expect(onPartial).toHaveBeenCalledWith({ headword: 'run', translation: 'primary-partial' })
+  })
+
+  describe('when the primary is streaming to the user', () => {
+    const gate = <T,>() => {
+      let resolve!: (v: T) => void
+      let reject!: (e: unknown) => void
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res
+        reject = rej
+      })
+      return { promise, resolve, reject }
+    }
+    const content = (translation: string): LlmTranslationContent => ({ headword: 'run', translation })
+
+    function streamingPrimary(g: ReturnType<typeof gate<{ content: LlmTranslationContent }>>, streams: boolean): LlmProvider {
+      return {
+        id: 'llm:a:1',
+        async translate(_req, opts) {
+          if (streams) opts?.onPartial?.({ headword: 'run', translation: 'prim' })
+          return g.promise
+        },
+        async moreExamples() {
+          return { examples: [] }
+        },
+      }
+    }
+
+    it("ends on the primary's answer even if the secondary finishes first, so the text the user watched isn't rewritten", async () => {
+      const g = gate<{ content: LlmTranslationContent }>()
+      const f = createFusionProvider({
+        primary: streamingPrimary(g, true),
+        secondary: fakeProvider('llm:b:2', content('secondary')),
+      })
+      const pending = f.translate(req(), { onPartial: () => {} })
+      await new Promise((r) => setTimeout(r, 5))
+      g.resolve({ content: content('primary') })
+      const result = await pending
+      expect((result.content as LlmTranslationContent).translation).toBe('primary')
+    })
+
+    it('still answers with the secondary when the primary has not shown the user anything yet', async () => {
+      const g = gate<{ content: LlmTranslationContent }>()
+      const f = createFusionProvider({
+        primary: streamingPrimary(g, false),
+        secondary: fakeProvider('llm:b:2', content('secondary')),
+      })
+      const result = await f.translate(req(), { onPartial: () => {} })
+      expect((result.content as LlmTranslationContent).translation).toBe('secondary')
+      g.resolve({ content: content('primary') })
+    })
+
+    it('does not wait for the primary when nobody is listening for partials', async () => {
+      const g = gate<{ content: LlmTranslationContent }>()
+      const f = createFusionProvider({
+        primary: streamingPrimary(g, true),
+        secondary: fakeProvider('llm:b:2', content('secondary')),
+      })
+      const result = await f.translate(req())
+      expect((result.content as LlmTranslationContent).translation).toBe('secondary')
+      g.resolve({ content: content('primary') })
+    })
+
+    it("falls back to the secondary's answer if the streaming primary then fails", async () => {
+      const g = gate<{ content: LlmTranslationContent }>()
+      const f = createFusionProvider({
+        primary: streamingPrimary(g, true),
+        secondary: fakeProvider('llm:b:2', content('secondary')),
+      })
+      const pending = f.translate(req(), { onPartial: () => {} })
+      await new Promise((r) => setTimeout(r, 5))
+      g.reject(new Error('primary blew up'))
+      const result = await pending
+      expect((result.content as LlmTranslationContent).translation).toBe('secondary')
+      expect(await result.upgrade).toBeNull()
+    })
+
+    it('gives up waiting for a stalled primary after the grace period', async () => {
+      vi.useFakeTimers()
+      try {
+        const g = gate<{ content: LlmTranslationContent }>()
+        const f = createFusionProvider({
+          primary: streamingPrimary(g, true),
+          secondary: fakeProvider('llm:b:2', content('secondary')),
+        })
+        const pending = f.translate(req(), { onPartial: () => {} })
+        await vi.advanceTimersByTimeAsync(PRIMARY_GRACE_MS + 10)
+        const result = await pending
+        expect((result.content as LlmTranslationContent).translation).toBe('secondary')
+        g.resolve({ content: content('primary') })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('upgrade uses primary.fuse() when present', async () => {

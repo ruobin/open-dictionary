@@ -41,21 +41,29 @@ export interface FusionProviderConfig {
   secondary: LlmProvider
 }
 
-/** Resolves with the first fulfilled promise; rejects (with the first
- *  promise's error) only when all of them reject. */
-function firstFulfilled<T>(promises: Array<Promise<T>>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
+/** Resolves with the first fulfilled promise, tagged with its index; rejects
+ *  (with the first promise's error) only when all of them reject. */
+function firstFulfilled<T>(promises: Array<Promise<T>>): Promise<{ index: number; value: T }> {
+  return new Promise((resolve, reject) => {
     const errors: unknown[] = []
     let failed = 0
-    promises.forEach((p, i) => {
-      p.then(resolve, (err: unknown) => {
-        errors[i] = err
-        failed += 1
-        if (failed === promises.length) reject(errors[0])
-      })
+    promises.forEach((p, index) => {
+      p.then(
+        (value) => resolve({ index, value }),
+        (err: unknown) => {
+          errors[index] = err
+          failed += 1
+          if (failed === promises.length) reject(errors[0])
+        }
+      )
     })
   })
 }
+
+/** If the secondary finishes first while the user is already watching the
+ *  primary's answer being written, wait at most this long for the primary to
+ *  finish so the final answer matches what they read. */
+export const PRIMARY_GRACE_MS = 5_000
 
 export function createFusionProvider(config: FusionProviderConfig): LlmProvider {
   const { primary, secondary } = config
@@ -63,12 +71,38 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
 
   async function translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult> {
     // Only the primary streams partials to the UI; the other model just races it.
-    const pa = primary.translate(req, opts)
+    let primaryStreamed = false
+    const primaryOpts: LlmTranslateOptions | undefined = opts?.onPartial
+      ? {
+          ...opts,
+          onPartial: (partial) => {
+            primaryStreamed = true
+            opts.onPartial?.(partial)
+          },
+        }
+      : opts
+    const pa = primary.translate(req, primaryOpts)
     const pb = secondary.translate(req)
 
     let first: LlmTranslationResult
     try {
-      first = await firstFulfilled([pa, pb])
+      const winner = await firstFulfilled([pa, pb])
+      first = winner.value
+      if (winner.index === 1 && primaryStreamed) {
+        // The user is already reading the primary's answer as it is written.
+        // Ending on the secondary's different text would visibly rewrite it, so
+        // give the primary a moment to finish; if it fails or stalls, the
+        // secondary's answer stands.
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const primaryResult = await Promise.race([
+          pa.catch(() => null),
+          new Promise<null>((resolve) => {
+            timer = setTimeout(() => resolve(null), PRIMARY_GRACE_MS)
+          }),
+        ])
+        if (timer) clearTimeout(timer)
+        if (primaryResult) first = primaryResult
+      }
     } catch (err) {
       // Both failed — re-throw so the translate tier falls back to the dictionary.
       throw err instanceof Error ? err : new Error(String(err))

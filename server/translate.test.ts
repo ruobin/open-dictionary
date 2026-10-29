@@ -464,6 +464,25 @@ describe('translate — orchestration', () => {
     writeGate.resolve()
   })
 
+  it('drops partials a model emits after the answer was already chosen (fusion\'s slower provider)', async () => {
+    let lateEmit: (() => void) | undefined
+    const llm: LlmProvider = {
+      id: 'llm:test:test',
+      async translate(_req, opts) {
+        lateEmit = () => opts?.onPartial?.({ headword: 'hello', translation: 'late' })
+        return { content: HELLO }
+      },
+      async moreExamples() {
+        return { examples: [] }
+      },
+    }
+    const dictionary: DictionaryProvider = { id: 'dict:test', define: vi.fn(async () => []) }
+    const seen: string[] = []
+    await translate(uniqueReq(), llm, dictionary, null, { onPartial: (e) => seen.push(e[0].translation ?? '') })
+    lateEmit?.()
+    expect(seen).toEqual([])
+  })
+
   it('a throwing partial listener cannot break the lookup', async () => {
     const llm: LlmProvider = {
       id: 'llm:test:test',
