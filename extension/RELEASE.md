@@ -86,10 +86,9 @@ These cannot be done from code — track them here so nothing is missed.
       (expect `access-control-allow-origin: chrome-extension://<published-id>`)
 - [ ] The streamed-lookup change (design doc §5.1) adds no permission and needs no
       new CORS entry — the worker's fetch to `/api/translate-stream` is covered by
-      the existing host permission. It does need a **version bump** in both
-      `manifest.json` and `package.json` (currently `0.2.0`) before uploading a new
-      package; the Web Store rejects a package whose version isn't higher than the
-      published one.
+      the existing host permission. The package version was bumped to `0.3.0` for it
+      (`manifest.json`, `package.json`, `package-lock.json`); the Web Store rejects
+      a package whose version isn't higher than the published one.
 
 ### 4.2 Auth0 — callback URLs
 - [ ] **Dev ID** (for local/unpacked testing): in the Auth0 dashboard
