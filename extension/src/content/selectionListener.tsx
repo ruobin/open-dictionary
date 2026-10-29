@@ -4,6 +4,8 @@ import { isLookupableSelection, normalizeSelectionText } from '../shared/selecti
 import { entryStyles } from './entryStyles'
 import { SelectionIcon } from './SelectionIcon'
 import { ResultCard } from './ResultCard'
+import { startLookupStream } from '../shared/lookupStream'
+import type { LiveState } from '../shared/LiveText'
 
 /**
  * Persistent content script — the "highlight to look up" flow (design doc
@@ -107,9 +109,9 @@ function positionCard(rect: DOMRect): void {
   cardHost.style.left = `${left}px`
 }
 
-function renderCard(text: string, result: LookupResponse | null, loading: boolean): void {
+function renderCard(text: string, result: LookupResponse | null, loading: boolean, live?: LiveState): void {
   const root = ensureCardHost()
-  root.render(<ResultCard text={text} result={result} loading={loading} onClose={closeCard} />)
+  root.render(<ResultCard text={text} result={result} loading={loading} live={live} onClose={closeCard} />)
 }
 
 function openCard(text: string, rect: DOMRect): void {
@@ -124,7 +126,12 @@ function openCard(text: string, rect: DOMRect): void {
   document.addEventListener('keydown', handleKeyDown, true)
 }
 
+// Cancels the in-flight streamed lookup (and, via the port, the worker's fetch).
+let cancelLookup: (() => void) | null = null
+
 function closeCard(): void {
+  cancelLookup?.()
+  cancelLookup = null
   cardOpen = false
   if (cardHost) cardHost.style.display = 'none'
   document.removeEventListener('mousedown', handleOutsideClick, true)
@@ -154,12 +161,30 @@ function handleIconClick(): void {
 }
 
 async function lookupAndRender(text: string): Promise<void> {
+  cancelLookup?.()
+  cancelLookup = null
+
   const settingsRes = await sendMessage({ type: 'GET_SETTINGS' })
+  if (!cardOpen) return // dismissed while settings were loading
   const sourceLang = settingsRes.ok && 'settings' in settingsRes ? settingsRes.settings.sourceLang : 'en'
   const targetLang = settingsRes.ok && 'settings' in settingsRes ? settingsRes.settings.targetLang : 'en'
-  const result = await sendMessage({ type: 'LOOKUP', text, sourceLang, targetLang })
-  if (!cardOpen) return // dismissed while the lookup was in flight
-  renderCard(text, result as LookupResponse, false)
+
+  // Streamed lookup: the card fills in while the model is still writing, then
+  // settles on the final result (same element, so the reveal doesn't restart).
+  cancelLookup = startLookupStream(
+    { text, sourceLang, targetLang },
+    {
+      onPartial: (entries) => {
+        if (!cardOpen) return
+        renderCard(text, { ok: true, entries }, false, { animate: true, streaming: true })
+      },
+      onDone: (result, animate) => {
+        cancelLookup = null
+        if (!cardOpen) return // dismissed while the lookup was in flight
+        renderCard(text, result, false, { animate, streaming: false })
+      },
+    }
+  )
 }
 
 function checkSelection(): void {

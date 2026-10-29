@@ -83,11 +83,29 @@ would push the senses down the page while they fill in. Content therefore only
 ever grows downward; the extras (usually already finished by then) appear right
 after the senses and are animated in by the page.
 
+**Fusion and streaming.** Only the primary model streams to the user; the
+secondary runs in parallel and the first to finish normally supplies the answer.
+Once the primary has shown the user any partial, though, the final answer is the
+primary's: if the secondary finishes first, the lookup waits up to
+`PRIMARY_GRACE_MS` (5 s) for the primary, because ending on the other model's
+different text would visibly rewrite what the user just watched being written. If
+the primary fails or stalls past the grace period the secondary's answer stands.
+If nothing was shown yet, whichever model finishes first still wins. Snapshots a
+model emits after the answer was chosen are dropped.
+
 Upstream, a gateway that rejects `stream: true` (HTTP 400/422) is retried
 without it and streaming is disabled for that provider instance; a gateway that
 ignores `stream` and returns plain JSON also works (the page then just reveals
 the finished text with the same animation). Admin tests, benchmarks and the eval
 harness pass no listener and use plain requests.
+
+### Browser extension
+
+The extension's in-page card and popup stream too, over a `chrome.runtime`
+port to the service worker rather than a direct fetch — see
+`extension/design-browser-extension.md` §5.1. It uses the same
+`/api/translate-stream` endpoint (so the same limiter and dedup) and falls back to
+`/api/translate`. Shipping it requires a new Web Store build and version bump.
 
 ### Web page animation
 

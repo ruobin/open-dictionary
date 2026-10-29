@@ -234,6 +234,48 @@ export type ExtensionResponse =
 
 This mirrors `LookupErrorCode` already defined in `src/api/dictionary.ts` so error handling/UI copy can be kept consistent between the web app and the extension.
 
+
+### 5.1 Streamed lookups (added 2026-10-29)
+
+The in-page result card and the toolbar popup show the answer **while the model is
+still writing it** (translation first, then each definition), like the web app.
+A one-shot `sendMessage` can only carry a single reply, so these two surfaces use a
+long-lived **port** instead:
+
+```
+content script / popup ──connect({name:'lookup-stream'})──▶ service worker
+   postMessage({ type: 'LOOKUP_STREAM', text, sourceLang, targetLang })
+   ◀── { type: 'partial', entries }   (0..n, each more complete)
+   ◀── { type: 'done',    entries }   (final)   or   { type: 'error', error }
+```
+
+- **Worker** (`background/streamPort.ts`, registered in `serviceWorker.ts` via
+  `chrome.runtime.onConnect`): runs `lookupWordStream()` (`lookupClient.ts`), which
+  reads `GET /api/translate-stream/:text` (Server-Sent Events) with the same
+  `chrome.storage.local` cache as `lookupWord()`, records history on success, then
+  closes the port. If the client disconnects (card dismissed, popup closed) the
+  in-flight fetch is aborted.
+- **Client** (`shared/lookupStream.ts`, `startLookupStream()`): opens the port and
+  reports `onPartial` / `onDone(result, animate)`. `animate` is true when a partial
+  arrived or the lookup took > 250 ms; an instant cache hit renders in full.
+- **Never a new way to fail.** If the port can't be opened or drops before a result
+  (worker restarted), the client repeats the lookup as the original one-shot
+  `LOOKUP` message. Inside the worker, a missing stream route, a non-event-stream
+  response, a cut connection or a failed connect falls back to
+  `GET /api/translate/:text`. A 429 maps to `rate_limited`, never retried.
+- **Rendering:** `shared/renderEntry.tsx` `EntryView` takes an optional
+  `live: { animate, streaming }`. `shared/LiveText.tsx` reveals text over a few
+  frames (the maths is `shared/liveReveal.ts`, shared with the web app; the
+  component is duplicated because the extension bundles its own React) and a
+  blinking caret shows while `streaming`. The same `EntryView` instance is kept from
+  partial through done (keyed by word) so the reveal doesn't restart.
+  `prefers-reduced-motion` turns the animation off.
+- **Not streamed:** the right-click (context menu) path still uses the one-shot
+  lookup — it stashes the finished result in `chrome.storage.local` and injects a
+  render script, so it has nothing to show before the result is complete.
+- **No CORS / manifest change:** the worker's fetch is covered by the existing
+  `https://dict.ai-dictionary.org/*` host permission.
+
 ---
 
 ## 6. Backend Changes Required

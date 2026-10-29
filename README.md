@@ -6,7 +6,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 **User-facing**
 
-- **Word lookup** (`/api/translate/:word?from=&to=`, plus `/api/translate-stream/:word` which streams the entry to the page token by token as the model writes it, with a chat-style reveal animation) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
+- **Word lookup** (`/api/translate/:word?from=&to=`, plus `/api/translate-stream/:word` which streams the entry to the page token by token as the model writes it, with a chat-style reveal animation; the browser extension's card and popup stream it too) — LLM-generated entries with CEFR-graded senses/examples, common mistakes, collocations, word family, typo suggestions; 23 supported languages
 - **Autocomplete** (`/api/suggest`) — prefix suggestions from already-cached words
 - **Word of the day** (`/api/word-of-day`) — deterministic daily pick from the cache
 - **"More examples like this"** (`/api/more-examples`) — per-sense follow-up LLM call, optionally constrained by topic/CEFR level (cached 90 days)
@@ -238,7 +238,8 @@ scripts/
 shared/
   languages.ts    Language list + code‑to‑name helper (single source of truth)
   favorites.ts    FavoriteKey interface
-  sse.ts          Server‑Sent‑Events reader shared by the server (upstream LLM streams) and the web app (/api/translate-stream)
+  sse.ts          Server‑Sent‑Events reader shared by the server (upstream LLM streams), the web app and the extension (/api/translate-stream)
+  liveReveal.ts   Pure maths for the chat‑style text reveal, shared by the web app and the extension
   wordLink.ts     Canonical /word/:term URL builder
   seo.ts          Shared SEO/meta helpers
 extension/        Browser extension (separate npm workspace — npm run ext:build)

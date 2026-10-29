@@ -1,6 +1,7 @@
 import type { LookupResponse } from '../shared/messages'
 import { EntryView, ErrorView } from '../shared/renderEntry'
 import { webAppWordUrl } from '../shared/config'
+import type { LiveState } from '../shared/LiveText'
 
 /**
  * Compact result card for the selection-icon flow (design doc §3.1).
@@ -13,11 +14,14 @@ export function ResultCard({
   text,
   result,
   loading,
+  live,
   onClose,
 }: {
   text: string
   result: LookupResponse | null
   loading: boolean
+  /** Streamed-lookup state: reveal animation + caret while the answer is written. */
+  live?: LiveState
   onClose: () => void
 }) {
   return (
@@ -29,7 +33,7 @@ export function ResultCard({
         <div className="od-loading">Looking up “{text}”…</div>
       ) : result.ok ? (
         result.entries.length > 0 ? (
-          <EntryView entry={result.entries[0]} webAppUrl={webAppWordUrl(text)} />
+          <EntryView key={text} entry={result.entries[0]} webAppUrl={webAppWordUrl(text)} live={live} />
         ) : (
           <ErrorView error="not_found" />
         )

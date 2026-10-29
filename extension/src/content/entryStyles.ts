@@ -95,4 +95,16 @@ export const entryStyles = `
     color: #b8860b;
     padding: 0 2px;
   }
+  .od-pending { min-height: 14px; margin: 4px 0; line-height: 1; }
+  .od-caret {
+    display: inline-block;
+    width: 7px;
+    height: 13px;
+    border-radius: 2px;
+    background: #b81b21;
+    vertical-align: text-bottom;
+    animation: od-caret-blink 1s steps(2, start) infinite;
+  }
+  @keyframes od-caret-blink { to { visibility: hidden; } }
+  @media (prefers-reduced-motion: reduce) { .od-caret { animation: none; } }
 `

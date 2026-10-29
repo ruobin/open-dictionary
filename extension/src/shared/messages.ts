@@ -52,6 +52,25 @@ export type LookupResponse =
   | { ok: true; entries: DictionaryEntry[] }
   | { ok: false; error: ExtensionErrorCode }
 
+/** Name of the long-lived `chrome.runtime.connect` port used for streamed lookups. */
+export const LOOKUP_STREAM_PORT = 'lookup-stream'
+
+/** First (and only) message a client posts on a lookup-stream port. */
+export interface LookupStreamRequest {
+  type: 'LOOKUP_STREAM'
+  text: string
+  sourceLang: string
+  targetLang: string
+}
+
+/** Messages the background worker posts back on a lookup-stream port: zero or
+ *  more `partial` snapshots (each a more complete entry list), then exactly one
+ *  terminal `done` or `error`. */
+export type LookupStreamEvent =
+  | { type: 'partial'; entries: DictionaryEntry[] }
+  | { type: 'done'; entries: DictionaryEntry[] }
+  | { type: 'error'; error: ExtensionErrorCode }
+
 export type SettingsResponse = { ok: true; settings: ExtensionSettings }
 
 export type AuthResponse = { ok: true; auth: AuthState } | { ok: false; error: ExtensionErrorCode }

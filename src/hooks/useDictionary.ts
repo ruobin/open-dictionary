@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { shouldAnimate } from '../../shared/liveReveal'
 import { lookupWordStream, type DictionaryEntry, type LookupError } from '../api/dictionary'
 
 export type LookupStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -14,8 +15,6 @@ export interface DictionaryState {
   animate: boolean
 }
 
-/** A lookup slower than this is revealed progressively even if no partial arrived. */
-const SLOW_LOOKUP_MS = 250
 
 export function useDictionary(
   word: string,
@@ -53,7 +52,7 @@ export function useDictionary(
     })
       .then((data) => {
         if (cancelled) return
-        setState({ status: 'success', data, error: null, animate: sawPartial || Date.now() - startedAt > SLOW_LOOKUP_MS })
+        setState({ status: 'success', data, error: null, animate: shouldAnimate(sawPartial, Date.now() - startedAt) })
       })
       .catch((error: LookupError) => {
         if (cancelled) return

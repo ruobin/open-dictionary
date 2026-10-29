@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import type { DictionaryEntry, Phonetic } from '../types'
+import { LiveProvider, LiveText, StreamCaret, type LiveState } from './LiveText'
 
 /** Human-readable copy for each `ExtensionErrorCode`. Shared so the popup
  *  and any future in-page surfaces show identical error copy. */
@@ -67,59 +68,79 @@ function pickAudio(phonetics: Phonetic[]): {
  * favorite star is shown at all — used by any caller that hasn't loaded
  * auth state yet, keeping this component usable before Phase 9 wiring
  * existed and in anonymous-signed-out contexts.
+ *
+ * `live` (streamed lookups): when `live.animate` is set the translation and
+ * definitions are revealed progressively, and `live.streaming` shows a caret
+ * while the answer is still being written. Omit it for a plain static render.
+ * Pass the SAME element position/instance from partial through done (and a
+ * `key` that changes with the word) so the reveal carries on instead of
+ * restarting.
  */
 export function EntryView({
   entry,
   webAppUrl,
   isFavorite,
   onToggleFavorite,
+  live = { animate: false, streaming: false },
 }: {
   entry: DictionaryEntry
   webAppUrl: string
   isFavorite?: boolean
   onToggleFavorite?: () => void
+  live?: LiveState
 }) {
   const meanings = entry.meanings ?? []
   const { uk, us, fallback } = pickAudio(entry.phonetics ?? [])
   return (
-    <div className="od-entry">
-      <div className="od-head">
-        <span className="od-word">{entry.word}</span>
-        {entry.phonetic && <span className="od-phonetic">{entry.phonetic}</span>}
-        {(uk || us || fallback) && (
-          <span className="od-audio-row">
-            {uk && <AudioButton label="UK" src={uk.audio} />}
-            {us && <AudioButton label="US" src={us.audio} />}
-            {fallback && <AudioButton label="Play" src={fallback.audio} />}
-          </span>
-        )}
-        {onToggleFavorite && (
-          <button
-            type="button"
-            className="od-fav-btn"
-            aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
-            aria-pressed={isFavorite}
-            onClick={onToggleFavorite}
-          >
-            {isFavorite ? '★' : '☆'}
-          </button>
-        )}
-      </div>
-      {entry.translation && <div className="od-translation">{entry.translation}</div>}
-      {meanings.slice(0, 4).map((meaning, i) => (
-        <div key={i} className="od-meaning">
-          <div className="od-pos">{meaning.partOfSpeech}</div>
-          {meaning.definitions.slice(0, 3).map((def, j) => (
-            <div key={j} className="od-def">
-              {def.cefr && <span className="od-cefr">{def.cefr}</span>} {def.definition}
-            </div>
-          ))}
+    <LiveProvider value={live}>
+      <div className="od-entry">
+        <div className="od-head">
+          <span className="od-word">{entry.word}</span>
+          {entry.phonetic && <span className="od-phonetic">{entry.phonetic}</span>}
+          {(uk || us || fallback) && (
+            <span className="od-audio-row">
+              {uk && <AudioButton label="UK" src={uk.audio} />}
+              {us && <AudioButton label="US" src={us.audio} />}
+              {fallback && <AudioButton label="Play" src={fallback.audio} />}
+            </span>
+          )}
+          {onToggleFavorite && (
+            <button
+              type="button"
+              className="od-fav-btn"
+              aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
+              aria-pressed={isFavorite}
+              onClick={onToggleFavorite}
+            >
+              {isFavorite ? '★' : '☆'}
+            </button>
+          )}
         </div>
-      ))}
-      <a className="od-link" href={webAppUrl} target="_blank" rel="noopener noreferrer">
-        See full entry →
-      </a>
-    </div>
+        {entry.translation && (
+          <div className="od-translation">
+            <LiveText text={entry.translation} />
+          </div>
+        )}
+        {meanings.slice(0, 4).map((meaning, i) => (
+          <div key={i} className="od-meaning">
+            <div className="od-pos">{meaning.partOfSpeech}</div>
+            {meaning.definitions.slice(0, 3).map((def, j) => (
+              <div key={j} className="od-def">
+                {def.cefr && <span className="od-cefr">{def.cefr}</span>} <LiveText text={def.definition} />
+              </div>
+            ))}
+          </div>
+        ))}
+        {live.streaming && (
+          <div className="od-pending">
+            <StreamCaret />
+          </div>
+        )}
+        <a className="od-link" href={webAppUrl} target="_blank" rel="noopener noreferrer">
+          See full entry →
+        </a>
+      </div>
+    </LiveProvider>
   )
 }
 

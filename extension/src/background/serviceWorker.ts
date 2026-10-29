@@ -1,5 +1,6 @@
 import type { ExtensionMessage, ExtensionResponse, LookupResponse } from '../shared/messages'
 import { lookupWord } from './lookupClient'
+import { handleLookupStreamPort } from './streamPort'
 import { getSettings, setSettings } from './settings'
 import { PENDING_RESULT_KEY } from '../shared/constants'
 import { getAuthState, login, logout } from './authClient'
@@ -52,6 +53,9 @@ async function handleContextMenuLookup(text: string, tabId: number): Promise<voi
     files: [contextMenuRenderScript],
   })
 }
+
+// Streamed lookups (content-script card and popup): see streamPort.ts.
+chrome.runtime.onConnect.addListener((port) => handleLookupStreamPort(port))
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   void handleMessage(message).then(sendResponse)

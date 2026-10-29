@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useReducer, useRef, type ReactNode } from 'react'
+import { nextShown, safeSlice } from '../../shared/liveReveal'
 
 /**
  * Chat-style text reveal for a lookup that was streamed in (or was slow enough
@@ -24,34 +25,10 @@ export function useLive(): LiveState {
   return useContext(LiveContext)
 }
 
-/** Base reveal speed, characters per second. */
-const BASE_CPS = 90
-/** Reveal speed grows with the backlog (rate = backlog / this), so the text
- *  keeps up with the model: a typical burst of a few dozen characters is gone
- *  within a couple of frames, and even a few hundred at once finish in under a
- *  second. */
-const CATCH_UP_SECONDS = 0.25
-
-/** How many characters should be visible `dtSeconds` after `shown` was last
- *  computed: a steady base speed that speeds up as the backlog grows. */
-export function nextShown(shown: number, total: number, dtSeconds: number): number {
-  const backlog = total - shown
-  if (backlog <= 0) return total
-  const rate = Math.max(BASE_CPS, backlog / CATCH_UP_SECONDS)
-  return Math.min(total, shown + rate * dtSeconds)
-}
-
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
     : false
-}
-
-/** Never cut between the halves of a surrogate pair (emoji). */
-export function safeSlice(text: string, count: number): string {
-  if (count >= text.length) return text
-  const code = text.charCodeAt(count - 1)
-  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? count + 1 : count)
 }
 
 /**

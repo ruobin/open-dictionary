@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState, type FormEvent } from 'react'
+import { StrictMode, useEffect, useRef, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AuthState, ExtensionMessage, ExtensionResponse, ExtensionSettings } from '../shared/messages'
 import type { FavoriteKey } from '../../../shared/favorites'
@@ -6,6 +6,7 @@ import { LANGUAGES } from '../../../shared/languages'
 import { EntryView, ErrorView } from '../shared/renderEntry'
 import { webAppWordUrl, API_BASE } from '../shared/config'
 import type { DictionaryEntry } from '../types'
+import { startLookupStream } from '../shared/lookupStream'
 // Popup renders in a regular (non-shadow-DOM) page, unlike the
 // content-script surfaces, so it needs its own `<style>` injection of the
 // same `.od-*` rules those surfaces put in their shadow roots — otherwise
@@ -26,8 +27,9 @@ function sameFavorite(a: FavoriteKey, b: FavoriteKey): boolean {
 
 type LookupState =
   | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'success'; entries: DictionaryEntry[]; word: string }
+  // `partial` holds the best-so-far entry while the answer is still being written.
+  | { status: 'loading'; word: string; partial?: DictionaryEntry[] }
+  | { status: 'success'; entries: DictionaryEntry[]; word: string; animate: boolean }
   | { status: 'error'; error: string }
 
 function Popup() {
@@ -36,6 +38,7 @@ function Popup() {
   const [state, setState] = useState<LookupState>({ status: 'idle' })
   const [auth, setAuth] = useState<AuthState>({ isAuthenticated: false, user: null })
   const [favorites, setFavorites] = useState<FavoriteKey[]>([])
+  const cancelLookup = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     void sendMessage({ type: 'GET_SETTINGS' }).then((res) => {
@@ -87,22 +90,23 @@ function Popup() {
     if (res.ok && 'favorites' in res) setFavorites(res.favorites)
   }
 
-  async function handleSubmit(e: FormEvent) {
+  function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const word = query.trim()
     if (!word || !settings) return
-    setState({ status: 'loading' })
-    const res = await sendMessage({
-      type: 'LOOKUP',
-      text: word,
-      sourceLang: settings.sourceLang,
-      targetLang: settings.targetLang,
-    })
-    if (res.ok && 'entries' in res) {
-      setState({ status: 'success', entries: res.entries, word })
-    } else if (!res.ok) {
-      setState({ status: 'error', error: res.error })
-    }
+    cancelLookup.current?.()
+    setState({ status: 'loading', word })
+    cancelLookup.current = startLookupStream(
+      { text: word, sourceLang: settings.sourceLang, targetLang: settings.targetLang },
+      {
+        onPartial: (partial) => setState({ status: 'loading', word, partial }),
+        onDone: (res, animate) => {
+          cancelLookup.current = null
+          if (res.ok) setState({ status: 'success', entries: res.entries, word, animate })
+          else setState({ status: 'error', error: res.error })
+        },
+      }
+    )
   }
 
   return (
@@ -165,29 +169,35 @@ function Popup() {
         </div>
       )}
 
-      {state.status === 'loading' && <div>Looking up…</div>}
+      {state.status === 'loading' && !state.partial?.length && <div>Looking up…</div>}
       {state.status === 'error' && <ErrorView error={state.error} />}
-      {state.status === 'success' &&
-        (state.entries.length > 0 ? (
+      {(() => {
+        // One EntryView for the whole lookup (partial -> done), keyed by word,
+        // so the reveal animation carries on through completion.
+        const streaming = state.status === 'loading'
+        const entries = state.status === 'success' ? state.entries : state.status === 'loading' ? state.partial : undefined
+        if (state.status !== 'success' && !streaming) return null
+        if (!entries) return null
+        if (entries.length === 0) return <ErrorView error="not_found" />
+        const word = state.status === 'success' || state.status === 'loading' ? state.word : ''
+        const animate = streaming || (state.status === 'success' && state.animate)
+        return (
           <EntryView
-            entry={state.entries[0]}
-            webAppUrl={webAppWordUrl(state.word)}
+            key={word}
+            entry={entries[0]}
+            webAppUrl={webAppWordUrl(word)}
+            live={{ animate, streaming }}
             isFavorite={
               settings
                 ? favorites.some((f) =>
-                    sameFavorite(f, {
-                      word: state.word,
-                      sourceLang: settings.sourceLang,
-                      targetLang: settings.targetLang,
-                    })
+                    sameFavorite(f, { word, sourceLang: settings.sourceLang, targetLang: settings.targetLang })
                   )
                 : false
             }
             onToggleFavorite={() => void handleToggleFavorite()}
           />
-        ) : (
-          <ErrorView error="not_found" />
-        ))}
+        )
+      })()}
 
       <div style={{ marginTop: 12, fontSize: 11, color: '#aaa', textAlign: 'right' }}>
         <a href={API_BASE} target="_blank" rel="noopener noreferrer" style={{ color: '#aaa' }}>

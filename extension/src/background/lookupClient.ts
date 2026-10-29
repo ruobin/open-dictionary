@@ -1,6 +1,7 @@
 import type { DictionaryEntry } from '../types'
 import type { ExtensionErrorCode, LookupResponse } from '../shared/messages'
 import { API_BASE } from '../shared/config'
+import { readSse } from '../../../shared/sse'
 
 /**
  * Response cache + fetch client for `/api/translate/:text`. Mirrors
@@ -112,4 +113,108 @@ export async function lookupWord(
   const data = (await res.json()) as DictionaryEntry[]
   await writeCache(storageKey, data)
   return { ok: true, entries: data }
+}
+
+export interface StreamLookupOptions {
+  /** Called with progressively more complete entries while the server is still
+   *  writing the answer. */
+  onPartial?: (entries: DictionaryEntry[]) => void
+  /** Aborts the request (the card/popup that asked for it went away). */
+  signal?: AbortSignal
+}
+
+/**
+ * Like {@link lookupWord}, but reads `/api/translate-stream/:text` (Server-Sent
+ * Events) so callers can show the translation and senses as the model writes
+ * them. Mirrors `lookupWordStream` in the web app (`src/api/dictionary.ts`).
+ *
+ * Cache hits, and every failure of the streaming transport itself (an old
+ * server without the route, a proxy that mangles event streams, a connection
+ * cut before `done`), fall back to the plain endpoint — streaming is an
+ * enhancement, never a new way to fail. Never throws.
+ */
+export async function lookupWordStream(
+  rawWord: string,
+  sourceLang: string,
+  targetLang: string,
+  options: StreamLookupOptions = {}
+): Promise<LookupResponse> {
+  const word = rawWord.trim().toLowerCase()
+  if (!word) return { ok: false, error: 'not_found' }
+
+  const src = sourceLang.toLowerCase()
+  const tgt = targetLang.toLowerCase()
+  const storageKey = `${src}:${tgt}:${word}`
+
+  const cached = await readCache(storageKey)
+  if (cached) {
+    pingClientCacheHit(word, src, tgt)
+    return { ok: true, entries: cached }
+  }
+
+  if (options.signal?.aborted) return { ok: false, error: 'network' }
+
+  const controller = new AbortController()
+  const onCallerAbort = (): void => controller.abort()
+  options.signal?.addEventListener('abort', onCallerAbort, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, FETCH_TIMEOUT_MS)
+
+  const qs = new URLSearchParams({ from: src, to: tgt })
+  const abortedResult = (): LookupResponse => ({ ok: false, error: timedOut ? 'timeout' : 'network' })
+
+  try {
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}/api/translate-stream/${encodeURIComponent(word)}?${qs.toString()}`, {
+        signal: controller.signal,
+        headers: { Accept: 'text/event-stream' },
+      })
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return abortedResult()
+      return await lookupWord(rawWord, sourceLang, targetLang)
+    }
+
+    if (res.status === 429) return { ok: false, error: 'rate_limited' }
+    const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
+    // A 404 here may just mean "this server has no stream route"; the plain
+    // endpoint gives the authoritative answer (including a real not_found).
+    if (!res.ok || !isSse || !res.body) return await lookupWord(rawWord, sourceLang, targetLang)
+
+    let final: DictionaryEntry[] | null = null
+    let failure: ExtensionErrorCode | null = null
+    try {
+      await readSse(res.body, ({ event, data }) => {
+        let payload: unknown
+        try {
+          payload = JSON.parse(data)
+        } catch {
+          return
+        }
+        if (event === 'partial' && Array.isArray(payload)) {
+          if (!options.signal?.aborted) options.onPartial?.(payload as DictionaryEntry[])
+        } else if (event === 'done' && Array.isArray(payload)) {
+          final = payload as DictionaryEntry[]
+        } else if (event === 'error') {
+          failure = (payload as { error?: string } | null)?.error === 'not_found' ? 'not_found' : 'api_error'
+        }
+      })
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return abortedResult()
+      // Connection dropped mid-stream: fall through to the plain endpoint below.
+    }
+
+    if (failure) return { ok: false, error: failure }
+    if (final) {
+      await writeCache(storageKey, final)
+      return { ok: true, entries: final }
+    }
+    return await lookupWord(rawWord, sourceLang, targetLang)
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', onCallerAbort)
+  }
 }
