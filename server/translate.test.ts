@@ -439,6 +439,31 @@ describe('translate — orchestration', () => {
     expect(joiner).toEqual(['hola'])
   })
 
+  it('does not replay a stale partial to a request that joins after the outcome is known', async () => {
+    const { cache, gate } = memoryCache()
+    const writeGate = deferred()
+    gate.current = writeGate.promise // keeps the lookup registered while its cache write is pending
+    const llm: LlmProvider = {
+      id: 'llm:test:test',
+      async translate(_req, opts) {
+        opts?.onPartial?.({ headword: 'hello', translation: 'hola' })
+        return { content: HELLO }
+      },
+      async moreExamples() {
+        return { examples: [] }
+      },
+    }
+    const dictionary: DictionaryProvider = { id: 'dict:test', define: vi.fn(async () => []) }
+    const req = uniqueReq()
+    await translate(req, llm, dictionary, cache)
+
+    const late: string[] = []
+    const outcome = await translate(req, llm, dictionary, cache, { onPartial: (e) => late.push(e[0].translation ?? '') })
+    expect(outcome.tier).toBe('llm')
+    expect(late).toEqual([])
+    writeGate.resolve()
+  })
+
   it('a throwing partial listener cannot break the lookup', async () => {
     const llm: LlmProvider = {
       id: 'llm:test:test',

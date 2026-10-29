@@ -268,6 +268,9 @@ interface InFlight {
   promise: Promise<TranslateOutcome>
   listeners: Set<PartialListener>
   last?: DictionaryEntry[]
+  /** The outcome is known (only background cache writes remain): joiners get no
+   *  stale partial replayed, just the final result. */
+  settled?: boolean
 }
 const inFlight = new Map<string, InFlight>()
 
@@ -278,7 +281,7 @@ function inFlightKey(req: TranslateRequest): string {
 function subscribe(state: InFlight, listener: PartialListener | undefined): void {
   if (!listener) return
   state.listeners.add(listener)
-  if (state.last) {
+  if (state.last && !state.settled) {
     try {
       listener(state.last)
     } catch {
@@ -326,6 +329,7 @@ export function translate(
   }
 
   state.promise = doTranslate(req, llm, dictionary, cache, emit, background).then((outcome) => {
+    state.settled = true
     recordOutcome(outcome.tier)
     return outcome
   })
