@@ -6,6 +6,7 @@ import { PENDING_RESULT_KEY } from '../shared/constants'
 import { getAuthState, login, logout } from './authClient'
 import { addFavorite, listFavorites, removeFavorite } from './favoritesClient'
 import { addHistory, getHistory } from './historyClient'
+import { playAudio } from './audioPlayer'
 // `?script` is @crxjs/vite-plugin's convention for resolving the built
 // filename of a script meant to be injected via the Scripting API (see
 // node_modules/@crxjs/vite-plugin/client.d.ts) — it also takes care of
@@ -109,6 +110,9 @@ async function handleMessage(message: ExtensionMessage): Promise<ExtensionRespon
     }
     case 'ADD_HISTORY': {
       return addHistory(message.entry)
+    }
+    case 'PLAY_AUDIO': {
+      return playAudio(message.src)
     }
   }
 }

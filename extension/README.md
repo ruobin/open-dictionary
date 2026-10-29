@@ -33,6 +33,33 @@ and the Web Store submission flow.
 
 ---
 
+## Audio playback (why there is an offscreen document)
+
+The pronunciation buttons (UK / US) behave differently depending on where the
+result card renders:
+
+| Surface | How the clip plays |
+|---|---|
+| Toolbar popup (an extension page) | A local `<audio>` element — only the extension's own CSP applies. |
+| In-page card (selection icon / right-click; a content script) | `PLAY_AUDIO` message → service worker → **offscreen document** (`src/offscreen/`) plays it. |
+
+**Why:** the in-page card lives inside the host page, so a `<audio>` there is
+subject to the *page's* CSP `media-src`. Pages with a strict CSP (e.g. job
+boards) block `media.merriam-webster.com`; the console shows
+`Loading media … violates … media-src` / `Media load rejected by URL safety
+check`, and the button used to do nothing ("works on some sites, not others").
+An offscreen document is an extension page, so host-page CSPs can't block it.
+
+Pieces: `src/shared/renderEntry.tsx` (`AudioButton`, `isExtensionPage`),
+`src/background/audioPlayer.ts` (https-only validation, creates the offscreen
+document on demand, forwards the clip), `src/offscreen/offscreen.{html,ts}`
+(plays it). Requires the `offscreen` permission (see `STORE_LISTING.md`), and
+`offscreen.html` is an extra Vite entry in `vite.config.ts` because nothing in
+the manifest references it. A failed play is logged as
+`[open-dictionary] audio … failed` and the button turns red; click to retry.
+
+---
+
 ## Documentation index
 
 | Doc | Purpose |

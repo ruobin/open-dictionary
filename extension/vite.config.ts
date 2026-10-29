@@ -37,6 +37,12 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       sourcemap: !isProd,
       target: 'es2020',
+      // The offscreen audio page is opened by the worker via
+      // chrome.offscreen.createDocument, so it isn't reachable from the
+      // manifest and must be listed as an extra entry.
+      rollupOptions: {
+        input: { offscreen: 'src/offscreen/offscreen.html' },
+      },
     },
   }
 })

@@ -50,6 +50,7 @@ export const entryStyles = `
     cursor: pointer;
   }
   .od-audio-btn:hover { background: #eee; }
+  .od-audio-btn--error { color: #b81b21; border-color: #e6b3b5; background: #fdf3f3; }
   .od-audio-btn svg { flex-shrink: 0; }
   .od-translation { font-style: italic; color: #b81b21; margin-bottom: 8px; }
   .od-meaning { margin-bottom: 8px; }

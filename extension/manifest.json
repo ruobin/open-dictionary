@@ -24,7 +24,7 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["contextMenus", "storage", "scripting", "activeTab", "identity"],
+  "permissions": ["contextMenus", "storage", "scripting", "activeTab", "identity", "offscreen"],
   "host_permissions": [
     "http://localhost:3001/*",
     "https://dict.ai-dictionary.org/*",

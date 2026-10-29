@@ -46,7 +46,7 @@ zip -r ../open-dictionary-extension-v$(node -p "require('../package.json').versi
 > Source maps are already excluded by the prod build, so there's nothing extra
 > to filter out of the zip.
 
-The resulting `open-dictionary-extension-v0.1.0.zip` is the file to upload to
+The resulting `open-dictionary-extension-v<version>.zip` is the file to upload to
 the Chrome Web Store dashboard.
 
 ---
@@ -59,6 +59,8 @@ Load unpacked) and confirm against the **production** API:
 - [ ] Popup manual search round-trips to `https://dict.ai-dictionary.org`.
 - [ ] Highlight a word on a real page → selection icon appears → result card renders.
 - [ ] Right-click → "Look up … in Open Dictionary" → result renders.
+- [ ] Pronunciation buttons play from the popup **and** from the in-page card,
+      including on a strict-CSP page (the card plays via the offscreen document).
 - [ ] Options page: language pickers + "Show icon on text selection" toggle persist.
 - [ ] (If auth is in scope) Sign-in flow completes via Auth0.
 
@@ -89,6 +91,14 @@ These cannot be done from code — track them here so nothing is missed.
       the existing host permission. The package version was bumped to `0.3.0` for it
       (`manifest.json`, `package.json`, `package-lock.json`); the Web Store rejects
       a package whose version isn't higher than the published one.
+
+- [ ] **New `offscreen` permission (pronunciation audio on strict-CSP pages).**
+      Paste its justification from `STORE_LISTING.md` into the dashboard.
+      Chrome disables an installed extension until the user accepts the new
+      permission when it updates, so call it out in the release notes. Also
+      verify (§3) that the audio buttons play from the in-page card on a page
+      with a strict CSP (e.g. a Greenhouse job posting) and from the popup.
+      Design/rationale: `README.md` §"Audio playback".
 
 ### 4.2 Auth0 — callback URLs
 - [ ] **Dev ID** (for local/unpacked testing): in the Auth0 dashboard
@@ -139,4 +149,4 @@ Review typically takes hours to a few days.
 - [ ] Note the **published extension ID** assigned by the Web Store.
 - [ ] If it differs from the pinned dev ID, add it to `ALLOWED_ORIGINS`
       (server) and Auth0 Allowed Callback URLs, then drop the dev ID.
-- [ ] Tag the release in git: `git tag -a v0.1.0 -m "Web Store v0.1.0" && git push --tags`.
+- [ ] Tag the release in git: `git tag -a vX.Y.Z -m "Web Store vX.Y.Z" && git push --tags`.

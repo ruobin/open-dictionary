@@ -47,6 +47,17 @@ export type ExtensionMessage =
   | { type: 'REMOVE_FAVORITE'; favorite: FavoriteKey }
   | { type: 'GET_HISTORY' }
   | { type: 'ADD_HISTORY'; entry: FavoriteKey }
+  /** In-page card -> worker: play a pronunciation clip (the page's CSP would block it locally). */
+  | { type: 'PLAY_AUDIO'; src: string }
+
+/** Worker -> offscreen document. `target` lets the offscreen listener ignore everything else. */
+export interface OffscreenPlayAudioMessage {
+  target: 'offscreen'
+  type: 'OFFSCREEN_PLAY_AUDIO'
+  src: string
+}
+
+export type AudioResponse = { ok: true } | { ok: false; error: 'audio_failed' }
 
 export type LookupResponse =
   | { ok: true; entries: DictionaryEntry[] }
@@ -91,3 +102,4 @@ export type ExtensionResponse =
   | AuthResponse
   | FavoritesResponse
   | HistoryResponse
+  | AudioResponse

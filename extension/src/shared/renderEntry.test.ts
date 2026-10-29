@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import { EntryView } from './renderEntry'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EntryView, isExtensionPage } from './renderEntry'
 import { LiveProvider, LiveText, StreamCaret } from './LiveText'
 import type { DictionaryEntry } from '../types'
 
@@ -58,5 +58,30 @@ describe('extension LiveText', () => {
       renderToStaticMarkup(createElement(LiveProvider, { value: { animate: true, streaming }, children: createElement(StreamCaret) }))
     expect(caret(true)).toContain('od-caret')
     expect(caret(false)).toBe('')
+  })
+})
+
+describe('EntryView audio buttons', () => {
+  const WITH_AUDIO: DictionaryEntry = {
+    ...ENTRY,
+    phonetics: [{ text: '/həˈloʊ/', audio: 'https://media.merriam-webster.com/audio/prons/en/us/mp3/h/hello001.mp3' }],
+  }
+  const html = (): string =>
+    renderToStaticMarkup(createElement(EntryView, { entry: WITH_AUDIO, webAppUrl: 'https://x/word/hello' }))
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('in the in-page card (host-page location) renders no <audio>: the worker plays the clip', () => {
+    vi.stubGlobal('location', { protocol: 'https:' })
+    expect(isExtensionPage()).toBe(false)
+    const out = html()
+    expect(out).toContain('od-audio-btn')
+    expect(out).not.toContain('<audio')
+  })
+
+  it('on an extension page (popup) renders a local <audio>', () => {
+    vi.stubGlobal('location', { protocol: 'chrome-extension:' })
+    expect(isExtensionPage()).toBe(true)
+    expect(html()).toContain('<audio')
   })
 })

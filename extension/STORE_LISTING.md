@@ -57,6 +57,15 @@ documented feature.
   sign in are unaffected — all dictionary lookup features work without
   signing in.
 
+- **`offscreen`** — Used only to play the pronunciation audio clip when the
+  user clicks the speaker button on a result card. The card is shown inside
+  the web page the user is reading, and many pages' Content-Security-Policy
+  blocks audio loaded from the page itself, so the background worker opens
+  an offscreen document (`reasons: ['AUDIO_PLAYBACK']`) and plays the clip
+  there. It runs only in response to the user's click, loads only the
+  `https` clip URL returned by the dictionary lookup, and reads or sends no
+  page content.
+
 - **Content script matching `<all_urls>`** — Needed to detect when a user
   highlights text on any page, so the lookup icon can appear next to the
   selection. The script only ever reads `window.getSelection()` — it does
@@ -89,6 +98,7 @@ documented feature.
 | `scripting` | Render the result card after a right-click lookup |
 | `activeTab` | Scope that render to the one tab the user clicked |
 | `identity` | Optional Auth0 sign-in (favorites/history sync) |
+| `offscreen` | Play the pronunciation clip outside the host page (page CSPs block it) |
 | `<all_urls>` content script | Detect text highlights to show the lookup icon |
 | `host: dict.ai-dictionary.org` | The lookup API |
 | `host: …auth0.com` | Auth0, only for optional sign-in |
