@@ -14,6 +14,37 @@ export function useAdminOutletContext(): AdminOutletContext {
   return useOutletContext<AdminOutletContext>()
 }
 
+/** Sidebar navigation, grouped by area. */
+const NAV_SECTIONS: { title: string; links: { to: string; label: string; end?: boolean }[] }[] = [
+  {
+    title: 'LLM',
+    links: [
+      { to: '/admin', label: 'Overview', end: true },
+      { to: '/admin/providers', label: 'Providers' },
+      { to: '/admin/latency', label: 'Latency lab' },
+      { to: '/admin/playground', label: 'Playground' },
+    ],
+  },
+  {
+    title: 'Content',
+    links: [
+      { to: '/admin/entries', label: 'Entries' },
+      { to: '/admin/reports', label: 'Reports' },
+    ],
+  },
+  {
+    title: 'Traffic',
+    links: [
+      { to: '/admin/activity', label: 'Activity' },
+      { to: '/admin/clients', label: 'Clients' },
+    ],
+  },
+  {
+    title: 'System',
+    links: [{ to: '/admin/audit', label: 'Audit log' }],
+  },
+]
+
 export default function AdminLayout() {
   const { user, getAccessToken } = useAdminAuth()
   const auth: AdminAuth = useMemo(() => ({ getAccessToken }), [getAccessToken])
@@ -71,25 +102,28 @@ export default function AdminLayout() {
           <span className="admin-topbar-sep">/</span>
           <StatusBadge status={status} />
         </div>
-        <nav className="admin-nav">
-          <NavLink to="/admin" end>Overview</NavLink>
-          <NavLink to="/admin/providers">Providers</NavLink>
-          <NavLink to="/admin/latency">Latency lab</NavLink>
-          <NavLink to="/admin/playground">Playground</NavLink>
-          <NavLink to="/admin/entries">Entries</NavLink>
-          <NavLink to="/admin/reports">Reports</NavLink>
-          <NavLink to="/admin/activity">Activity</NavLink>
-          <NavLink to="/admin/clients">Clients</NavLink>
-          <NavLink to="/admin/audit">Audit log</NavLink>
-        </nav>
         <div className="admin-topbar-user">{user?.email}</div>
       </header>
 
-      {loadError && <div className="state-msg state-error">{loadError}</div>}
+      <div className="admin-body">
+        <nav className="admin-nav" aria-label="Admin sections">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.title} className="admin-nav-section">
+              <div className="admin-nav-heading">{section.title}</div>
+              {section.links.map((link) => (
+                <NavLink key={link.to} to={link.to} end={link.end}>
+                  {link.label}
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </nav>
 
-      <main className="admin-main">
-        <Outlet context={outletContext} />
-      </main>
+        <main className="admin-main">
+          {loadError && <div className="state-msg state-error">{loadError}</div>}
+          <Outlet context={outletContext} />
+        </main>
+      </div>
     </div>
   )
 }
