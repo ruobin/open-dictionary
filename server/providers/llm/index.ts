@@ -3,6 +3,7 @@ import { createOpenRouterProvider, DEFAULT_OPENROUTER_MODEL } from './openrouter
 import { createDeepSeekProvider, DEFAULT_DEEPSEEK_MODEL } from './deepseek'
 import { createOpenAiCompatibleProvider } from './openaiCompat'
 import { createOpenAiResponsesProvider } from './responses'
+import { createAnthropicProvider } from './anthropic'
 import { LlmProviderError, type LlmModelOptions, type LlmProvider } from './types'
 
 export type {
@@ -42,7 +43,7 @@ export interface LlmRegistryResult {
 }
 
 const DEFAULT_VENDOR = 'deepseek'
-const SUPPORTED_VENDORS = 'deepseek, openrouter, glm, openai-compat, openai-responses, none'
+const SUPPORTED_VENDORS = 'deepseek, openrouter, glm, openai-compat, openai-responses, anthropic, none'
 
 function parsePositiveInt(value: string | undefined): number | undefined {
   if (!value) return undefined
@@ -157,7 +158,7 @@ export function createLlmProviderFromEnv(): LlmRegistryResult {
  * Admin portal (docs/design-admin-portal.md §4.1, §7.1).
  */
 export interface LlmProviderConfig {
-  /** "deepseek" | "openrouter" | "glm" | "openai-compat" | "openai-responses" */
+  /** "deepseek" | "openrouter" | "glm" | "openai-compat" | "openai-responses" | "anthropic" */
   vendor: string
   apiKey: string
   model: string
@@ -243,7 +244,22 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         stream: cfg.options?.stream,
       })
 
+    case 'anthropic':
+      // Native Anthropic Messages API (api.anthropic.com, or a gateway such as
+      // NewAPI that relays the Claude format). baseUrl defaults to Anthropic's.
+      return createAnthropicProvider({
+        vendor: 'anthropic',
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        baseUrl: cfg.baseUrl,
+        headers: cfg.headers,
+        timeoutMs: cfg.timeoutMs,
+        temperature: cfg.temperature,
+        requestBody: cfg.options?.requestBody,
+        stream: cfg.options?.stream,
+      })
+
     default:
-      throw new LlmProviderError('not_configured', `Unknown vendor "${cfg.vendor}" — supported: ${SUPPORTED_VENDORS}, openai-compat`)
+      throw new LlmProviderError('not_configured', `Unknown vendor "${cfg.vendor}" — supported: ${SUPPORTED_VENDORS}`)
   }
 }

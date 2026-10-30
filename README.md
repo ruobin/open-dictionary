@@ -189,7 +189,7 @@ Set `LLM_VENDOR=none` to run with only the dictionary fallback (no LLM calls).
 
 ## LLM providers
 
-All three vendors expose an OpenAI‑compatible Chat Completions API and share a single adapter (`server/providers/llm/openaiCompat.ts`); the OpenAI Responses protocol has its own adapter (`responses.ts`). Both run the same lookup flow (`translateFlow.ts`: parallel core + extras calls, upstream streaming, partial-answer snapshots). Swapping or adding a vendor requires a small wrapper (~30 lines) and a new registry case — no changes to the cache, route, or UI.
+All three vendors expose an OpenAI‑compatible Chat Completions API and share a single adapter (`server/providers/llm/openaiCompat.ts`); the OpenAI Responses protocol (`responses.ts`) and the Anthropic Messages API (`anthropic.ts`) have their own adapters. All of them run the same lookup flow (`translateFlow.ts`: parallel core + extras calls, upstream streaming, partial-answer snapshots). Swapping or adding a vendor requires a small wrapper (~30 lines) and a new registry case — no changes to the cache, route, or UI.
 
 Lookups are tuned for latency: hidden model reasoning is switched off per vendor (with an automatic step-down if a model rejects the setting), output is capped as a runaway guard, and every system prompt is constant so provider prefix caching applies. Per-model overrides (`options.requestBody`, `options.stream`) and the full design are in [`docs/llm-provider-operations.md`](docs/llm-provider-operations.md#lookup-latency-design).
 
@@ -198,6 +198,7 @@ Lookups are tuned for latency: hidden model reasoning is switched off per vendor
 - **GLM / Z.AI** — direct Z.AI API (general or coding‑plan endpoints). Default model `glm‑5.2`.
 - **Custom OpenAI-compatible** (`openai-compat`) — any endpoint speaking the Chat Completions protocol; admin-portal only (requires a `baseUrl`).
 - **Custom OpenAI Responses** (`openai-responses`) — any endpoint speaking the OpenAI Responses protocol, including NewAPI's `gpt-5.6-terra`; admin-portal only (requires a `baseUrl`).
+- **Anthropic** (`anthropic`) — the native Claude Messages API (`POST {baseUrl}/messages`, `x-api-key` auth). `baseUrl` defaults to `https://api.anthropic.com/v1`; point it at a gateway that relays the Claude format (e.g. NewAPI's `/v1`) to use Claude models through it. Admin-portal only. See [NewAPI and Claude](docs/llm-provider-operations.md#newapi-and-claude-anthropic-vendor).
 
 **Env vars are the boot-time baseline only.** Once a provider is configured
 and made active through the [admin portal](#admin-portal), that DB-stored
@@ -208,7 +209,7 @@ to the env baseline — see `server/llm/service.ts` and design doc §7.
 Set `LLM_DEBUG=true` to log every LLM request URL, the full prompt, response status/body, and elapsed time — useful for debugging timeouts or response quality.
 
 See [LLM provider operations](docs/llm-provider-operations.md) for timeout
-behavior, admin switching, NewAPI Responses support, OpenRouter routing, and
+behavior, admin switching, NewAPI Responses and Claude (Anthropic) support, OpenRouter routing, and
 production troubleshooting.
 
 ## Project layout

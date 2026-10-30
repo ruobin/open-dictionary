@@ -26,6 +26,7 @@ const VENDOR_OPTIONS: { value: string; label: string }[] = [
   { value: 'glm', label: 'GLM (Z.AI)' },
   { value: 'openai-compat', label: 'Custom (OpenAI-compatible)' },
   { value: 'openai-responses', label: 'Custom (OpenAI Responses API)' },
+  { value: 'anthropic', label: 'Anthropic (Claude Messages API)' },
 ]
 
 interface ModelRow {
@@ -276,7 +277,18 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
 
       <label className="admin-field">
           <span>Base URL {vendor === 'openai-compat' || vendor === 'openai-responses' ? '(required)' : '(optional override)'}</span>
-        <input className="admin-input" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
+        <input
+          className="admin-input"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder={vendor === 'anthropic' ? 'https://api.anthropic.com/v1 (default)' : 'https://api.example.com/v1'}
+        />
+        {vendor === 'anthropic' && (
+          <span className="admin-hint">
+            Calls <code>{'{base}'}/messages</code> with <code>x-api-key</code>. For a gateway that relays the Claude
+            format (e.g. NewAPI), use its <code>/v1</code> URL. Temperature must be 0–1.
+          </span>
+        )}
       </label>
 
       <label className="admin-field">

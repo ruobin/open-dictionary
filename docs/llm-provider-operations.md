@@ -188,6 +188,47 @@ Measured on the live DeepSeek + OpenRouter fusion config (2026-10-28), uncached,
 - A `bad_response` with two successful gateway calls indicates malformed or
   missing model output, not an API-key, networking, or endpoint-protocol error.
 
+## NewAPI And Claude (Anthropic Vendor)
+
+Added 2026-10-30. Vendor `anthropic` (`server/providers/llm/anthropic.ts`)
+speaks the native Claude Messages API. Use it for Claude models directly at
+Anthropic or through NewAPI's Claude-format relay.
+
+- **Base URL**: optional, defaults to `https://api.anthropic.com/v1`. For
+  NewAPI use `https://new-api.ai-dictionary.org/v1`. The adapter calls
+  `{baseUrl}/messages`.
+- **Auth**: `x-api-key: <key>` + `anthropic-version: 2023-06-01` (no
+  `Authorization: Bearer`). NewAPI accepts its normal token this way.
+- **Model IDs**: use the gateway's exact IDs. On NewAPI, `GET /v1/models`
+  lists them along with `supported_endpoint_types`; the model must include
+  `anthropic`. As of 2026-10-30: `claude-haiku-5-5`, `claude-sonnet-5-5`,
+  `claude-opus-5-5`, `claude-sonnet-4-6`, … The old IDs `haiku-5.5` /
+  `sonnet-5.5` no longer exist (`503 model_not_found: No available channel`).
+  That error comes from the gateway, not from the protocol.
+- **Request mapping**: system prompts go to the top-level `system` field;
+  `max_tokens` (required by the API) uses the core/extras caps
+  (`CORE_MAX_TOKENS` 4096, `EXTRAS_MAX_TOKENS` 2048). An admin `requestBody`
+  `max_tokens` overrides them. There is no JSON mode, so the prompts' "JSON
+  only" contract plus lenient parsing (`parse.ts`) is relied on, and the core
+  call retries once on `bad_response`.
+- **Temperature**: newer Claude models (e.g. `claude-*-5-5`) reject any
+  non-default temperature (`400 … does not support non-default temperature`).
+  Leave the model's temperature empty. If one is set, it is clamped to 0–1,
+  and on a 400 the ladder retries without it and remembers that for the
+  provider's lifetime.
+- **Reasoning**: extended thinking is off unless the model's `requestBody`
+  sets `thinking` (e.g. `{"thinking":{"type":"enabled","budget_tokens":1024}}`).
+  Setting it disables the temperature rung, as Anthropic requires.
+- **Streaming**: `content_block_delta`/`text_delta` events feed the partial
+  answers; usage comes from `message_start` / `message_delta`; an `error`
+  event becomes `api_error`. If a gateway rejects `stream: true` with 400,
+  streaming is disabled for that provider and plain requests are used.
+- Measured through NewAPI on 2026-10-30 (en→zh "serendipity", streaming):
+  `claude-haiku-5-5` first partial ≈ 1.4 s, done ≈ 5.0 s; `claude-sonnet-5-5`
+  first partial ≈ 1.3 s, done ≈ 3.7 s. Core + extras both succeeded.
+- **Env boot path**: `LLM_VENDOR=anthropic` is not supported. Configure it in
+  the admin portal (like `openai-compat` / `openai-responses`).
+
 ## OpenRouter Routing
 
 Model entries may carry OpenRouter routing preferences in this shape:

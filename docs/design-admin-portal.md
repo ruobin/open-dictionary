@@ -142,7 +142,7 @@ Key decisions, argued in the sections that follow:
 {
   "_id": ObjectId,
   "name": "DeepSeek (prod key)",          // unique, human label
-  "vendor": "deepseek",                    // "deepseek" | "openrouter" | "glm" | "openai-compat" | "openai-responses"
+  "vendor": "deepseek",                    // "deepseek" | "openrouter" | "glm" | "openai-compat" | "openai-responses" | "anthropic"
   "baseUrl": "https://api.deepseek.com",  // optional for known vendors (factory default), required for custom vendors
   "headers": {                             // optional vendor extras (OpenRouter attribution)
     "referer": "https://dict.ai-dictionary.org",
@@ -166,7 +166,7 @@ Key decisions, argued in the sections that follow:
 }
 ```
 
-- `vendor: "openai-compat"` is the generic Chat Completions escape hatch; `vendor: "openai-responses"` supports the OpenAI Responses protocol. Since every existing
+- `vendor: "openai-compat"` is the generic Chat Completions escape hatch; `vendor: "openai-responses"` supports the OpenAI Responses protocol; `vendor: "anthropic"` speaks the native Claude Messages API (`baseUrl` optional, defaults to `https://api.anthropic.com/v1`; added 2026-10-30, see `docs/llm-provider-operations.md`). Since every existing
   vendor already goes through `createOpenAiCompatibleProvider()`, any
   OpenAI-compatible endpoint (Together, Groq, a self-hosted vLLM…) can be added
   from the panel with `name + baseUrl + apiKey + model` and zero code changes.

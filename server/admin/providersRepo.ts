@@ -119,7 +119,7 @@ export function maskProvider(doc: LlmProviderDoc): LlmProviderView {
 
 // --- Validation (§4.1) — pure, unit-tested without touching Mongo ---
 
-const KNOWN_VENDORS = ['deepseek', 'openrouter', 'glm', 'openai-compat', 'openai-responses'] as const
+const KNOWN_VENDORS = ['deepseek', 'openrouter', 'glm', 'openai-compat', 'openai-responses', 'anthropic'] as const
 const MAX_NAME_LEN = 64
 const MAX_MODELS = 20
 const MAX_MODEL_ID_LEN = 128

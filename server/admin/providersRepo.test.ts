@@ -70,10 +70,16 @@ describe('admin/providersRepo: validateProviderFields', () => {
 
   it('rejects an unknown vendor', async () => {
     const { validateProviderFields } = await freshRepo()
-    const result = validateProviderFields({ name: 'X', vendor: 'anthropic', models: [{ id: 'x' }] }, true)
+    const result = validateProviderFields({ name: 'X', vendor: 'cohere', models: [{ id: 'x' }] }, true)
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('expected failure')
     expect(result.errors.some((e) => e.includes('vendor'))).toBe(true)
+  })
+
+  it('accepts the anthropic vendor without a baseUrl (defaults to api.anthropic.com)', async () => {
+    const { validateProviderFields } = await freshRepo()
+    const result = validateProviderFields({ name: 'Claude', vendor: 'anthropic', models: [{ id: 'claude-haiku-5-5' }] }, true)
+    expect(result.ok).toBe(true)
   })
 
   it('requires baseUrl for openai-compat', async () => {

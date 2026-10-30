@@ -55,6 +55,7 @@ export function createVariantLadder(variants: Array<Record<string, unknown>>): V
 export const RESERVED_REQUEST_KEYS = new Set([
   'model',
   'messages',
+  'system',
   'input',
   'stream',
   'tools',
