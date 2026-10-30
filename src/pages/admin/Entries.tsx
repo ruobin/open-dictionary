@@ -23,6 +23,7 @@ function toQuery(filters: EntryFiltersState): ListEntriesQuery {
     targetLang: filters.targetLang || undefined,
     tier: filters.tier ? (filters.tier as 'llm' | 'dict') : undefined,
     hasReports: filters.hasReportsOnly ? true : undefined,
+    ip: filters.ip.trim() || undefined,
     sort: filters.sort as ListEntriesQuery['sort'],
     limit: PAGE_SIZE,
   }
@@ -36,6 +37,7 @@ export default function Entries() {
     ...DEFAULT_ENTRY_FILTERS,
     word: searchParams.get('word') ?? '',
     hasReportsOnly: searchParams.get('hasReports') === 'true',
+    ip: searchParams.get('ip') ?? '',
     sort: searchParams.get('hasReports') === 'true' ? 'mostReported' : DEFAULT_ENTRY_FILTERS.sort,
   }))
   const [entries, setEntries] = useState<EntrySummaryView[]>([])
@@ -71,6 +73,13 @@ export default function Entries() {
   function handleSearch(): void {
     setSelected(new Set())
     load(filters)
+  }
+
+  function filterByIp(ip: string): void {
+    const next = { ...filters, ip }
+    setFilters(next)
+    setSelected(new Set())
+    load(next)
   }
 
   function loadMore(): void {
@@ -160,6 +169,7 @@ export default function Entries() {
               <th>Tier</th>
               <th>Version</th>
               <th>Cached</th>
+              <th>Added by</th>
               <th>Reports</th>
               <th />
             </tr>
@@ -172,6 +182,7 @@ export default function Entries() {
                 selected={selected.has(entry.id)}
                 onToggleSelected={() => toggleSelected(entry.id)}
                 onView={() => openDetail(entry.id)}
+                onFilterIp={filterByIp}
               />
             ))}
           </tbody>

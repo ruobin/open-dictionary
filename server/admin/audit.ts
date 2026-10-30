@@ -28,6 +28,8 @@ export type AdminAuditAction =
   | 'entry.delete'
   | 'entry.batch_delete'
   | 'report.dismiss'
+  | 'client.block'
+  | 'client.unblock'
 
 export interface AdminAuditTarget {
   providerId?: string

@@ -8,7 +8,7 @@ import type {
   LlmTranslationContent,
 } from './providers/llm'
 import type { DictionaryProvider } from './providers/dictionary'
-import type { TranslationCache } from './cache/translationCache'
+import type { EntryCreator, TranslationCache } from './cache/translationCache'
 import type { LlmService } from './llm/service'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
 import { LANGUAGES } from '../shared/languages'
@@ -20,7 +20,8 @@ import {
   recordLlmLatency,
   recordOutcome,
 } from './metrics'
-import { recordActivity } from './activityLog'
+import { buildEntryCreator, recordActivity } from './activityLog'
+import { clientIp, llmGuard, recordLlmSpend, refuseOverBudget } from './abuseGuard'
 
 /**
  * HTTP response shape. Mirrors the frontend `DictionaryEntry`
@@ -185,11 +186,13 @@ async function cacheSetSafe(
   cache: TranslationCache | null | undefined,
   req: TranslateRequest,
   entries: DictionaryEntry[],
-  source: string
+  source: string,
+  createdBy?: EntryCreator
 ): Promise<void> {
   if (!cache) return
   try {
-    await cache.set(req.text, req.sourceLang, req.targetLang, entries, source, CACHE_VERSION)
+    if (createdBy) await cache.set(req.text, req.sourceLang, req.targetLang, entries, source, CACHE_VERSION, createdBy)
+    else await cache.set(req.text, req.sourceLang, req.targetLang, entries, source, CACHE_VERSION)
   } catch (err) {
     console.warn('[cache] write failed (non-fatal):', err)
   }
@@ -278,6 +281,23 @@ function inFlightKey(req: TranslateRequest): string {
   return `${req.sourceLang}|${req.targetLang}|${req.text}`
 }
 
+/** True when this lookup can be answered without a new paid LLM call: it is
+ *  already in flight (a joiner pays nothing), or it is in the cache. Used only
+ *  for clients over their daily LLM budget, so the extra cache read is not on
+ *  the normal path. */
+export async function canServeWithoutLlm(
+  req: TranslateRequest,
+  cache: TranslationCache | null | undefined
+): Promise<boolean> {
+  if (inFlight.has(inFlightKey(req))) return true
+  if (!cache) return false
+  try {
+    return Boolean(await cache.get(req.text, req.sourceLang, req.targetLang, CACHE_VERSION))
+  } catch {
+    return false
+  }
+}
+
 function subscribe(state: InFlight, listener: PartialListener | undefined): void {
   if (!listener) return
   state.listeners.add(listener)
@@ -293,6 +313,9 @@ function subscribe(state: InFlight, listener: PartialListener | undefined): void
 export interface TranslateHooks {
   /** Called with progressively more complete entries while the LLM is still writing. */
   onPartial?: PartialListener
+  /** The client starting this lookup; stored as the cache doc's `createdBy`
+   *  if the lookup creates one. In-flight joiners don't overwrite it. */
+  client?: EntryCreator
 }
 
 /**
@@ -331,7 +354,7 @@ export function translate(
     }
   }
 
-  state.promise = doTranslate(req, llm, dictionary, cache, emit, background).then((outcome) => {
+  state.promise = doTranslate(req, llm, dictionary, cache, emit, background, hooks.client).then((outcome) => {
     state.settled = true
     recordOutcome(outcome.tier)
     return outcome
@@ -352,7 +375,8 @@ async function doTranslate(
   dictionary: DictionaryProvider,
   cache: TranslationCache | null | undefined,
   emit: PartialListener,
-  background: Array<Promise<unknown>>
+  background: Array<Promise<unknown>>,
+  client?: EntryCreator
 ): Promise<TranslateOutcome> {
   // Cache writes for one lookup are serialised so a late audio/fusion
   // write can never be overtaken by (and lost to) the first write.
@@ -401,12 +425,12 @@ async function doTranslate(
         // caching would freeze the missing sections in for the cache TTL.
         if (!result.incomplete) {
           const firstEntries = entries
-          enqueueWrite(() => cacheSetSafe(cache, req, firstEntries, 'llm'))
+          enqueueWrite(() => cacheSetSafe(cache, req, firstEntries, 'llm', client))
           if (lateAudio) {
             const pending = lateAudio
             enqueueWrite(async () => {
               const audio = await pending
-              if (audio.length > 0) await cacheSetSafe(cache, req, withAudio(firstEntries, audio), 'llm')
+              if (audio.length > 0) await cacheSetSafe(cache, req, withAudio(firstEntries, audio), 'llm', client)
             })
           }
         }
@@ -424,7 +448,7 @@ async function doTranslate(
                 if (!upgraded.some((e) => Boolean(e.typo?.suggestion))) {
                   upgraded = withAudio(upgraded, await audioPromise)
                 }
-                enqueueWrite(() => cacheSetSafe(cache, req, upgraded, 'llm'))
+                enqueueWrite(() => cacheSetSafe(cache, req, upgraded, 'llm', client))
                 await writeChain
               })
               .catch((err: unknown) => console.warn('[translate] fusion upgrade failed (non-fatal):', err))
@@ -454,7 +478,7 @@ async function doTranslate(
     throw err
   }
   const entries = raw as DictionaryEntry[]
-  enqueueWrite(() => cacheSetSafe(cache, req, entries, 'dict'))
+  enqueueWrite(() => cacheSetSafe(cache, req, entries, 'dict', client))
   return { entries, tier: 'dictionary' }
 }
 
@@ -513,6 +537,11 @@ function logAndRecord(
     userAgent: req.get('user-agent'),
     origin: req.get('origin'),
   })
+  if (outcome.tier === 'llm') recordLlmSpend(req)
+}
+
+function entryCreatorFromReq(req: Request): EntryCreator {
+  return buildEntryCreator({ ip: clientIp(req), userAgent: req.get('user-agent'), origin: req.get('origin') })
 }
 
 function writeSse(res: Response, event: string, data: unknown): void {
@@ -529,14 +558,16 @@ export function createTranslateRouter(
   router.get(
     '/translate/:text',
     translateLimiter,
+    llmGuard,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const lookup = parseLookup(req, res)
         if (!lookup) return
+        if (res.locals.llmBudgetExceeded && refuseOverBudget(res, !(await canServeWithoutLlm(lookup, cache)))) return
 
         const llm = (req.app.locals.llmService as LlmService).current()
         const started = Date.now()
-        const outcome = await translate(lookup, llm, dictionary, cache)
+        const outcome = await translate(lookup, llm, dictionary, cache, { client: entryCreatorFromReq(req) })
         const latencyMs = Date.now() - started
 
         if (outcome.entries.length === 0) {
@@ -569,9 +600,10 @@ export function createTranslateRouter(
    * with a 4xx status, before any stream starts. Shares translateLimiter and
    * the in-flight dedup with /translate.
    */
-  router.get('/translate-stream/:text', translateLimiter, async (req: Request, res: Response) => {
+  router.get('/translate-stream/:text', translateLimiter, llmGuard, async (req: Request, res: Response) => {
     const lookup = parseLookup(req, res)
     if (!lookup) return
+    if (res.locals.llmBudgetExceeded && refuseOverBudget(res, !(await canServeWithoutLlm(lookup, cache)))) return
 
     res.status(200)
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
@@ -593,6 +625,7 @@ export function createTranslateRouter(
     try {
       const llm = (req.app.locals.llmService as LlmService).current()
       const outcome = await translate(lookup, llm, dictionary, cache, {
+        client: entryCreatorFromReq(req),
         onPartial: (entries) => {
           firstPartialMs ??= Date.now() - started
           send('partial', entries)

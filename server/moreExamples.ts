@@ -6,6 +6,7 @@ import { normalizeText, type GradedExample } from './translate'
 import type { LlmService } from './llm/service'
 import { LANGUAGES } from '../shared/languages'
 import { MORE_EXAMPLES_RATE_LIMIT_RPM } from './config'
+import { llmGuard, recordLlmSpend, refuseOverBudget } from './abuseGuard'
 
 /**
  * "More examples like this" (to-do §3) — a follow-up LLM call scoped to one
@@ -80,6 +81,7 @@ export function createMoreExamplesRouter(): Router {
   router.get(
     '/more-examples',
     moreExamplesLimiter,
+    llmGuard,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const normalized = normalizeRequest(req.query as Record<string, unknown>)
@@ -98,6 +100,8 @@ export function createMoreExamplesRouter(): Router {
           }
         }
 
+        if (refuseOverBudget(res, true)) return
+
         const llm = (req.app.locals.llmService as LlmService).current()
         if (!llm) {
           res.status(503).json({ error: 'not_configured' })
@@ -112,6 +116,8 @@ export function createMoreExamplesRouter(): Router {
           topic: normalized.topic,
           cefr: normalized.cefr,
         })
+
+        recordLlmSpend(req)
 
         if (col) {
           await col

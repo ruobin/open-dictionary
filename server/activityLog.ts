@@ -1,5 +1,6 @@
 import { getMongoDb } from './db'
 import { parseUserAgent } from './util/userAgent'
+import type { EntryCreator } from './cache/translationCache'
 
 /**
  * User activity log (docs/design-user-activity-log.md) — one document per
@@ -24,6 +25,10 @@ export interface ActivityLogDoc {
   ip: string
   channel: ActivityChannel
   device: { type: string; browser?: string; os?: string }
+  /** Raw User-Agent (truncated), stored ONLY for self-identified bots/scripts
+   *  (see {@link uaForStorage}). The privacy policy promises never to keep a
+   *  person's raw browser identifier. */
+  ua?: string
 }
 
 function activityCol() {
@@ -50,6 +55,35 @@ export interface RecordActivityInput {
   origin?: string
 }
 
+const MAX_UA_LENGTH = 300
+
+/**
+ * Privacy gate for raw User-Agent strings (privacy.activityP1): a person's
+ * raw browser identifier is never stored, only the parsed device summary.
+ * Self-identified crawlers/scripts (GPTBot, curl, …) are not people, and
+ * their full UA is what an admin needs to identify and block them.
+ */
+export function uaForStorage(userAgent: string | undefined, deviceType: string): string | undefined {
+  if (!userAgent || deviceType !== 'bot') return undefined
+  return userAgent.slice(0, MAX_UA_LENGTH)
+}
+
+/** Same retention as the activity log (privacy.activityP1: at most 180 days). */
+export const CREATOR_IP_RETENTION_MS = 180 * 24 * 60 * 60 * 1000
+
+/** Client identity stored on a cache entry it causes to be created (admin Entries page "Added by"). */
+export function buildEntryCreator(input: { ip: string; userAgent?: string; origin?: string }, at: Date = new Date()): EntryCreator {
+  const device = parseUserAgent(input.userAgent)
+  const ua = uaForStorage(input.userAgent, device.type)
+  return {
+    ip: input.ip,
+    ...(ua ? { ua } : {}),
+    device,
+    channel: classifyChannel(input.origin),
+    at,
+  }
+}
+
 /** Fire-and-forget: never throws, never awaited by the caller. */
 export function recordActivity(input: RecordActivityInput): void {
   const col = activityCol()
@@ -66,6 +100,8 @@ export function recordActivity(input: RecordActivityInput): void {
     channel: classifyChannel(input.origin),
     device: parseUserAgent(input.userAgent),
   }
+  const ua = uaForStorage(input.userAgent, doc.device.type)
+  if (ua) doc.ua = ua
 
   col.insertOne(doc).catch((err) => {
     console.warn('[activity-log] write failed (non-fatal):', err)
@@ -299,5 +335,27 @@ export async function getActivitySummary(days: number): Promise<ActivitySummary>
     byDeviceType: facetToRecord(result?.byDeviceType ?? []),
     topWords,
     dailyCounts: zeroFillDailyCounts(dailyCounts, days),
+  }
+}
+
+/**
+ * Retention for cache-entry attribution: cache entries live up to 1 year, but
+ * the creator's IP (and a bot's raw UA) must not outlive the 180-day promise.
+ * Removes them from entries created more than 180 days ago and keeps the
+ * non-identifying parts (device type, channel, time). Never throws.
+ */
+export async function expireEntryCreatorIps(now: Date = new Date()): Promise<number> {
+  const col = getMongoDb()?.collection('translations')
+  if (!col) return 0
+  try {
+    const cutoff = new Date(now.getTime() - CREATOR_IP_RETENTION_MS)
+    const result = await col.updateMany(
+      { 'createdBy.at': { $lt: cutoff }, 'createdBy.ip': { $exists: true } },
+      { $unset: { 'createdBy.ip': '', 'createdBy.ua': '' } }
+    )
+    return result.modifiedCount
+  } catch (err) {
+    console.warn('[entry-creator] IP expiry failed (non-fatal):', err)
+    return 0
   }
 }

@@ -23,6 +23,7 @@ import { createWordOfDayRouter } from './wordOfDay'
 import { createMoreExamplesRouter } from './moreExamples'
 import { createBrowseRouter } from './browse'
 import { createAdminRouter } from './admin/router'
+import { blocklistGuard } from './abuseGuard'
 import { createRequireAdmin } from './admin/auth'
 import type { LlmService } from './llm/service'
 import type { DictionaryProvider } from './providers/dictionary'
@@ -128,6 +129,9 @@ export function createApp({ llmService, dictionaryProvider, translationCache }: 
   // that router — mounting it before these would 401 unauthenticated
   // requests to /suggest, /report, /word-of-day, and /more-examples before
   // they ever reach these handlers.
+  // Admin-managed IP/CIDR blocklist (server/abuseGuard.ts). It runs before
+  // every public router; /api/admin/* is exempt.
+  app.use('/api', blocklistGuard)
   app.use('/api', createTranslateRouter(dictionaryProvider, translationCache))
   app.use('/api', createSuggestRouter())
   app.use('/api', createReportRouter())

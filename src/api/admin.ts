@@ -460,6 +460,18 @@ export interface EntrySummaryView {
   fetchedAt: string
   reportCount: number
   headwordPreview?: string
+  createdBy?: EntryCreatorView
+}
+
+/** The client whose lookup generated a cache entry. `inferred` = reconstructed from the activity log. */
+export interface EntryCreatorView {
+  /** Absent once expired (180-day retention). */
+  ip?: string
+  ua?: string
+  device: { type: string; browser?: string; os?: string }
+  channel: string
+  at: string
+  inferred?: boolean
 }
 
 export interface EntryReportView {
@@ -478,6 +490,7 @@ export interface EntryDetailView {
   fetchedAt: string
   entries: DictionaryEntry[]
   reports: EntryReportView[]
+  createdBy?: EntryCreatorView
 }
 
 export interface ReportsSummaryEntry {
@@ -499,6 +512,7 @@ export interface ListEntriesQuery {
   targetLang?: string
   tier?: EntryTier
   hasReports?: boolean
+  ip?: string
   sort?: EntrySort
   limit?: number
   before?: string
@@ -538,6 +552,7 @@ export async function listEntries(auth: AdminAuth, query: ListEntriesQuery = {})
   if (query.targetLang) qs.set('targetLang', query.targetLang)
   if (query.tier) qs.set('tier', query.tier)
   if (query.hasReports !== undefined) qs.set('hasReports', String(query.hasReports))
+  if (query.ip) qs.set('ip', query.ip)
   if (query.sort) qs.set('sort', query.sort)
   if (query.limit) qs.set('limit', String(query.limit))
   if (query.before) qs.set('before', query.before)
@@ -662,4 +677,59 @@ export async function listActivity(auth: AdminAuth, query: ListActivityQuery = {
 export function getActivitySummary(auth: AdminAuth, days?: number): Promise<ActivitySummary> {
   const suffix = days ? `?days=${days}` : ''
   return adminFetch(auth, `/activity/summary${suffix}`)
+}
+
+// --- API clients & blocklist (server/abuseGuard.ts, server/admin/clients.ts) ---
+
+export type ClientFlag = 'bot-ua' | 'over-budget' | 'near-budget' | 'high-rate' | 'blocked'
+
+export interface ClientUsageView {
+  ip: string
+  total: number
+  llm: number
+  cache: number
+  clientCache: number
+  dictionary: number
+  distinctWords: number
+  firstSeen: string
+  lastSeen: string
+  perHour: number
+  deviceTypes: string[]
+  userAgent?: string
+  budgetUsed: number
+  blocked: boolean
+  flags: ClientFlag[]
+}
+
+export interface ClientUsageResult {
+  windowHours: number
+  budgetPerIp: number
+  clients: ClientUsageView[]
+}
+
+export interface BlockedClientView {
+  target: string
+  reason?: string
+  createdAt: string
+  createdBy: string
+  expiresAt?: string
+}
+
+export function getClientUsage(auth: AdminAuth, hours?: number): Promise<ClientUsageResult> {
+  return adminFetch(auth, `/clients${hours ? `?hours=${hours}` : ''}`)
+}
+
+export function listBlocklist(auth: AdminAuth): Promise<{ entries: BlockedClientView[] }> {
+  return adminFetch(auth, '/blocklist')
+}
+
+export function blockClient(
+  auth: AdminAuth,
+  body: { target: string; reason?: string; hours?: number }
+): Promise<BlockedClientView> {
+  return adminFetch(auth, '/blocklist', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function unblockClient(auth: AdminAuth, target: string): Promise<void> {
+  return adminFetch(auth, `/blocklist/${encodeURIComponent(target)}`, { method: 'DELETE' })
 }

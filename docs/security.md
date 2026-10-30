@@ -96,6 +96,12 @@ without deliberately configuring it.
   endpoints are hard-capped at 5/min (`LLM_RATE_LIMIT_MAX_RPM` in
   `server/config.ts`) so a single client can't drive unbounded token spend.
   `TRUST_PROXY=1` keys off the real client IP behind nginx.
+- **Daily LLM budget per IP** (`LLM_DAILY_BUDGET_PER_IP`, rolling 24 h), self-identified
+  bot refusal on LLM routes, and an admin IP/CIDR blocklist. Added 2026-10-30 after a
+  GPTBot crawl stayed under the 5/min limit but spent all day generating entries. Host
+  nginx 403s crawler UAs on `/api/` and 404s crawlers on non-prerendered `/word/*` pages.
+  See [design-llm-abuse-guard.md](./design-llm-abuse-guard.md). Every vhost proxying
+  `/api/` must set `X-Forwarded-For`, or per-IP controls collapse to one shared bucket.
 - `helmet` on every API response (CSP, no-sniff, frame guard, etc.).
 - `Strict-Transport-Security` with `includeSubDomains` at the edge.
 - MongoDB is internal to the docker network (not published to the host).

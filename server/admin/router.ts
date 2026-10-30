@@ -46,6 +46,16 @@ import {
   type LlmProviderConfig,
 } from '../providers/llm'
 import { getMetricsSnapshot } from '../metrics'
+import { getClientUsage, parseClientsHours } from './clients'
+import {
+  addBlocked,
+  BlocklistUnavailableError,
+  ClientBlocklist,
+  clientIp,
+  listBlocked,
+  parseBlockTarget,
+  removeBlocked,
+} from '../abuseGuard'
 import type { LlmService } from '../llm/service'
 
 /**
@@ -64,6 +74,15 @@ const TEST_TIMEOUT_MS = DEFAULT_TIMEOUT_MS
 /** Safe post-`requireAdmin` cast — the `adminOnly` middleware already confirmed a valid, allowlisted sub. */
 function actorSub(req: Request): string {
   return adminSubFromReq(req) as string
+}
+
+/** True when blocking `target` would cover `ip` (the requesting admin). */
+function isSelfBlock(target: string, ip: string): boolean {
+  const parsed = parseBlockTarget(target)
+  if (!parsed) return false
+  const probe = new ClientBlocklist()
+  probe.set([{ _id: parsed.target, createdAt: new Date(), createdBy: '' }])
+  return Boolean(probe.match(ip))
 }
 
 function reqIp(req: Request): string {
@@ -830,6 +849,94 @@ export function createAdminRouter(llmService: LlmService): Router {
       res.json(summary)
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  // --- API clients & blocklist (server/abuseGuard.ts) ---
+
+  router.get('/clients', async (req, res, next) => {
+    try {
+      res.json(await getClientUsage(parseClientsHours(req.query as Record<string, unknown>)))
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  router.get('/blocklist', async (_req, res, next) => {
+    try {
+      res.json({ entries: await listBlocked() })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  router.post('/blocklist', async (req, res, next) => {
+    try {
+      const body = (req.body ?? {}) as { target?: unknown; reason?: unknown; hours?: unknown }
+      const parsed = parseBlockTarget(body.target)
+      if (!parsed) {
+        res.status(400).json({ error: 'validation', errors: ['target must be an IP or CIDR (IPv4 /8 or narrower, IPv6 /16 or narrower)'] })
+        return
+      }
+      // Refuse to block the admin's own address. The admin API is exempt, but
+      // the public site would stop working for them.
+      if (isSelfBlock(parsed.target, clientIp(req))) {
+        res.status(400).json({ error: 'validation', errors: ['refusing to block your own IP'] })
+        return
+      }
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : undefined
+      let hours: number | undefined
+      if (body.hours !== undefined && body.hours !== null && body.hours !== '') {
+        const n = Number(body.hours)
+        if (!Number.isFinite(n) || n <= 0 || n > 24 * 365) {
+          res.status(400).json({ error: 'validation', errors: ['hours must be between 0 and 8760'] })
+          return
+        }
+        hours = n
+      }
+      const entry = await addBlocked({ target: parsed.target, reason, hours, createdBy: actorSub(req) })
+      await recordAudit({
+        actor: actorSub(req),
+        ip: reqIp(req),
+        action: 'client.block',
+        target: { name: parsed.target },
+        diff: { ...(reason ? { reason } : {}), ...(hours ? { hours } : {}) },
+      })
+      res.status(201).json(entry)
+    } catch (err) {
+      if (err instanceof BlocklistUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.delete('/blocklist/:target', async (req, res, next) => {
+    try {
+      const parsed = parseBlockTarget(req.params.target)
+      if (!parsed) {
+        res.status(400).json({ error: 'validation' })
+        return
+      }
+      const ok = await removeBlocked(parsed.target)
+      if (!ok) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+      await recordAudit({
+        actor: actorSub(req),
+        ip: reqIp(req),
+        action: 'client.unblock',
+        target: { name: parsed.target },
+      })
+      res.status(204).end()
+    } catch (err) {
+      if (err instanceof BlocklistUnavailableError) {
         res.status(503).json({ error: 'mongo_unavailable' })
         return
       }

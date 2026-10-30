@@ -294,3 +294,16 @@
   min-width: 2px;
 }
 .admin-daily-bar-count { text-align: right; color: var(--ink-soft); }
+
+/* API clients page (Clients.tsx) */
+.admin-client-flags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.admin-client-ua { max-width: 240px; font-size: 12px; }
+.admin-client-ua .admin-hint { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-blocklist-form { flex-wrap: wrap; margin-bottom: 12px; }
+
+/* Entries "Added by" (EntryRow / EntryDetailDrawer) */
+.admin-entry-creator { font-size: 12px; white-space: nowrap; }
+.admin-entry-creator .admin-hint { margin: 2px 0 0; }
+.admin-entry-creator .admin-status-badge { margin-left: 6px; }
+.admin-entry-ua { font-size: 12px; word-break: break-all; }
+.admin-link-button { background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-decoration: underline dotted; }

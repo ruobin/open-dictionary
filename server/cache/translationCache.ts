@@ -27,6 +27,23 @@ export interface TranslationDoc {
   version: string
   fetchedAt: Date
   schemaVersion: number
+  /** Client whose lookup created this doc. Written once on insert and never
+   *  overwritten by later rewrites (audio, fusion upgrade). Absent on docs
+   *  created before 2026-10-30 unless backfilled (then `inferred: true`). */
+  createdBy?: EntryCreator
+}
+
+/** Who caused a cache entry to be generated (i.e. paid for the LLM call). */
+export interface EntryCreator {
+  /** Removed after 180 days by `expireEntryCreatorIps()` (privacy retention). */
+  ip?: string
+  /** Raw User-Agent, bots only (see `uaForStorage()` in activityLog.ts). */
+  ua?: string
+  device: { type: string; browser?: string; os?: string }
+  channel: string
+  at: Date
+  /** True when reconstructed from `activity_log` by the backfill script, not recorded live. */
+  inferred?: boolean
 }
 
 export interface CachedTranslation {
@@ -42,7 +59,8 @@ export interface TranslationCache {
     targetLang: string,
     entries: DictionaryEntry[],
     source: string,
-    version: string
+    version: string,
+    createdBy?: EntryCreator
   ): Promise<void>
 }
 
@@ -57,12 +75,12 @@ export function createTranslationCache(collection: Collection<TranslationDoc>): 
       if (!doc) return null
       return { entries: doc.entries, source: doc.source }
     },
-    async set(word, sourceLang, targetLang, entries, source, version) {
+    async set(word, sourceLang, targetLang, entries, source, version, createdBy) {
       await collection.updateOne(
         { _id: docId(word, sourceLang, targetLang, version) },
         {
           $set: { word, sourceLang, targetLang, entries, source, version, fetchedAt: new Date() },
-          $setOnInsert: { schemaVersion: 1 },
+          $setOnInsert: { schemaVersion: 1, ...(createdBy ? { createdBy } : {}) },
         },
         { upsert: true }
       )

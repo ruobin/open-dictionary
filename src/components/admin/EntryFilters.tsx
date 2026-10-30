@@ -7,6 +7,7 @@ export interface EntryFiltersState {
   targetLang: string
   tier: string
   hasReportsOnly: boolean
+  ip: string
   sort: string
 }
 
@@ -16,6 +17,7 @@ export const DEFAULT_ENTRY_FILTERS: EntryFiltersState = {
   targetLang: '',
   tier: '',
   hasReportsOnly: false,
+  ip: '',
   sort: 'newest',
 }
 
@@ -42,6 +44,12 @@ export default function EntryFilters({ value, onChange, onSubmit }: EntryFilters
         placeholder="Word prefix…"
         value={value.word}
         onChange={(e) => set('word', e.target.value)}
+      />
+      <input
+        className="admin-input"
+        placeholder="Added by IP…"
+        value={value.ip}
+        onChange={(e) => set('ip', e.target.value)}
       />
       <select className="admin-input" value={value.sourceLang} onChange={(e) => set('sourceLang', e.target.value)}>
         <option value="">Any source lang</option>

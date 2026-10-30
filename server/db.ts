@@ -53,6 +53,11 @@ async function ensureIndexes(db: Db): Promise<void> {
     { sourceLang: 1, word: 1 },
     { name: 'translations_suggest' }
   )
+  // Admin Entries page "Added by" IP filter (createdBy is absent on old docs).
+  await translations.createIndex(
+    { 'createdBy.ip': 1, fetchedAt: -1 },
+    { sparse: true, name: 'translations_created_by_ip' }
+  )
 
   // Favorites: one per (userKey, word, sourceLang, targetLang); list by userKey.
   const favorites = db.collection('favorites')
@@ -129,4 +134,13 @@ async function ensureIndexes(db: Db): Promise<void> {
     { expireAfterSeconds: ACTIVITY_LOG_TTL_SECONDS, name: 'activity_log_ttl' }
   )
   await activityLog.createIndex({ word: 1 }, { name: 'activity_log_word' })
+  // Per-client usage view (admin Clients page / server/abuseGuard.ts).
+  await activityLog.createIndex({ ip: 1, ts: -1 }, { name: 'activity_log_ip_ts' })
+
+  // Admin-managed IP/CIDR blocklist; timed blocks are removed by TTL at expiresAt.
+  const blockedClients = db.collection('blocked_clients')
+  await blockedClients.createIndex(
+    { expiresAt: 1 },
+    { expireAfterSeconds: 0, name: 'blocked_clients_expiry' }
+  )
 }

@@ -54,6 +54,30 @@ export interface EntrySummaryView {
   fetchedAt: string
   reportCount: number
   headwordPreview?: string
+  createdBy?: EntryCreatorView
+}
+
+/** Who caused this entry to be generated; see `EntryCreator` in translationCache.ts. */
+export interface EntryCreatorView {
+  /** Absent once expired (180-day retention). */
+  ip?: string
+  ua?: string
+  device: { type: string; browser?: string; os?: string }
+  channel: string
+  at: string
+  inferred?: boolean
+}
+
+function toCreatorView(c: TranslationDoc['createdBy']): EntryCreatorView | undefined {
+  if (!c) return undefined
+  return {
+    ...(c.ip ? { ip: c.ip } : {}),
+    ...(c.ua ? { ua: c.ua } : {}),
+    device: c.device,
+    channel: c.channel,
+    at: c.at instanceof Date ? c.at.toISOString() : String(c.at),
+    ...(c.inferred ? { inferred: true } : {}),
+  }
 }
 
 export interface EntryReportView {
@@ -72,6 +96,7 @@ export interface EntryDetailView {
   fetchedAt: string
   entries: DictionaryEntry[]
   reports: EntryReportView[]
+  createdBy?: EntryCreatorView
 }
 
 export interface ReportsSummaryEntry {
@@ -97,6 +122,8 @@ export interface ListEntriesQuery {
   targetLang?: string
   tier?: 'llm' | 'dict'
   hasReports?: boolean
+  /** Exact match on `createdBy.ip`. */
+  ip?: string
   sort: EntriesSort
   limit: number
   before?: Date
@@ -145,7 +172,10 @@ export function parseEntriesQuery(query: Record<string, unknown>): ListEntriesQu
     if (!Number.isNaN(d.getTime())) before = d
   }
 
-  return { word, sourceLang, targetLang, tier, hasReports, sort, limit, before }
+  const ipRaw = typeof query.ip === 'string' ? query.ip.trim() : ''
+  const ip = ipRaw && ipRaw.length <= 64 && /^[0-9a-fA-F:.]+$/.test(ipRaw) ? ipRaw : undefined
+
+  return { word, sourceLang, targetLang, tier, hasReports, ip, sort, limit, before }
 }
 
 /** Validates an opaque `translations._id` (sha1 hex) path param. */
@@ -185,7 +215,8 @@ export function groupReportsByEntry(reports: Pick<ReportDoc, 'word' | 'sourceLan
 
 /** Merges `translations` docs with a report-count map into list-row views, per §4.2/§5. */
 export function toEntrySummaries(
-  docs: Pick<TranslationDoc, '_id' | 'word' | 'sourceLang' | 'targetLang' | 'source' | 'version' | 'fetchedAt' | 'entries'>[],
+  docs: (Pick<TranslationDoc, '_id' | 'word' | 'sourceLang' | 'targetLang' | 'source' | 'version' | 'fetchedAt' | 'entries'> &
+    Partial<Pick<TranslationDoc, 'createdBy'>>)[],
   reportCounts: Map<string, ReportGroup>
 ): EntrySummaryView[] {
   return docs.map((doc) => {
@@ -200,6 +231,7 @@ export function toEntrySummaries(
       fetchedAt: doc.fetchedAt.toISOString(),
       reportCount: group?.count ?? 0,
       headwordPreview: doc.entries?.[0]?.meanings?.[0]?.definitions?.[0]?.definition,
+      ...(doc.createdBy ? { createdBy: toCreatorView(doc.createdBy) } : {}),
     }
   })
 }
@@ -228,6 +260,7 @@ function buildTranslationsFilter(query: ListEntriesQuery): Record<string, unknow
   if (query.sourceLang) filter.sourceLang = query.sourceLang
   if (query.targetLang) filter.targetLang = query.targetLang
   if (query.tier) filter.source = query.tier
+  if (query.ip) filter['createdBy.ip'] = query.ip
   return filter
 }
 
@@ -267,6 +300,7 @@ export async function listEntries(query: ListEntriesQuery): Promise<ListEntriesR
     const or = groups.map((g) => ({ word: g.word, sourceLang: g.sourceLang, targetLang: g.targetLang }))
     const filter: Record<string, unknown> = { $or: or }
     if (query.tier) filter.source = query.tier
+    if (query.ip) filter['createdBy.ip'] = query.ip
     if (query.before) filter.fetchedAt = { $lt: query.before }
 
     const docs = await translationsCol(db).find(filter).toArray()
@@ -323,6 +357,7 @@ export async function getEntry(id: string): Promise<EntryDetailView | null> {
     version: doc.version,
     fetchedAt: doc.fetchedAt.toISOString(),
     entries: doc.entries,
+    ...(doc.createdBy ? { createdBy: toCreatorView(doc.createdBy) } : {}),
     reports: reports.map((r) => ({
       id: String(r._id),
       reason: r.reason,

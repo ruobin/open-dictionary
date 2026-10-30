@@ -12,6 +12,7 @@ import { createDictionaryProvider } from './providers/dictionary'
 import { createTranslationCache, type TranslationDoc } from './cache/translationCache'
 import { createApp } from './app'
 import { logMetricsSummary } from './metrics'
+import { expireEntryCreatorIps } from './activityLog'
 
 const dictionaryProvider = createDictionaryProvider({
   baseUrl: DICTIONARY_API_BASE || undefined,
@@ -55,6 +56,18 @@ const server = app.listen(PORT, () => {
 // logs, queryable via whatever log aggregation is already in place; no new
 // metrics infra. unref() so this timer never keeps the process alive.
 setInterval(logMetricsSummary, 5 * 60 * 1000).unref()
+
+// Privacy retention: strip creator IPs from cache entries older than 180 days
+// (server/activityLog.ts expireEntryCreatorIps). Runs at boot, then daily.
+if (translationCache) {
+  const runExpiry = (): void => {
+    void expireEntryCreatorIps().then((n) => {
+      if (n > 0) console.log(`[entry-creator] expired IP on ${n} cache entr${n === 1 ? 'y' : 'ies'}`)
+    })
+  }
+  runExpiry()
+  setInterval(runExpiry, 24 * 60 * 60 * 1000).unref()
+}
 
 function shutdown(signal: string): void {
   console.log(`Received ${signal}, shutting down`)

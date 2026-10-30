@@ -21,6 +21,7 @@ Read these for the *"why"* behind a subsystem.
 | [`design-admin-portal.md`](./design-admin-portal.md) | Admin portal design — runtime provider CRUD, latency lab, playground, audit log. See **§18** for as-built delta. |
 | [`design-admin-cache-entries.md`](./design-admin-cache-entries.md) | Admin **Entries / Reports** pages — browse/search/delete cached translations + triage user reports. See **§17** for as-built delta. |
 | [`design-user-activity-log.md`](./design-user-activity-log.md) | Admin **Activity** page — per-lookup activity log (word, IP, device) + aggregated summary for user-behavior/growth analytics. |
+| [`design-llm-abuse-guard.md`](./design-llm-abuse-guard.md) | LLM token-spend protection (per-IP daily LLM budget, bot refusal, IP/CIDR blocklist), admin **Clients** page, **Added by** attribution on Entries, privacy constraints. Includes the 2026-10-30 GPTBot incident write-up. |
 | [`design-geo-load-balancing.md`](./design-geo-load-balancing.md) | Multi-region (SG / US / EU) deployment design — route each user to the nearest VPS. **Draft · not yet implemented.** |
 | [`ui-i18n-and-themes.md`](./ui-i18n-and-themes.md) | Dark/light theming + UI i18n design. |
 

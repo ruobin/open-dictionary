@@ -51,6 +51,27 @@ export default function EntryDetailDrawer({ auth, entry, onClose, onDeleted, rea
         <dd>{new Date(entry.fetchedAt).toLocaleString()}</dd>
         <dt>Id</dt>
         <dd>{entry.id}</dd>
+        <dt>Added by</dt>
+        <dd>
+          {entry.createdBy ? (
+            <>
+              {entry.createdBy.ip ? <code>{entry.createdBy.ip}</code> : <span className="admin-hint">IP expired (180-day retention)</span>} · {entry.createdBy.device.type}
+              {entry.createdBy.device.browser ? ` · ${entry.createdBy.device.browser}` : ''}
+              {entry.createdBy.device.os ? ` · ${entry.createdBy.device.os}` : ''} · {entry.createdBy.channel}
+              {entry.createdBy.inferred ? ' (inferred from activity log)' : ''}
+            </>
+          ) : (
+            <span className="admin-hint">unknown (created before client tracking)</span>
+          )}
+        </dd>
+        {entry.createdBy && (
+          <>
+            <dt>Added at</dt>
+            <dd>{new Date(entry.createdBy.at).toLocaleString()}</dd>
+            <dt>User agent</dt>
+            <dd className="admin-entry-ua">{entry.createdBy.ua ?? <span className="admin-hint">not stored (only kept for bots)</span>}</dd>
+          </>
+        )}
       </dl>
 
       {error && <div className="state-msg state-error">{error}</div>}

@@ -53,6 +53,17 @@ export const ACTIVITY_PING_RATE_LIMIT_RPM = parseInt(process.env.ACTIVITY_PING_R
 export const WORD_OF_DAY_RATE_LIMIT_RPM = parseInt(process.env.WORD_OF_DAY_RATE_LIMIT_RPM ?? '30', 10) || 30
 export const MORE_EXAMPLES_RATE_LIMIT_RPM = Math.min(parseInt(process.env.MORE_EXAMPLES_RATE_LIMIT_RPM ?? '5', 10) || 5, LLM_RATE_LIMIT_MAX_RPM)
 
+// --- LLM abuse guard (server/abuseGuard.ts) ---
+// The per-minute limits above don't bound daily spend: a crawler pacing itself
+// under 5 rpm still triggers ~7k paid LLM calls/day. Rolling 24h cap on paid
+// (cache-miss) LLM calls per IP; over it, cache hits are still served and
+// misses get 429. 0 disables the cap.
+const parsedLlmBudget = parseInt(process.env.LLM_DAILY_BUDGET_PER_IP ?? '300', 10)
+export const LLM_DAILY_BUDGET_PER_IP = Number.isFinite(parsedLlmBudget) && parsedLlmBudget >= 0 ? parsedLlmBudget : 300
+// Refuse self-identified crawlers/scripts (GPTBot, curl, python-requests, …)
+// on LLM-backed routes. Set to 0/false to allow them.
+export const LLM_BLOCK_BOTS = !/^(0|false|no|off)$/i.test(process.env.LLM_BLOCK_BOTS ?? '1')
+
 // --- Admin portal (docs/design-admin-portal.md) ---
 // AES-256-GCM master key (base64, 32 bytes) for encrypting LLM provider API
 // keys at rest. Admin writes that touch a key return 503 when unset; nothing

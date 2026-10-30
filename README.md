@@ -146,6 +146,8 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `LLM_DEBUG` | no | off | `true` prints full prompts and response bodies |
 | `PUBLIC_BASE_URL` | no | `http://localhost:5173` | Site origin — used only by `scripts/prerender.ts` for canonical URLs/sitemap |
 | `*_RATE_LIMIT_RPM` | no | see [Operational notes](#operational-notes) | Per-route per-IP rate limits: `TRANSLATE`, `MORE_EXAMPLES`, `FAVORITES`, `USERDATA`, `SUGGEST`, `WORD_OF_DAY`, `REPORT`, `ADMIN` prefixes |
+| `LLM_DAILY_BUDGET_PER_IP` | no | `300` | Paid (cache-miss) LLM calls per IP per rolling 24 h; over it, only cached words are served (429 on misses). `0` disables. See [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md) |
+| `LLM_BLOCK_BOTS` | no | `1` | Refuse self-identified crawlers/scripts (GPTBot, curl, python-requests, …) on LLM routes with 403. `0` to allow (e.g. manual curl testing) |
 
 #### Admin portal (`/admin` — see [docs/design-admin-portal.md](docs/design-admin-portal.md))
 
@@ -225,7 +227,7 @@ src/
   i18n/           I18nContext, translations (UI copy, multiple languages)
   pages/          Home, WordPage, HistoryPage, AboutPage, PrivacyPage
                   admin/          Overview, Providers, Latency, Playground,
-                                  Entries, Reports, Audit (lazy-loaded, §Admin portal)
+                                  Entries, Reports, Activity, Clients, Audit (lazy-loaded, §Admin portal)
   styles/         app.css, admin.css
   vite‑env.d.ts   Vite / import.meta.env typings
 public/           favicon.svg, favicon.png, favicon.jpeg, robots.txt
@@ -233,6 +235,7 @@ scripts/
   llm‑ping.ts     Smoke‑test the active LLM provider
   eval‑harness.ts LLM output-quality eval harness (npm run eval)
   prerender.ts    Static prerender of word pages for SEO (npm run prerender)
+  backfill‑entry‑creators.ts  One-time: fill cache entries' "Added by" from the activity log
   mongodb‑backup.sh          Weekly mongodump; keeps only the latest backup
   open‑dictionary‑backup.cron  Cron schedule (Monday 02:00 UTC = APAC Mon morning)
 shared/
@@ -254,6 +257,8 @@ server/
   report.ts       /api/report — user quality reports
   favorites.ts    /api/favorites (Mongo‑backed)
   metrics.ts      In-memory lookup/latency/error counters (admin Overview)
+  abuseGuard.ts   LLM abuse guard: IP blocklist, bot refusal, per-IP daily LLM budget
+  activityLog.ts  Per-lookup activity log, entry-creator attribution + privacy retention
   db.ts           Mongo connection + index provisioning
   cache/
     translationCache.ts   Cache for lookup results (TTL 1 year)
@@ -280,13 +285,15 @@ server/
     regex.ts        escapeRegex (safe user input → Mongo regex)
   admin/
     router.ts        /api/admin/* routes (status, providers, test, benchmark,
-                     playground, active, entries, reports, audit)
+                     playground, active, entries, reports, activity,
+                     clients, blocklist, audit)
     auth.ts           requireAdmin middleware (allowlist-only)
     crypto.ts         AES-256-GCM encrypt/decrypt/redact helpers
     providersRepo.ts  llm_providers/llm_settings access + validation
     benchmark.ts      On-demand latency benchmark job runner
     playground.ts     Ad-hoc direct LLM lookups (cache bypassed)
     entries.ts        Cache entries + reports browse/delete
+    clients.ts        Per-client usage aggregation (admin Clients page)
     audit.ts          Append-only admin_audit log
 docs/
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
@@ -294,6 +301,7 @@ docs/
   design‑admin‑cache‑entries.md Admin Entries/Reports pages design + §17 as-built delta
   design‑geo‑load‑balancing.md  Multi-region deployment design (not yet implemented)
   ui‑i18n‑and‑themes.md         Dark/light theming + UI i18n design
+  design‑llm‑abuse‑guard.md     LLM spend protection, Clients page, entry attribution (2026-10-30 incident)
   security.md                   Threat model, findings & mitigations, hardening
 docker‑compose.yml      Production stack (mongo + api) — see Production deployment
 Dockerfile              Production API image
@@ -325,6 +333,7 @@ Non-npm operational scripts (not run via npm):
 | File | What it does |
 |---|---|
 | `scripts/mongodb-backup.sh` | Dump the DB to a gzip archive; keep only the latest backup |
+| `scripts/backfill-entry-creators.ts` | One-time, idempotent: fill `translations.createdBy` ("Added by") from `activity_log`. Dry run by default, `--apply` to write; run in the API container (see [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md) §4) |
 | `scripts/open-dictionary-backup.cron` | Cron schedule — Monday 02:00 UTC (APAC Monday morning) |
 
 ## Production deployment
@@ -424,6 +433,8 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 ### Operational notes
 
 - Per‑IP rate limits (configurable via env): `/api/translate` and `/api/translate-stream` 5 req/min (shared), `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/admin/*` 30 req/min. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
+- **Daily LLM budget, bot refusal and IP blocklist** (added after a GPTBot crawl drove up token spend on 2026-10-29/30): per-minute limits alone don't cap daily spend, so each IP also gets a rolling-24 h budget of paid LLM calls (`LLM_DAILY_BUDGET_PER_IP`), self-identified bots get 403 on LLM routes, and admins can block IPs/CIDRs from **Admin → Clients**. Host nginx also 403s known crawlers on `/api/` and 404s crawlers on `/word/*` pages that have no prerendered file. Details: [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md).
+- Every nginx vhost that proxies `/api/` **must** send `X-Forwarded-For`; otherwise the API (with `TRUST_PROXY=1`) sees all of that domain's visitors as the docker gateway IP, sharing one rate limit and budget.
 - Request body limit is 64 KB.
 - Stack traces are only served in `NODE_ENV=development`.
 - Lookup results are cached in MongoDB for **1 year** (TTL index); subsequent lookups of the same (word, sourceLang, targetLang) skip the LLM entirely.
@@ -480,8 +491,14 @@ Implementation notes** for exactly what shipped vs. what's deferred) and
     bypassed) against up to 6 provider/model targets at once; rendered preview
     + raw-JSON view per target, for judging output quality before switching
   - **Entries** — browse/search cached translations (filter by word prefix,
-    language pair, tier, has-reports), inspect the stored entry, delete
-    (single or batch, capped at 20) so the next lookup regenerates fresh
+    language pair, tier, has-reports, **added-by IP**), inspect the stored entry, delete
+    (single or batch, capped at 20) so the next lookup regenerates fresh.
+    **Added by** shows the client (IP, device, bot UA) whose lookup generated
+    the entry; older entries are backfilled from the activity log ("inferred")
+  - **Activity** — per-lookup log + summary (word, IP, device)
+  - **Clients** — top API clients by paid LLM calls, with flags (bot UA,
+    over/near daily LLM budget, high rate), Block/Unblock, and a manual
+    IP/CIDR blocklist (see [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md))
   - **Reports** — triage user quality reports: dismiss a report, delete the
     reported entry, or jump to it in Entries
   - **Audit** — append-only change log, 365-day retention
