@@ -74,6 +74,14 @@ export interface DictionaryEntry {
   wordFamily?: string[]
   /** Present only when the LLM judged the input to be an obvious typo. */
   typo?: TypoSuggestion
+  /** Which LLM model(s) wrote this entry; absent for dictionary entries and older cache entries. */
+  generatedBy?: GeneratedBy
+}
+
+export interface GeneratedBy {
+  models: string[]
+  /** A fusion merge of several models' answers. */
+  merged?: boolean
 }
 
 export type LookupErrorCode = 'not_found' | 'timeout' | 'network' | 'api_error'

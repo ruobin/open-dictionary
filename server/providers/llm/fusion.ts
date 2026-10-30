@@ -85,9 +85,11 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
     const pb = secondary.translate(req)
 
     let first: LlmTranslationResult
+    let firstFrom: LlmProvider
     try {
       const winner = await firstFulfilled([pa, pb])
       first = winner.value
+      firstFrom = winner.index === 0 ? primary : secondary
       if (winner.index === 1 && primaryStreamed) {
         // The user is already reading the primary's answer as it is written.
         // Ending on the secondary's different text would visibly rewrite it, so
@@ -101,7 +103,10 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
           }),
         ])
         if (timer) clearTimeout(timer)
-        if (primaryResult) first = primaryResult
+        if (primaryResult) {
+          first = primaryResult
+          firstFrom = primary
+        }
       }
     } catch (err) {
       // Both failed — re-throw so the translate tier falls back to the dictionary.
@@ -131,7 +136,12 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
       return null
     })
 
-    return { ...first, upgrade }
+    return {
+      ...first,
+      generatedBy: first.generatedBy ?? [firstFrom.id],
+      upgrade,
+      upgradeGeneratedBy: [primary.id, secondary.id],
+    }
   }
 
   // moreExamples is a secondary follow-up feature; fusing it adds little value

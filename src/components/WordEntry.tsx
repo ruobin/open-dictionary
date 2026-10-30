@@ -142,6 +142,14 @@ export default function WordEntry({
         </footer>
       )}
 
+      {entry.generatedBy && entry.generatedBy.models.length > 0 && (
+        <footer className="word-footer word-generated-by">
+          {t(entry.generatedBy.merged ? 'word.generatedByMerged' : 'word.generatedBy', {
+            models: entry.generatedBy.models.join(' + '),
+          })}
+        </footer>
+      )}
+
       <div className="word-report-row">
         <ReportButton word={entry.word} sourceLang={sourceLang} targetLang={targetLang} />
       </div>
