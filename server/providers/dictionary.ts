@@ -43,12 +43,24 @@ interface Meaning {
   partOfSpeech: string
   definitions: Definition[]
 }
+/** Online dictionary an entry came from (shown as attribution in the UI). */
+export interface DictionarySource {
+  name: string
+  url: string
+}
 interface DictionaryEntry {
   word: string
   phonetic?: string
   phonetics: Phonetic[]
   meanings: Meaning[]
   sourceUrls?: string[]
+  /** Set on every dictionary-tier entry; absent on LLM entries and old cache docs. */
+  dictionarySource?: DictionarySource
+}
+
+export const MERRIAM_WEBSTER_SOURCE: DictionarySource = {
+  name: 'Merriam-Webster',
+  url: 'https://www.merriam-webster.com/',
 }
 
 const DEFAULT_BASE_URL = 'https://www.dictionaryapi.com/api/v3'
@@ -90,15 +102,25 @@ interface MwMeta {
   id?: string
   src?: string
 }
-interface MwEntry {
+export interface MwEntry {
   meta?: MwMeta
   hwi?: MwHwi
   fl?: string
   shortdef?: string[]
 }
 
-function parseEntry(raw: MwEntry): DictionaryEntry | null {
-  const word = raw.meta?.id
+/** Strips MW's syllable markers (`*`) and a terminal homograph suffix (`:1`). */
+export function cleanMwHeadword(value: string | undefined): string {
+  return (value ?? '').replace(/\*/g, '').replace(/:\d+$/, '').trim()
+}
+
+/** Prefers `hwi.hw` ("hel*lo"), falling back to `meta.id` ("hello:1"). */
+export function mwHeadword(raw: MwEntry): string {
+  return cleanMwHeadword(raw.hwi?.hw) || cleanMwHeadword(raw.meta?.id)
+}
+
+export function parseEntry(raw: MwEntry): DictionaryEntry | null {
+  const word = mwHeadword(raw)
   if (!word) return null
 
   const phonetics: Phonetic[] = []
@@ -122,6 +144,7 @@ function parseEntry(raw: MwEntry): DictionaryEntry | null {
     word,
     phonetics,
     meanings: shortdef.length > 0 ? [meaning] : [],
+    dictionarySource: { ...MERRIAM_WEBSTER_SOURCE },
   }
   return entry
 }

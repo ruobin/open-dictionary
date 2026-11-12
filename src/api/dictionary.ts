@@ -77,6 +77,13 @@ export interface DictionaryEntry {
   typo?: TypoSuggestion
   /** Which LLM model(s) wrote this entry; absent for dictionary entries and older cache entries. */
   generatedBy?: GeneratedBy
+  /** Online dictionary the entry came from (dictionary fallback tier); absent on LLM entries and older cache entries. */
+  dictionarySource?: DictionarySource
+}
+
+export interface DictionarySource {
+  name: string
+  url: string
 }
 
 export interface GeneratedBy {
@@ -123,12 +130,37 @@ interface CacheEnvelope {
   fetchedAt: number
 }
 
+/** MW homograph suffix (`cull:1`) or syllable marker (`hel*lo`) left in a headword. */
+const MW_HEADWORD_ARTIFACT = /\*|:\d+$/
+
+/**
+ * True for a dictionary-fallback (Merriam-Webster) entry cached before entries
+ * carried `dictionarySource` (2026-11-12): no source metadata, no LLM
+ * `generatedBy`, and the bare shape the dictionary tier produces (no translation,
+ * no LLM extras, no CEFR/grammar/register/examples on any sense), or a headword
+ * with MW artifacts. Such entries are dropped so they refetch with attribution
+ * and a clean headword. LLM entries (even pre-`generatedBy` ones) are kept.
+ */
+export function isStaleDictionaryEntry(entry: DictionaryEntry): boolean {
+  if (!entry || typeof entry !== 'object') return false
+  if (entry.dictionarySource || entry.generatedBy) return false
+  if (typeof entry.word === 'string' && MW_HEADWORD_ARTIFACT.test(entry.word)) return true
+  if (entry.translation || entry.typo) return false
+  if (entry.commonMistakes?.length || entry.collocations?.length || entry.wordFamily?.length) return false
+  const senses = (entry.meanings ?? []).flatMap((m) => m.definitions ?? [])
+  return !senses.some((d) => d.cefr || d.grammar || d.register || d.examples?.length)
+}
+
 function readCache(storageKey: string): DictionaryEntry[] | null {
   try {
     const raw = localStorage.getItem(CACHE_PREFIX + storageKey)
     if (!raw) return null
     const entry = JSON.parse(raw) as CacheEnvelope
     if (Date.now() - entry.fetchedAt > TTL_MS) {
+      localStorage.removeItem(CACHE_PREFIX + storageKey)
+      return null
+    }
+    if (!Array.isArray(entry.data) || entry.data.some(isStaleDictionaryEntry)) {
       localStorage.removeItem(CACHE_PREFIX + storageKey)
       return null
     }

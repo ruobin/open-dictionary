@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { lookupWordStream, LookupError, type DictionaryEntry } from './dictionary'
+import { isStaleDictionaryEntry, lookupWordStream, LookupError, type DictionaryEntry } from './dictionary'
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -199,5 +199,50 @@ describe('lookups and usage quotas (docs/design-llm-usage-quotas.md)', () => {
     await lookupWordStream('hello')
     expect(listener).toHaveBeenCalledTimes(2)
     off()
+  })
+})
+
+describe('stale dictionary-tier cache entries', () => {
+  const MW = { name: 'Merriam-Webster', url: 'https://www.merriam-webster.com/' }
+  const OLD_DICT: DictionaryEntry = {
+    word: 'cull:1',
+    phonetics: [],
+    meanings: [{ partOfSpeech: 'verb', definitions: [{ definition: 'to select' }] }],
+  }
+  const LLM_OLD: DictionaryEntry = {
+    word: 'hello',
+    translation: 'hola',
+    phonetics: [],
+    meanings: [{ partOfSpeech: 'interjection', definitions: [{ definition: 'A greeting', cefr: 'A1' }] }],
+  }
+
+  it('flags old dictionary entries without metadata, including MW headword artifacts', () => {
+    expect(isStaleDictionaryEntry(OLD_DICT)).toBe(true)
+    expect(isStaleDictionaryEntry({ ...OLD_DICT, word: 'cull' })).toBe(true)
+    expect(isStaleDictionaryEntry({ ...LLM_OLD, translation: undefined, word: 'hel*lo' })).toBe(true)
+  })
+
+  it('keeps entries with dictionarySource, LLM entries, and generatedBy entries', () => {
+    expect(isStaleDictionaryEntry({ ...OLD_DICT, word: 'cull', dictionarySource: MW })).toBe(false)
+    expect(isStaleDictionaryEntry(LLM_OLD)).toBe(false)
+    expect(isStaleDictionaryEntry({ ...OLD_DICT, word: 'cull', generatedBy: { models: ['m'] } })).toBe(false)
+    expect(isStaleDictionaryEntry({ ...OLD_DICT, word: 'cull', collocations: ['x'] })).toBe(false)
+  })
+
+  it('drops a stale cached entry and refetches; other cached words stay put', async () => {
+    store.set('dict:v1:en:en:cull', JSON.stringify({ data: [OLD_DICT], fetchedAt: Date.now() }))
+    store.set('dict:v1:en:es:hello', JSON.stringify({ data: [LLM_OLD], fetchedAt: Date.now() }))
+    const fresh: DictionaryEntry[] = [{ ...OLD_DICT, word: 'cull', dictionarySource: MW }]
+    const fetchMock = vi.fn<FetchFn>(async () => sse([['done', fresh]]))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('navigator', {})
+
+    expect(await lookupWordStream('cull', 'en', 'en')).toEqual(fresh)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/translate-stream/cull')
+    expect(JSON.parse(store.get('dict:v1:en:en:cull')!).data).toEqual(fresh)
+
+    fetchMock.mockClear()
+    expect(await lookupWordStream('hello', 'en', 'es')).toEqual([LLM_OLD])
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes('activity-ping'))).toBe(true)
   })
 })

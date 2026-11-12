@@ -7,7 +7,7 @@ import type {
   LlmSense,
   LlmTranslationContent,
 } from './providers/llm'
-import type { DictionaryProvider } from './providers/dictionary'
+import type { DictionaryProvider, DictionarySource } from './providers/dictionary'
 import type { EntryCreator, TranslationCache } from './cache/translationCache'
 import type { LlmService } from './llm/service'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
@@ -86,6 +86,10 @@ export interface DictionaryEntry {
    *  Absent on dictionary-tier entries and on cache entries created before
    *  2026-10-30. */
   generatedBy?: GeneratedBy
+  /** Online dictionary this entry came from (dictionary tier only; English-only
+   *  content, no translation). Absent on LLM entries and on dictionary cache
+   *  entries created before 2026-11-12. */
+  dictionarySource?: DictionarySource
 }
 
 export interface GeneratedBy {
