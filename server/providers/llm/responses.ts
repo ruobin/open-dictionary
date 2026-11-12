@@ -5,10 +5,14 @@ import {
 } from './prompts'
 import { parseContent, parseMoreExamplesContent } from './parse'
 import { runTranslate, type Transport } from './translateFlow'
+import { trackCall } from './usage'
 import { readSse } from '../../../shared/sse'
 import { buildLadder, RESPONSES_RUNGS } from './requestVariants'
 import {
   LlmProviderError,
+  type LlmCallKind,
+  type LlmCallOptions,
+  type UsageSink,
   type LlmFuseRequest,
   type LlmFuseResult,
   type LlmMoreExamplesRequest,
@@ -239,11 +243,21 @@ export function createOpenAiResponsesProvider(options: OpenAiResponsesOptions): 
   async function callAndParse<T>(
     messages: Message[],
     label: string,
-    parse: (content: string) => T
+    parse: (content: string) => T,
+    usage: { sink: UsageSink | undefined; kind: LlmCallKind }
   ): Promise<{ content: T; meta?: LlmUsageMeta }> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      // Every attempt is reported, including one discarded as unparseable.
+      const tracked = trackCall(usage.sink, id, usage.kind, messages)
       try {
-        const result = await send(messages, { label })
+        let result: Awaited<ReturnType<typeof send>>
+        try {
+          result = await send(messages, { label })
+        } catch (err) {
+          tracked.fail(err)
+          throw err
+        }
+        tracked.ok(result.content, result.meta)
         const content = parse(result.content)
         return result.meta ? { content, meta: result.meta } : { content }
       } catch (err) {
@@ -266,19 +280,23 @@ export function createOpenAiResponsesProvider(options: OpenAiResponsesOptions): 
     translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult> {
       // NewAPI can return malformed JSON even after a successful request, so
       // the core call is retried once on bad_response (docs/llm-provider-operations.md).
-      return runTranslate(vendor, transport, req, opts, { retryBadResponse: true })
+      return runTranslate(vendor, transport, req, opts, { retryBadResponse: true, providerId: id })
     },
-    async moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
-      const { content: examples } = await callAndParse(
+    async moreExamples(req: LlmMoreExamplesRequest, opts?: LlmCallOptions): Promise<LlmMoreExamplesResult> {
+      const { content: examples, meta } = await callAndParse(
         buildMoreExamplesMessages(req),
         `moreExamples word="${req.word.slice(0, 60)}"`,
-        (content) => parseMoreExamplesContent(vendor, content)
+        (content) => parseMoreExamplesContent(vendor, content),
+        { sink: opts?.usage, kind: 'examples' }
       )
-      return { examples }
+      return meta ? { examples, meta } : { examples }
     },
-    async fuse(req: LlmFuseRequest): Promise<LlmFuseResult> {
-      const { content: parsed, meta } = await callAndParse(buildFuseMessages(req), `fuse text="${req.request.text.slice(0, 60)}"`, (content) =>
-        parseContent(vendor, content)
+    async fuse(req: LlmFuseRequest, opts?: LlmCallOptions): Promise<LlmFuseResult> {
+      const { content: parsed, meta } = await callAndParse(
+        buildFuseMessages(req),
+        `fuse text="${req.request.text.slice(0, 60)}"`,
+        (content) => parseContent(vendor, content),
+        { sink: opts?.usage, kind: 'fuse' }
       )
       if (req.request.sourceLang.toLowerCase() === req.request.targetLang.toLowerCase()) delete parsed.translation
       return meta ? { content: parsed, meta } : { content: parsed }

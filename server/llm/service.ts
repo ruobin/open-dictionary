@@ -45,11 +45,29 @@ export interface LlmServiceState {
   /** llm_settings.configVersion as of the last successful read — debugging aid for multi-instance drift (§7.3). */
   configVersion?: number
   appliedAt: string
+  /** The model that answers everyone except the owner (docs/design-llm-usage-quotas.md §5.4). */
+  metered?: LlmMeteredState
+}
+
+export type LlmMeteredMode = 'primary' | 'same_as_owner' | 'provider'
+
+export interface LlmMeteredState {
+  mode: LlmMeteredMode
+  providerId?: string
+  providerName?: string
+  model?: string
+  /** Provider id actually serving the metered route. */
+  id?: string
+  /** Set when the configured metered provider couldn't be used and the primary stands in. */
+  warning?: string
 }
 
 export interface LlmService {
   /** The provider to use right now, or null if the LLM tier is off/broken. */
   current(): LlmProvider | null
+  /** The provider for metered generations (everyone but the owner and unlimited accounts).
+   *  Never a fusion pair unless the admin chose "same as owner"; null only when the LLM tier is off. */
+  currentMetered(): LlmProvider | null
   /** Diagnostic snapshot for the admin Overview page (GET /api/admin/llm/status). */
   status(): LlmServiceState
   /** Re-reads llm_settings and (re)builds the active provider. Never throws. */
@@ -73,6 +91,10 @@ const defaultDeps: LlmServiceDeps = { getSettings, getProviderDoc }
 
 export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceDeps = defaultDeps): LlmService {
   let activeProvider: LlmProvider | null = envResult.provider
+  /** The active primary on its own, before any fusion wrapping. */
+  let primaryProvider: LlmProvider | null = envResult.provider
+  let meteredProvider: LlmProvider | null = envResult.provider
+  let meteredState: LlmMeteredState = { mode: 'primary', ...(envResult.provider ? { id: envResult.provider.id } : {}) }
   let currentState: LlmServiceState = {
     source: 'env',
     status: envResult.status,
@@ -83,6 +105,7 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
 
   function applyEnv(status: LlmServiceStatus, message: string, configVersion?: number): void {
     activeProvider = envResult.provider
+    primaryProvider = envResult.provider
     currentState = {
       source: 'env',
       status,
@@ -95,6 +118,7 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
 
   function disableViaDb(message: string, configVersion: number): void {
     activeProvider = null
+    primaryProvider = null
     currentState = {
       source: 'db',
       status: 'disabled',
@@ -114,7 +138,62 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
       }
       return
     }
+    await reloadActive(settings)
+    await reloadMetered(settings)
+  }
 
+  /**
+   * Builds the metered provider (docs/design-llm-usage-quotas.md §5.4). It is
+   * never the fusion pair unless the admin chose "same as owner": a custom
+   * provider that can't be used falls back to the primary on its own.
+   */
+  async function reloadMetered(settings: LlmSettingsDoc | null): Promise<void> {
+    const cfg = settings?.metered ?? null
+    const mode: LlmMeteredMode = cfg?.mode ?? 'primary'
+    if (!activeProvider) {
+      meteredProvider = null
+      meteredState = { mode }
+      return
+    }
+    if (mode === 'same_as_owner') {
+      meteredProvider = activeProvider
+      meteredState = { mode, id: activeProvider.id }
+      return
+    }
+    let warning: string | undefined
+    if (cfg?.mode === 'provider') {
+      const id = cfg.providerId ? cfg.providerId.toHexString() : null
+      try {
+        const doc = id ? await deps.getProviderDoc(id) : null
+        if (doc && doc.enabled) {
+          const pcfg = providerToLlmConfig(doc, cfg.modelId ?? undefined)
+          const provider = buildLlmProvider(pcfg)
+          meteredProvider = provider
+          meteredState = {
+            mode,
+            providerId: doc._id.toHexString(),
+            providerName: doc.name,
+            model: pcfg.model,
+            id: provider.id,
+          }
+          return
+        }
+        warning = doc ? `Provider "${doc.name}" is disabled` : 'The chosen provider no longer exists'
+      } catch (err) {
+        const detail = err instanceof LlmProviderError ? err.message : String(err)
+        warning = `The chosen provider failed to initialize (${detail})`
+      }
+      console.error(`[llm-service] metered provider unusable: ${warning} — the primary answers metered generations alone`)
+    }
+    meteredProvider = primaryProvider ?? activeProvider
+    meteredState = {
+      mode,
+      ...(meteredProvider ? { id: meteredProvider.id } : {}),
+      ...(warning ? { warning: `${warning}. Everyone else uses the primary model alone.` } : {}),
+    }
+  }
+
+  async function reloadActive(settings: LlmSettingsDoc | null): Promise<void> {
     if (!settings) {
       // No settings doc has ever been written — the env baseline stands.
       applyEnv(envResult.status, envResult.message)
@@ -168,6 +247,7 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
     try {
       const cfg = providerToLlmConfig(doc, settings.activeModelId ?? undefined)
       const provider = buildLlmProvider(cfg)
+      primaryProvider = provider
 
       // --- fusion: optional second provider merged into the result. ---
       const secondaryState = await buildSecondary(settings, provider)
@@ -256,7 +336,8 @@ export function createLlmService(envResult: LlmRegistryResult, deps: LlmServiceD
 
   return {
     current: () => activeProvider,
-    status: () => currentState,
+    currentMetered: () => meteredProvider,
+    status: () => ({ ...currentState, metered: meteredState }),
     reloadFromDb,
     buildEphemeral: (cfg: LlmProviderConfig) => buildLlmProvider(cfg),
   }

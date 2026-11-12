@@ -91,6 +91,15 @@ These cannot be done from code — track them here so nothing is missed.
       the existing host permission. The package version was bumped to `0.3.0` for it
       (`manifest.json`, `package.json`, `package-lock.json`); the Web Store rejects
       a package whose version isn't higher than the published one.
+- [ ] **0.4.0, usage quotas (docs/design-llm-usage-quotas.md).** Signed-in lookups
+      now send the Auth0 access token (the same one favorites already use), and a
+      `429 quota_exceeded` shows its reason with an "Open on the website" link; the
+      popup shows today's free new words (`GET /api/usage/me`). No new permission
+      and no new host: `dict.ai-dictionary.org` is already covered. Re-check the
+      data-use answers in the dashboard against `STORE_LISTING.md` ("What data is
+      sent"). After it's published, update your own browsers and sign in before
+      the server's metered routing is on, or your extension lookups count as a
+      stranger's.
 
 - [ ] **New `offscreen` permission (pronunciation audio on strict-CSP pages).**
       Paste its justification from `STORE_LISTING.md` into the dashboard.

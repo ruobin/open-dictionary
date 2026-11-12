@@ -147,7 +147,11 @@ most 180 days. Therefore:
 
 - Rotating residential IPs with browser UAs evade per-IP budgets. The next
   step would be a **global** daily LLM budget (circuit breaker) with an admin
-  alert.
+  alert. **Done** in [`design-llm-usage-quotas.md`](./design-llm-usage-quotas.md):
+  a paced free budget in dollars ($1/day, $5/month) covers all free usage,
+  however many IPs it comes from, with alerts at 50/80/100 %. `LlmBudget`
+  stays as a per-IP backstop (the owner is exempt) until those counters have
+  proven themselves.
 - Budget counters are lost on restart (at most one extra day of budget per IP).
 - The nginx crawler list is UA-based. Crawlers that fake a browser UA are
   handled only by the app budget and the blocklist.

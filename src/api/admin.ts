@@ -48,6 +48,19 @@ export interface LlmServiceState {
   secondaryModel?: string
   configVersion?: number
   appliedAt: string
+  /** The model that answers everyone except the owner. */
+  metered?: LlmMeteredState
+}
+
+export type LlmMeteredMode = 'primary' | 'same_as_owner' | 'provider'
+
+export interface LlmMeteredState {
+  mode: LlmMeteredMode
+  providerId?: string
+  providerName?: string
+  model?: string
+  id?: string
+  warning?: string
 }
 
 export interface AdminLlmStatus extends LlmServiceState {
@@ -88,6 +101,12 @@ export interface ModelOptions {
   stream?: boolean
 }
 
+/** USD per million tokens (docs/design-llm-usage-quotas.md §5.5). */
+export interface ModelPricing {
+  inputUsdPerMTok: number
+  outputUsdPerMTok: number
+}
+
 export interface ProviderModel {
   id: string
   label?: string
@@ -95,6 +114,7 @@ export interface ProviderModel {
   timeoutMs?: number
   temperature?: number
   options?: ModelOptions
+  pricing?: ModelPricing
 }
 
 export interface ProviderView {
@@ -119,6 +139,7 @@ export interface ProviderModelInput {
   timeoutMs?: number
   temperature?: number
   options?: ModelOptions
+  pricing?: ModelPricing | null
 }
 
 export interface ProviderFormInput {
@@ -513,6 +534,8 @@ export interface ListEntriesQuery {
   tier?: EntryTier
   hasReports?: boolean
   ip?: string
+  /** LLM entries not produced by a fusion merge (Regenerate candidates). */
+  singleModel?: boolean
   sort?: EntrySort
   limit?: number
   before?: string
@@ -552,6 +575,7 @@ export async function listEntries(auth: AdminAuth, query: ListEntriesQuery = {})
   if (query.targetLang) qs.set('targetLang', query.targetLang)
   if (query.tier) qs.set('tier', query.tier)
   if (query.hasReports !== undefined) qs.set('hasReports', String(query.hasReports))
+  if (query.singleModel) qs.set('singleModel', 'true')
   if (query.ip) qs.set('ip', query.ip)
   if (query.sort) qs.set('sort', query.sort)
   if (query.limit) qs.set('limit', String(query.limit))
@@ -732,4 +756,148 @@ export function blockClient(
 
 export function unblockClient(auth: AdminAuth, target: string): Promise<void> {
   return adminFetch(auth, `/blocklist/${encodeURIComponent(target)}`, { method: 'DELETE' })
+}
+
+
+// --- LLM usage tiers & quotas (docs/design-llm-usage-quotas.md §5.7) ---
+
+export type UsageEnforcement = 'off' | 'shadow' | 'on'
+export type UsageSource = 'owner' | 'exempt' | 'free' | 'unmetered' | 'shadow'
+export type QuotaReasonCode =
+  | 'anon_daily'
+  | 'unverified_daily'
+  | 'anon_share'
+  | 'user_daily'
+  | 'free_tier_budget'
+  | 'free_tier_paused'
+
+export interface UsageSettings {
+  enforcement: UsageEnforcement
+  freeTierEnabled: boolean
+  pacing: 'even' | 'off'
+  anonDailyPerIp: number
+  anonShare: number
+  userDailyFree: number
+  freeTierDailyUsd: number
+  freeTierMonthlyUsd: number
+  alertWebhookUrl: string | null
+}
+
+export interface UsageSettingsView {
+  effective: UsageSettings
+  defaults: UsageSettings
+  overridden: (keyof UsageSettings)[]
+  updatedAt?: string
+  updatedBy?: string
+}
+
+/** A key set to null goes back to the env default. */
+export type UsageSettingsPatch = { [K in keyof UsageSettings]?: UsageSettings[K] | null }
+
+export interface UsageBudgetView {
+  day: string
+  month: string
+  freeTierEnabled: boolean
+  pacing: 'even' | 'off'
+  dailyCapUsd: number
+  monthCapUsd: number
+  todayBudgetUsd: number
+  todaySpentUsd: number
+  anonShareUsd: number
+  anonSpentUsd: number
+  monthSpentUsd: number
+  monthRemainingBeforeTodayUsd: number
+  daysLeft: number
+}
+
+export interface UsageSourceTotals {
+  generations: number
+  charged: number
+  costUsd: number
+}
+
+export interface UsageSummary {
+  generatedAt: string
+  days: number
+  enforcement: UsageEnforcement
+  budget: UsageBudgetView
+  metered?: LlmMeteredState
+  totals: { generations: number; costUsd: number; ownerCostUsd: number; othersCostUsd: number }
+  daily: Array<{ day: string; bySource: Partial<Record<UsageSource, UsageSourceTotals>> }>
+  costPerGeneration: Array<{
+    routeProviderId: string
+    action: 'lookup' | 'examples'
+    route: 'full' | 'metered'
+    count: number
+    avgUsd: number
+    p50Usd: number
+    p95Usd: number
+  }>
+  denials: Array<{ reason: QuotaReasonCode; count: number; today: number }>
+  topAccounts: Array<{ sub: string; generations: number; costUsd: number; lastAt: string }>
+  topIps: Array<{ ip: string; generations: number; costUsd: number; lastAt: string }>
+  unpriced: Array<{ providerId: string; calls: number }>
+  estimatedShare: number
+}
+
+export interface AccountView {
+  sub: string
+  plan: 'free' | 'unlimited'
+  status: 'active' | 'blocked'
+  dailyAllowance: number | null
+  emailVerified: boolean | null
+  note: string | null
+  createdAt: string
+  lastSeenAt: string | null
+  usedToday: number
+  generations7d: number
+  costUsd7d: number
+  email?: string | null
+}
+
+export interface AccountPatch {
+  plan?: 'free' | 'unlimited'
+  status?: 'active' | 'blocked'
+  dailyAllowance?: number | null
+  note?: string | null
+}
+
+export function getUsageSummary(auth: AdminAuth, days = 30): Promise<UsageSummary> {
+  return adminFetch<UsageSummary>(auth, `/usage/summary?days=${days}`)
+}
+
+export function getUsageSettings(auth: AdminAuth): Promise<UsageSettingsView> {
+  return adminFetch<UsageSettingsView>(auth, '/usage/settings')
+}
+
+export function updateUsageSettings(auth: AdminAuth, patch: UsageSettingsPatch): Promise<UsageSettingsView> {
+  return adminFetch<UsageSettingsView>(auth, '/usage/settings', { method: 'PUT', body: JSON.stringify(patch) })
+}
+
+export async function listAccounts(auth: AdminAuth, q?: string): Promise<AccountView[]> {
+  const qs = new URLSearchParams()
+  if (q && q.trim()) qs.set('q', q.trim())
+  const res = await adminFetch<{ accounts: AccountView[] }>(auth, `/accounts${qs.toString() ? `?${qs.toString()}` : ''}`)
+  return res.accounts
+}
+
+export async function getAccount(auth: AdminAuth, sub: string): Promise<AccountView> {
+  const res = await adminFetch<{ account: AccountView }>(auth, `/accounts/${encodeURIComponent(sub)}`)
+  return res.account
+}
+
+export async function updateAccount(auth: AdminAuth, sub: string, patch: AccountPatch): Promise<AccountView> {
+  const res = await adminFetch<{ account: AccountView }>(auth, `/accounts/${encodeURIComponent(sub)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+  return res.account
+}
+
+export type SetMeteredRequest =
+  | { mode: 'primary' | 'same_as_owner' }
+  | { mode: 'provider'; providerId: string; modelId?: string }
+
+export function setMeteredModel(auth: AdminAuth, body: SetMeteredRequest): Promise<SetActiveResponse> {
+  return adminFetch<SetActiveResponse>(auth, '/llm/metered', { method: 'PUT', body: JSON.stringify(body) })
 }

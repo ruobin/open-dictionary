@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { shouldAnimate } from '../../shared/liveReveal'
 import { lookupWordStream, type DictionaryEntry, type LookupError } from '../api/dictionary'
+import { useAccessToken } from './useAccessToken'
 
 export type LookupStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -27,6 +28,10 @@ export function useDictionary(
     error: null,
     animate: false,
   })
+  // Signed-in lookups carry the access token so new words are metered per
+  // account (docs/design-llm-usage-quotas.md §5.2). The first lookup waits
+  // for Auth0 to finish loading, or it would go out anonymous.
+  const { getToken, authReady } = useAccessToken()
 
   useEffect(() => {
     if (!word) {
@@ -37,11 +42,14 @@ export function useDictionary(
     let cancelled = false
     const controller = new AbortController()
     setState({ status: 'loading', data: null, error: null, animate: false })
+    if (!authReady) return
+
     const startedAt = Date.now()
     let sawPartial = false
 
     lookupWordStream(word, sourceLang, targetLang, {
       signal: controller.signal,
+      getToken,
       onPartial: (partial) => {
         if (cancelled) return
         sawPartial = true
@@ -63,7 +71,7 @@ export function useDictionary(
       cancelled = true
       controller.abort()
     }
-  }, [word, sourceLang, targetLang])
+  }, [word, sourceLang, targetLang, authReady, getToken])
 
   return state
 }

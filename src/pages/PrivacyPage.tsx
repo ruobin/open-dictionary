@@ -37,6 +37,7 @@ export default function PrivacyPage() {
         <h2>{t('privacy.dataTitle')}</h2>
         <p>{t('privacy.dataP1')}</p>
         <p>{t('privacy.activityP1')}</p>
+        <p>{t('privacy.usageP1')}</p>
       </section>
     </div>
   )

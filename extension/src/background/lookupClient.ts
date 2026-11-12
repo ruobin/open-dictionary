@@ -1,7 +1,8 @@
 import type { DictionaryEntry } from '../types'
-import type { ExtensionErrorCode, LookupResponse } from '../shared/messages'
+import type { ExtensionErrorCode, LookupResponse, QuotaDetail, UsageInfo, UsageResponse } from '../shared/messages'
 import { API_BASE } from '../shared/config'
 import { readSse } from '../../../shared/sse'
+import { getAccessToken } from './authClient'
 
 /**
  * Response cache + fetch client for `/api/translate/:text`. Mirrors
@@ -68,6 +69,66 @@ function pingClientCacheHit(word: string, sourceLang: string, targetLang: string
   }
 }
 
+/** How long a lookup waits for a (possibly silently refreshed) access token before going out anonymous. */
+const TOKEN_WAIT_MS = 3_000
+
+/**
+ * `Authorization` for signed-in users, so the server meters new words per
+ * account and recognises the owner (docs/design-llm-usage-quotas.md §5.2).
+ * Signed out, or a token that takes too long: anonymous.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const token = await Promise.race([
+      getAccessToken().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), TOKEN_WAIT_MS)
+      }),
+    ])
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Reads a `quota_exceeded` body (a 429, or a stream `error` event). */
+export function parseQuota(body: unknown): QuotaDetail | null {
+  if (!body || typeof body !== 'object') return null
+  const b = body as Record<string, unknown>
+  if (b.error !== 'quota_exceeded' || typeof b.reason !== 'string') return null
+  return {
+    reason: b.reason,
+    limit: typeof b.limit === 'number' ? b.limit : 0,
+    used: typeof b.used === 'number' ? b.used : 0,
+    resetAt: typeof b.resetAt === 'string' ? b.resetAt : '',
+    actions: Array.isArray(b.actions) ? b.actions.filter((a): a is string => typeof a === 'string') : [],
+  }
+}
+
+/** A 429 is a quota refusal (with a reason) or the per-minute rate limit. */
+async function refusal(res: Response): Promise<LookupResponse> {
+  let body: unknown = null
+  try {
+    body = await res.json()
+  } catch {
+    // not JSON (or no body): the per-minute limiter
+  }
+  const quota = parseQuota(body)
+  return quota ? { ok: false, error: 'quota_exceeded', quota } : { ok: false, error: 'rate_limited' }
+}
+
+/** The caller's free new words today (`GET /api/usage/me`). Never throws. */
+export async function fetchUsage(): Promise<UsageResponse> {
+  try {
+    const res = await fetch(`${API_BASE}/api/usage/me`, { headers: await authHeaders() })
+    if (!res.ok) return { ok: false, error: 'api_error' }
+    return { ok: true, usage: (await res.json()) as UsageInfo }
+  } catch {
+    return { ok: false, error: 'network' }
+  }
+}
+
 /** Looks up `rawWord` via the read-through cache → `/api/translate/:text`.
  *  Never throws — always resolves to a `LookupResponse` discriminated union
  *  so callers (the background message router) can forward it as-is. */
@@ -89,6 +150,8 @@ export async function lookupWord(
     return { ok: true, entries: cached }
   }
 
+  // Before the timeout starts: a slow silent sign-in must not eat into it.
+  const headers = await authHeaders()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
@@ -98,6 +161,7 @@ export async function lookupWord(
   try {
     res = await fetch(`${API_BASE}/api/translate/${encodeURIComponent(word)}?${qs.toString()}`, {
       signal: controller.signal,
+      headers,
     })
   } catch (err) {
     clearTimeout(timer)
@@ -107,7 +171,7 @@ export async function lookupWord(
   clearTimeout(timer)
 
   if (res.status === 404) return { ok: false, error: 'not_found' }
-  if (res.status === 429) return { ok: false, error: 'rate_limited' }
+  if (res.status === 429) return refusal(res)
   if (!res.ok) return { ok: false, error: 'api_error' }
 
   const data = (await res.json()) as DictionaryEntry[]
@@ -154,6 +218,8 @@ export async function lookupWordStream(
 
   if (options.signal?.aborted) return { ok: false, error: 'network' }
 
+  const auth = await authHeaders()
+  if (options.signal?.aborted) return { ok: false, error: 'network' }
   const controller = new AbortController()
   const onCallerAbort = (): void => controller.abort()
   options.signal?.addEventListener('abort', onCallerAbort, { once: true })
@@ -171,14 +237,14 @@ export async function lookupWordStream(
     try {
       res = await fetch(`${API_BASE}/api/translate-stream/${encodeURIComponent(word)}?${qs.toString()}`, {
         signal: controller.signal,
-        headers: { Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream', ...auth },
       })
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return abortedResult()
       return await lookupWord(rawWord, sourceLang, targetLang)
     }
 
-    if (res.status === 429) return { ok: false, error: 'rate_limited' }
+    if (res.status === 429) return refusal(res)
     const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
     // A 404 here may just mean "this server has no stream route"; the plain
     // endpoint gives the authoritative answer (including a real not_found).
@@ -186,6 +252,7 @@ export async function lookupWordStream(
 
     let final: DictionaryEntry[] | null = null
     let failure: ExtensionErrorCode | null = null
+    let quota: QuotaDetail | null = null
     try {
       await readSse(res.body, ({ event, data }) => {
         let payload: unknown
@@ -199,7 +266,12 @@ export async function lookupWordStream(
         } else if (event === 'done' && Array.isArray(payload)) {
           final = payload as DictionaryEntry[]
         } else if (event === 'error') {
-          failure = (payload as { error?: string } | null)?.error === 'not_found' ? 'not_found' : 'api_error'
+          quota = parseQuota(payload)
+          failure = quota
+            ? 'quota_exceeded'
+            : (payload as { error?: string } | null)?.error === 'not_found'
+              ? 'not_found'
+              : 'api_error'
         }
       })
     } catch (err) {
@@ -207,7 +279,7 @@ export async function lookupWordStream(
       // Connection dropped mid-stream: fall through to the plain endpoint below.
     }
 
-    if (failure) return { ok: false, error: failure }
+    if (failure) return quota ? { ok: false, error: failure, quota } : { ok: false, error: failure }
     if (final) {
       await writeCache(storageKey, final)
       return { ok: true, entries: final }

@@ -64,6 +64,42 @@ export const LLM_DAILY_BUDGET_PER_IP = Number.isFinite(parsedLlmBudget) && parse
 // on LLM-backed routes. Set to 0/false to allow them.
 export const LLM_BLOCK_BOTS = !/^(0|false|no|off)$/i.test(process.env.LLM_BLOCK_BOTS ?? '1')
 
+// --- LLM usage tiers & quotas (docs/design-llm-usage-quotas.md §9) ---
+// Env sets the defaults; values saved in Admin → Usage override them.
+function envEnum<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
+  const raw = process.env[name]?.trim().toLowerCase()
+  return raw && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback
+}
+function envNumber(name: string, fallback: number, { min = 0, max = Number.MAX_SAFE_INTEGER, integer = false } = {}): number {
+  const raw = process.env[name]?.trim()
+  if (!raw) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
+    console.warn(`[config] ignoring invalid ${name}=${raw} (using ${fallback})`)
+    return fallback
+  }
+  return n
+}
+/** `off`, `shadow` (count and record would-be denials, block nothing) or `on`. */
+export const USAGE_ENFORCEMENT = envEnum('USAGE_ENFORCEMENT', ['off', 'shadow', 'on'] as const, 'shadow')
+/** Free budget per UTC day / month, in USD, for all free generations combined. */
+export const USAGE_FREE_TIER_DAILY_USD = envNumber('USAGE_FREE_TIER_DAILY_USD', 1, { max: 10_000 })
+export const USAGE_FREE_TIER_MONTHLY_USD = envNumber('USAGE_FREE_TIER_MONTHLY_USD', 5, { max: 100_000 })
+/** `even` spreads the monthly budget over the days left; `off` is first come, first served. */
+export const USAGE_FREE_TIER_PACING = envEnum('USAGE_FREE_TIER_PACING', ['even', 'off'] as const, 'even')
+/** Free new words per IP (IPv6 /64) per UTC day, for anonymous and unverified users. 0 = sign in to generate. */
+export const USAGE_ANON_DAILY_PER_IP = envNumber('USAGE_ANON_DAILY_PER_IP', 5, { max: 100_000, integer: true })
+/** Share of today's free budget that the IP allowance may use (0–1). */
+export const USAGE_ANON_SHARE = envNumber('USAGE_ANON_SHARE', 0.5, { max: 1 })
+/** Free new words per UTC day for an account with a verified email. */
+export const USAGE_USER_DAILY_FREE = envNumber('USAGE_USER_DAILY_FREE', 20, { max: 100_000, integer: true })
+/** Price (USD per million tokens) for models with no price set in the admin portal. Deliberately
+ *  on the high side for budget models, so a forgotten price makes the budget stricter, not looser. */
+export const LLM_DEFAULT_PRICE_IN_PER_MTOK = envNumber('LLM_DEFAULT_PRICE_IN_PER_MTOK', 1, { max: 10_000 })
+export const LLM_DEFAULT_PRICE_OUT_PER_MTOK = envNumber('LLM_DEFAULT_PRICE_OUT_PER_MTOK', 4, { max: 10_000 })
+/** Optional URL that budget alerts are POSTed to as JSON. */
+export const USAGE_ALERT_WEBHOOK_URL = process.env.USAGE_ALERT_WEBHOOK_URL?.trim() || undefined
+
 // --- Admin portal (docs/design-admin-portal.md) ---
 // AES-256-GCM master key (base64, 32 bytes) for encrypting LLM provider API
 // keys at rest. Admin writes that touch a key return 503 when unset; nothing

@@ -72,11 +72,15 @@ export function uaForStorage(userAgent: string | undefined, deviceType: string):
 export const CREATOR_IP_RETENTION_MS = 180 * 24 * 60 * 60 * 1000
 
 /** Client identity stored on a cache entry it causes to be created (admin Entries page "Added by"). */
-export function buildEntryCreator(input: { ip: string; userAgent?: string; origin?: string }, at: Date = new Date()): EntryCreator {
+export function buildEntryCreator(
+  input: { ip: string; userAgent?: string; origin?: string; sub?: string },
+  at: Date = new Date()
+): EntryCreator {
   const device = parseUserAgent(input.userAgent)
   const ua = uaForStorage(input.userAgent, device.type)
   return {
     ip: input.ip,
+    ...(input.sub ? { sub: input.sub } : {}),
     ...(ua ? { ua } : {}),
     device,
     channel: classifyChannel(input.origin),
@@ -350,8 +354,11 @@ export async function expireEntryCreatorIps(now: Date = new Date()): Promise<num
   try {
     const cutoff = new Date(now.getTime() - CREATOR_IP_RETENTION_MS)
     const result = await col.updateMany(
-      { 'createdBy.at': { $lt: cutoff }, 'createdBy.ip': { $exists: true } },
-      { $unset: { 'createdBy.ip': '', 'createdBy.ua': '' } }
+      {
+        'createdBy.at': { $lt: cutoff },
+        $or: [{ 'createdBy.ip': { $exists: true } }, { 'createdBy.sub': { $exists: true } }],
+      },
+      { $unset: { 'createdBy.ip': '', 'createdBy.ua': '', 'createdBy.sub': '' } }
     )
     return result.modifiedCount
   } catch (err) {

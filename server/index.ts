@@ -13,6 +13,8 @@ import { createTranslationCache, type TranslationDoc } from './cache/translation
 import { createApp } from './app'
 import { logMetricsSummary } from './metrics'
 import { expireEntryCreatorIps } from './activityLog'
+import { getUsageSettings, refreshUsageSettings } from './usage/settings'
+import { refreshPrices } from './usage/pricing'
 
 const dictionaryProvider = createDictionaryProvider({
   baseUrl: DICTIONARY_API_BASE || undefined,
@@ -35,11 +37,22 @@ if (MONGODB_URI) {
     // DB-config failure.
     await llmService.reloadFromDb()
     console.log(`[llm] state: ${JSON.stringify(llmService.status())}`)
+    // Usage quotas (docs/design-llm-usage-quotas.md): admin overrides and model prices.
+    await Promise.all([refreshUsageSettings(), refreshPrices()])
   } catch (err) {
     console.error('[mongo] connection failed — cache/favorites degraded:', err)
   }
 } else {
   console.log('[mongo] MONGODB_URI not set — cache/favorites disabled')
+}
+
+{
+  const s = getUsageSettings()
+  console.log(
+    `[usage] enforcement=${s.enforcement} freeTier=${s.freeTierEnabled ? 'on' : 'paused'} ` +
+      `budget=$${s.freeTierDailyUsd}/day $${s.freeTierMonthlyUsd}/month pacing=${s.pacing} ` +
+      `anon=${s.anonDailyPerIp}/IP/day (share ${s.anonShare}) verified=${s.userDailyFree}/day`
+  )
 }
 
 const app = createApp({

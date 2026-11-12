@@ -1,7 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { fetchMoreExamples } from '../api/moreExamples'
 import { useI18n } from '../i18n/I18nContext'
+import { useAccessToken } from '../hooks/useAccessToken'
 import type { GradedExample } from '../api/dictionary'
+import type { QuotaInfo } from '../api/usage'
+import QuotaPanel from './QuotaPanel'
 
 type Status = 'idle' | 'open' | 'loading' | 'done' | 'error'
 
@@ -21,23 +24,30 @@ export default function MoreExamplesButton({
   const [status, setStatus] = useState<Status>('idle')
   const [topic, setTopic] = useState('')
   const [results, setResults] = useState<GradedExample[]>([])
+  const [quota, setQuota] = useState<QuotaInfo | null>(null)
   const { t } = useI18n()
+  const { getToken } = useAccessToken()
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setStatus('loading')
-    const examples = await fetchMoreExamples({
-      word,
-      sourceLang,
-      targetLang,
-      definition,
-      topic: topic.trim() || undefined,
-      cefr,
-    })
-    if (examples && examples.length > 0) {
-      setResults(examples)
+    setQuota(null)
+    const result = await fetchMoreExamples(
+      {
+        word,
+        sourceLang,
+        targetLang,
+        definition,
+        topic: topic.trim() || undefined,
+        cefr,
+      },
+      getToken
+    )
+    if (result.ok) {
+      setResults(result.examples)
       setStatus('done')
     } else {
+      setQuota(result.quota ?? null)
       setStatus('error')
     }
   }
@@ -63,7 +73,8 @@ export default function MoreExamplesButton({
           {status === 'loading' ? t('moreExamples.generating') : t('moreExamples.getExamples')}
         </button>
       </form>
-      {status === 'error' && <p className="more-examples-error">{t('moreExamples.error')}</p>}
+      {status === 'error' && quota && <QuotaPanel quota={quota} compact />}
+      {status === 'error' && !quota && <p className="more-examples-error">{t('moreExamples.error')}</p>}
       {status === 'done' && (
         <ul className="def-examples more-examples-results">
           {results.map((ex, i) => (

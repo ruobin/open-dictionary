@@ -7,6 +7,8 @@ export interface EntryFiltersState {
   targetLang: string
   tier: string
   hasReportsOnly: boolean
+  /** LLM entries not produced by a fusion merge, e.g. strangers' metered-model entries. */
+  singleModelOnly: boolean
   ip: string
   sort: string
 }
@@ -17,6 +19,7 @@ export const DEFAULT_ENTRY_FILTERS: EntryFiltersState = {
   targetLang: '',
   tier: '',
   hasReportsOnly: false,
+  singleModelOnly: false,
   ip: '',
   sort: 'newest',
 }
@@ -75,6 +78,14 @@ export default function EntryFilters({ value, onChange, onSubmit }: EntryFilters
           onChange={(e) => set('hasReportsOnly', e.target.checked)}
         />
         <span>Has reports only</span>
+      </label>
+      <label className="admin-field-inline" title="LLM entries that weren't produced by a fusion merge — candidates for Regenerate on the word page">
+        <input
+          type="checkbox"
+          checked={value.singleModelOnly}
+          onChange={(e) => set('singleModelOnly', e.target.checked)}
+        />
+        <span>Single-model only</span>
       </label>
       <select className="admin-input" value={value.sort} onChange={(e) => set('sort', e.target.value)}>
         <option value="newest">Newest</option>

@@ -1,4 +1,5 @@
 import {
+  type LlmCallOptions,
   type LlmCommonMistake,
   type LlmGradedExample,
   type LlmMeaningGroup,
@@ -82,7 +83,8 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
         }
       : opts
     const pa = primary.translate(req, primaryOpts)
-    const pb = secondary.translate(req)
+    // The secondary never streams to the caller, but its tokens are billed too.
+    const pb = secondary.translate(req, opts?.usage ? { usage: opts.usage } : undefined)
 
     let first: LlmTranslationResult
     let firstFrom: LlmProvider
@@ -120,7 +122,10 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
       const cb = (b.value.content as LlmTranslationContent) ?? { headword: '' }
       if (typeof primary.fuse === 'function') {
         try {
-          const fused = await primary.fuse({ request: req, primary: ca, secondary: cb })
+          const fused = await primary.fuse(
+            { request: req, primary: ca, secondary: cb },
+            opts?.usage ? { usage: opts.usage } : undefined
+          )
           return fused.content
         } catch (err) {
           // Don't let a merge-step failure break fusion — fall through to the
@@ -146,8 +151,8 @@ export function createFusionProvider(config: FusionProviderConfig): LlmProvider 
 
   // moreExamples is a secondary follow-up feature; fusing it adds little value
   // and the primary is the canonical choice — delegate verbatim.
-  async function moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
-    return primary.moreExamples(req)
+  async function moreExamples(req: LlmMoreExamplesRequest, opts?: LlmCallOptions): Promise<LlmMoreExamplesResult> {
+    return primary.moreExamples(req, opts)
   }
 
   return { id, translate, moreExamples, fuse: primary.fuse ? primary.fuse.bind(primary) : undefined }

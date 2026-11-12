@@ -23,6 +23,7 @@ function toQuery(filters: EntryFiltersState): ListEntriesQuery {
     targetLang: filters.targetLang || undefined,
     tier: filters.tier ? (filters.tier as 'llm' | 'dict') : undefined,
     hasReports: filters.hasReportsOnly ? true : undefined,
+    singleModel: filters.singleModelOnly || undefined,
     ip: filters.ip.trim() || undefined,
     sort: filters.sort as ListEntriesQuery['sort'],
     limit: PAGE_SIZE,

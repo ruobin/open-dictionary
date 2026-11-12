@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DictionaryEntry, Phonetic } from '../types'
-import type { ExtensionMessage, ExtensionResponse } from './messages'
+import type { ExtensionMessage, ExtensionResponse, QuotaDetail } from './messages'
 import { LiveProvider, LiveText, StreamCaret, type LiveState } from './LiveText'
 
 /** Human-readable copy for each `ExtensionErrorCode`. Shared so the popup
@@ -13,6 +13,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   rate_limited: 'Too many lookups — try again in a minute.',
   unauthorized: 'Sign in to use this feature.',
   auth_failed: 'Sign-in didn\u2019t complete. Try again.',
+  quota_exceeded: 'Free new words are used up for now.',
 }
 
 type PhoneticWithAudio = Phonetic & { audio: string }
@@ -217,6 +218,64 @@ export function EntryView({
   )
 }
 
-export function ErrorView({ error }: { error: string }) {
+/** Copy for each quota refusal reason (docs/design-llm-usage-quotas.md §4.6). */
+const QUOTA_MESSAGES: Record<string, string> = {
+  anon_daily: 'You\u2019ve used today\u2019s free new words. Sign in to get more each day.',
+  unverified_daily: 'You\u2019ve used today\u2019s free new words. Verify your email on the website to get more each day.',
+  anon_share: 'Free new words for visitors are used up for today.',
+  user_daily: 'You\u2019ve used today\u2019s free new words.',
+  free_tier_budget: 'New words are paused for now: this free project\u2019s AI budget is used up.',
+  free_tier_paused: 'Adding new words is paused right now.',
+}
+
+/** "3 h 12 min" until `resetAt`, or null when unknown. */
+export function waitText(resetAt: string, now: number = Date.now()): string | null {
+  const t = new Date(resetAt).getTime()
+  if (!Number.isFinite(t)) return null
+  const ms = Math.max(0, t - now)
+  let h = Math.floor(ms / 3_600_000)
+  let m = Math.ceil((ms % 3_600_000) / 60_000)
+  if (m === 60) {
+    h += 1
+    m = 0
+  }
+  return h > 0 ? `${h} h ${m} min` : `${Math.max(1, m)} min`
+}
+
+export function ErrorView({
+  error,
+  quota,
+  webAppUrl,
+  onSignIn,
+}: {
+  error: string
+  quota?: QuotaDetail
+  /** The word on the website, where the user can sign in or verify their email. */
+  webAppUrl?: string
+  onSignIn?: () => void
+}) {
+  if (error === 'quota_exceeded' && quota) {
+    const wait = quota.reason === 'free_tier_paused' ? null : waitText(quota.resetAt)
+    return (
+      <div className="od-error od-quota">
+        <p>{QUOTA_MESSAGES[quota.reason] ?? 'Free new words are used up for now.'}</p>
+        <p className="od-quota-note">
+          Words already in the dictionary still work.{wait ? ` Back in ${wait}.` : ''}
+        </p>
+        <div className="od-quota-actions">
+          {onSignIn && quota.actions.includes('sign_in') && (
+            <button type="button" className="od-quota-button" onClick={onSignIn}>
+              Sign in
+            </button>
+          )}
+          {webAppUrl && (
+            <a className="od-link" href={webAppUrl} target="_blank" rel="noopener noreferrer">
+              Open on the website →
+            </a>
+          )}
+        </div>
+      </div>
+    )
+  }
   return <div className="od-error">{ERROR_MESSAGES[error] ?? 'Something went wrong.'}</div>
 }

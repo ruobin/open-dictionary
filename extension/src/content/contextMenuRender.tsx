@@ -80,7 +80,7 @@ function mountCard(text: string, result: LookupResponse): void {
           <ErrorView error="not_found" />
         )
       ) : (
-        <ErrorView error={result.error} />
+        <ErrorView error={result.error} quota={result.quota} webAppUrl={webAppWordUrl(text)} />
       )}
     </div>
   )

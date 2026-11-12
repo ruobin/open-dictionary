@@ -390,3 +390,32 @@ describe('admin/providersRepo: providerToLlmConfig', () => {
     expect(() => repo.providerToLlmConfig(doc)).toThrow()
   })
 })
+
+describe('admin/providersRepo: model pricing (docs/design-llm-usage-quotas.md §5.5)', () => {
+  it('keeps a valid price and leaves unpriced models without one', async () => {
+    const { validateProviderFields } = await freshRepo()
+    const result = validateProviderFields(
+      {
+        name: 'Priced',
+        vendor: 'deepseek',
+        models: [
+          { id: 'cheap', pricing: { inputUsdPerMTok: 0.27, outputUsdPerMTok: 1.1 } },
+          { id: 'unpriced', pricing: null },
+        ],
+      },
+      true
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.models[0].pricing).toEqual({ inputUsdPerMTok: 0.27, outputUsdPerMTok: 1.1 })
+    expect(result.value.models[1]).not.toHaveProperty('pricing')
+  })
+
+  it('rejects negative, missing, or absurd prices', async () => {
+    const { validateProviderFields } = await freshRepo()
+    for (const pricing of [{ inputUsdPerMTok: -1, outputUsdPerMTok: 1 }, { inputUsdPerMTok: 1 }, { inputUsdPerMTok: 1, outputUsdPerMTok: 5000 }, 'cheap']) {
+      const result = validateProviderFields({ name: 'X', vendor: 'deepseek', models: [{ id: 'm', pricing }] }, true)
+      expect(result.ok).toBe(false)
+    }
+  })
+})

@@ -37,6 +37,7 @@ const NAV_SECTIONS: { title: string; links: { to: string; label: string; end?: b
     links: [
       { to: '/admin/activity', label: 'Activity' },
       { to: '/admin/clients', label: 'Clients' },
+      { to: '/admin/usage', label: 'Usage & budget' },
     ],
   },
   {

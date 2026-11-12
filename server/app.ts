@@ -14,8 +14,12 @@ import {
   TRUST_PROXY,
   USERDATA_RATE_LIMIT_RPM,
 } from './config'
-import { createTranslateRouter } from './translate'
+import { createTranslateRouter, modelNameFromProviderId } from './translate'
 import { createFavoritesRouter } from './favorites'
+import { getMongoDb } from './db'
+import { createUsageService, type UsageService } from './usage'
+import { createUsageRouter } from './usage/router'
+import { createAuth0Directory } from './usage/verification'
 import { createSuggestRouter } from './suggest'
 import { createReportRouter } from './report'
 import { createActivityPingRouter } from './activityPing'
@@ -34,6 +38,16 @@ export interface AppDeps {
   llmService: LlmService
   dictionaryProvider: DictionaryProvider
   translationCache: TranslationCache | null
+  /** Usage metering; built from Mongo and the Auth0 Management API when omitted. */
+  usage?: UsageService
+}
+
+/** Model names of the owner's full setup, e.g. ["deepseek-v4-flash", "glm-5.2"]. */
+function fullModelsOf(llmService: LlmService): string[] {
+  const s = llmService.status()
+  if (s.model) return [s.model, ...(s.secondaryModel ? [s.secondaryModel] : [])]
+  const id = llmService.current()?.id
+  return id ? [modelNameFromProviderId(id)] : []
 }
 
 const MAX_HISTORY = 30
@@ -73,7 +87,7 @@ interface HandledError {
   message?: string
 }
 
-export function createApp({ llmService, dictionaryProvider, translationCache }: AppDeps) {
+export function createApp({ llmService, dictionaryProvider, translationCache, usage: usageDep }: AppDeps) {
   const app = express()
 
   if (TRUST_PROXY !== '0') {
@@ -112,13 +126,32 @@ export function createApp({ llmService, dictionaryProvider, translationCache }: 
     tokenSigningAlg: 'RS256',
   })
 
+  // Lookup routes are public: a valid token identifies the caller (owner,
+  // signed-in user); a missing or invalid one leaves the request anonymous
+  // (docs/design-llm-usage-quotas.md §5.2).
+  const optionalJwt = auth({
+    audience: AUTH0_AUDIENCE,
+    issuerBaseURL: `https://${AUTH0_DOMAIN}/`,
+    tokenSigningAlg: 'RS256',
+    authRequired: false,
+  })
+
   const mgmt = new ManagementClient({
     domain: AUTH0_DOMAIN,
     clientId: AUTH0_MGMT_CLIENT_ID,
     clientSecret: AUTH0_MGMT_CLIENT_SECRET,
   })
 
+  const usage =
+    usageDep ??
+    createUsageService({
+      db: getMongoDb(),
+      directory: createAuth0Directory(mgmt),
+      meteredProviderId: () => llmService.currentMetered()?.id,
+    })
+
   app.locals.llmService = llmService
+  app.locals.usage = usage
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' })
@@ -132,19 +165,24 @@ export function createApp({ llmService, dictionaryProvider, translationCache }: 
   // Admin-managed IP/CIDR blocklist (server/abuseGuard.ts). It runs before
   // every public router; /api/admin/* is exempt.
   app.use('/api', blocklistGuard)
-  app.use('/api', createTranslateRouter(dictionaryProvider, translationCache))
+  app.use('/api', createTranslateRouter(dictionaryProvider, translationCache, { usage, optionalJwt }))
   app.use('/api', createSuggestRouter())
   app.use('/api', createReportRouter())
   app.use('/api', createActivityPingRouter())
   app.use('/api', createWordOfDayRouter())
-  app.use('/api', createMoreExamplesRouter())
+  app.use('/api', createMoreExamplesRouter({ usage, optionalJwt }))
+  app.use('/api', createUsageRouter({ usage, optionalJwt, fullModels: () => fullModelsOf(llmService) }))
   app.use('/api', createBrowseRouter())
   app.use('/api', createFavoritesRouter(checkJwt))
 
   // Allowlist-only admin portal (design doc §17 Q1: no Auth0 RBAC/permissions
   // check, just checkJwt + sub ∈ ADMIN_USER_IDS). createRequireAdmin returns
   // [checkJwt, adminOnly], spread directly per its own doc comment.
-  app.use('/api/admin', ...createRequireAdmin(checkJwt), createAdminRouter(llmService))
+  app.use(
+    '/api/admin',
+    ...createRequireAdmin(checkJwt),
+    createAdminRouter(llmService, { usage, dictionary: dictionaryProvider, cache: translationCache })
+  )
 
   app.get(
     '/api/user-data',

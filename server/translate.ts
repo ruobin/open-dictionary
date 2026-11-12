@@ -1,4 +1,4 @@
-import { Router, type Request, type Response, type NextFunction } from 'express'
+import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express'
 import rateLimit from 'express-rate-limit'
 import type {
   CefrLevel,
@@ -20,8 +20,13 @@ import {
   recordLlmLatency,
   recordOutcome,
 } from './metrics'
-import { buildEntryCreator, recordActivity } from './activityLog'
+import { buildEntryCreator, classifyChannel, recordActivity } from './activityLog'
 import { clientIp, llmGuard, recordLlmSpend, refuseOverBudget } from './abuseGuard'
+import type { UsageService } from './usage'
+import { MeterError, QuotaDeniedError, type Ticket } from './usage/meter'
+import { sendMeterError } from './usage/http'
+import { identify, identityOf, rateLimitKey } from './usage/principal'
+import type { UsageRoute } from './usage/types'
 
 /**
  * HTTP response shape. Mirrors the frontend `DictionaryEntry`
@@ -135,11 +140,15 @@ const LLM_DEBUG = /^(1|true|yes|on)$/i.test(process.env.LLM_DEBUG ?? '')
  */
 export const CACHE_VERSION = 'v3'
 
+/** Per-minute limit on lookups. The owner is exempt; signed-in users are keyed
+ *  by `sub` (no shared-NAT collisions), everyone else by IP (IPv6 by /64). */
 export const translateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: TRANSLATE_RATE_LIMIT_RPM,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req, res) => identityOf(req, res).principal.kind === 'owner',
+  keyGenerator: (req, res) => rateLimitKey(identityOf(req, res)),
   message: { error: 'rate_limited' },
 })
 
@@ -340,25 +349,69 @@ export interface TranslateHooks {
   /** The client starting this lookup; stored as the cache doc's `createdBy`
    *  if the lookup creates one. In-flight joiners don't overwrite it. */
   client?: EntryCreator
+  /**
+   * Quota check (docs/design-llm-usage-quotas.md §5.3). Called only by the
+   * in-flight leader, after a cache miss and right before the LLM call; its
+   * ticket picks the model route and collects the token usage. A rejection
+   * (a MeterError) propagates without touching the cache or the dictionary.
+   */
+  meter?: () => Promise<Ticket>
 }
+
+/** Picks the provider for a model route: `full` for the owner, `metered` for everyone else. */
+export type LlmRouter = (route: UsageRoute) => LlmProvider | null
+
+function routeTo(llm: LlmProvider | null | LlmRouter, route: UsageRoute): LlmProvider | null {
+  return typeof llm === 'function' ? llm(route) : llm
+}
+
+/** The leader's ticket and the provider it used, settled when the in-flight entry is released. */
+interface Metering {
+  ticket?: Ticket
+  providerId?: string
+}
+
+/** How often a joiner may retry under its own quota after leaders were refused under theirs. */
+const MAX_JOIN_RETRIES = 3
 
 /**
  * Read-through, tiered lookup: Mongo cache → LLM (primary) → dictionary
  * (fallback only on LLM failure/absence). Results are cached keyed by
  * (word, sourceLang, targetLang, version) (design doc §5, §6; to-do §2).
+ *
+ * `llm` is a provider, or a router that picks one per model route.
  */
 export function translate(
   req: TranslateRequest,
-  llm: LlmProvider | null,
+  llm: LlmProvider | null | LlmRouter,
   dictionary: DictionaryProvider,
   cache?: TranslationCache | null,
   hooks: TranslateHooks = {}
+): Promise<TranslateOutcome> {
+  return translateOnce(req, llm, dictionary, cache, hooks, 0)
+}
+
+function translateOnce(
+  req: TranslateRequest,
+  llm: LlmProvider | null | LlmRouter,
+  dictionary: DictionaryProvider,
+  cache: TranslationCache | null | undefined,
+  hooks: TranslateHooks,
+  retries: number
 ): Promise<TranslateOutcome> {
   const key = inFlightKey(req)
   const existing = inFlight.get(key)
   if (existing) {
     subscribe(existing, hooks.onPartial)
-    return existing.promise
+    // The leader was refused under ITS quota; this caller's own quota may
+    // allow the generation (e.g. the owner joining an anonymous lookup). The
+    // refused entry is already released, so the retry leads or joins anew.
+    return existing.promise.catch((err: unknown) => {
+      if (err instanceof MeterError && retries < MAX_JOIN_RETRIES) {
+        return translateOnce(req, llm, dictionary, cache, hooks, retries + 1)
+      }
+      throw err
+    })
   }
 
   const state: InFlight = { promise: undefined as unknown as Promise<TranslateOutcome>, listeners: new Set() }
@@ -378,30 +431,63 @@ export function translate(
     }
   }
 
-  state.promise = doTranslate(req, llm, dictionary, cache, emit, background, hooks.client).then((outcome) => {
+  const metering: Metering = {}
+  state.promise = doTranslate(req, llm, dictionary, cache, emit, background, hooks, metering).then((outcome) => {
     state.settled = true
     recordOutcome(outcome.tier)
     return outcome
   })
   inFlight.set(key, state)
 
-  const release = (): void => {
-    if (background.length === 0) inFlight.delete(key)
-    else void Promise.allSettled(background).then(() => inFlight.delete(key))
+  // Released once background work (cache writes, fusion's slower model and
+  // merge) has settled, so the ticket is charged the generation's full cost.
+  const release = (outcome: TranslateOutcome | null): void => {
+    const finish = (): void => {
+      if (inFlight.get(key) === state) inFlight.delete(key)
+      const ticket = metering.ticket
+      if (ticket) {
+        void ticket
+          .settle({ charged: outcome?.tier === 'llm', ...(metering.providerId ? { providerId: metering.providerId } : {}) })
+          .catch((err: unknown) => console.warn('[usage] settle failed (non-fatal):', err))
+      }
+    }
+    if (background.length === 0) finish()
+    else void Promise.allSettled(background).then(finish)
   }
-  state.promise.then(release, release)
+  state.promise.then(
+    (outcome) => release(outcome),
+    () => release(null)
+  )
   return state.promise
+}
+
+/** Runs the quota check (when there is one) and picks the provider for its route. */
+async function pickProvider(
+  llm: LlmProvider | null | LlmRouter,
+  hooks: TranslateHooks,
+  metering: Metering
+): Promise<LlmProvider | null> {
+  // No LLM tier at all: nothing to pay for, so nothing to meter.
+  if (!routeTo(llm, 'full') && !routeTo(llm, 'metered')) return null
+  if (!hooks.meter) return routeTo(llm, 'full')
+  const ticket = await hooks.meter()
+  metering.ticket = ticket
+  const provider = routeTo(llm, ticket.route)
+  if (provider) metering.providerId = provider.id
+  return provider
 }
 
 async function doTranslate(
   req: TranslateRequest,
-  llm: LlmProvider | null,
+  llmSource: LlmProvider | null | LlmRouter,
   dictionary: DictionaryProvider,
   cache: TranslationCache | null | undefined,
   emit: PartialListener,
   background: Array<Promise<unknown>>,
-  client?: EntryCreator
+  hooks: TranslateHooks,
+  metering: Metering
 ): Promise<TranslateOutcome> {
+  const client = hooks.client
   // Cache writes for one lookup are serialised so a late audio/fusion
   // write can never be overtaken by (and lost to) the first write.
   let writeChain: Promise<void> = Promise.resolve()
@@ -421,7 +507,8 @@ async function doTranslate(
     }
   }
 
-  // Tier 1 — LLM (primary)
+  // Tier 1 — LLM (primary). The quota check runs first and may refuse.
+  const llm = await pickProvider(llmSource, hooks, metering)
   if (llm) {
     const started = Date.now()
     // Pronunciation audio is independent of the LLM answer — fetch it concurrently.
@@ -432,6 +519,7 @@ async function doTranslate(
           const preview = adaptLlm(partial)
           if (preview.some((e) => e.word || e.meanings.length > 0)) emit(preview)
         },
+        ...(metering.ticket ? { usage: metering.ticket.usage } : {}),
       })
       recordLlmLatency(llm.id, Date.now() - started)
       const content = result.content as LlmTranslationContent
@@ -534,7 +622,9 @@ function logAndRecord(
   lookup: ParsedLookup,
   outcome: TranslateOutcome,
   latencyMs: number,
-  extra: Record<string, unknown> = {}
+  extra: Record<string, unknown>,
+  /** This request paid for an LLM call (it led the generation and isn't the owner). */
+  paidCall: boolean
 ): void {
   // Structured per-request log (design doc §12) — textLength, never text.
   console.log(
@@ -561,26 +651,87 @@ function logAndRecord(
     userAgent: req.get('user-agent'),
     origin: req.get('origin'),
   })
-  if (outcome.tier === 'llm') recordLlmSpend(req)
+  if (outcome.tier === 'llm' && paidCall) recordLlmSpend(req)
 }
 
-function entryCreatorFromReq(req: Request): EntryCreator {
-  return buildEntryCreator({ ip: clientIp(req), userAgent: req.get('user-agent'), origin: req.get('origin') })
+function entryCreatorFromReq(req: Request, res: Response): EntryCreator {
+  const { principal } = identityOf(req, res)
+  return buildEntryCreator({
+    ip: clientIp(req),
+    userAgent: req.get('user-agent'),
+    origin: req.get('origin'),
+    ...(principal.kind !== 'anon' ? { sub: principal.sub } : {}),
+  })
 }
 
 function writeSse(res: Response, event: string, data: unknown): void {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
 }
 
+/** Owner → the full setup; everyone else → the metered model (docs/design-llm-usage-quotas.md §5.4). */
+export function llmRouterFor(req: Request): LlmRouter {
+  const svc = req.app.locals.llmService as LlmService
+  return (route) => (route === 'metered' ? (svc.currentMetered?.() ?? svc.current()) : svc.current())
+}
+
+/** A request's quota hook, plus the ticket it got if it led a generation. */
+function meterFor(
+  req: Request,
+  res: Response,
+  lookup: ParsedLookup,
+  usage: UsageService | undefined
+): { meter?: () => Promise<Ticket>; ticket: () => Ticket | undefined } {
+  if (!usage) return { ticket: () => undefined }
+  let ticket: Ticket | undefined
+  const { principal } = identityOf(req, res)
+  return {
+    meter: async () => {
+      ticket = await usage.meter.reserve({
+        principal,
+        action: 'lookup',
+        channel: classifyChannel(req.get('origin')),
+        word: lookup.text,
+        sourceLang: lookup.sourceLang,
+        targetLang: lookup.targetLang,
+      })
+      return ticket
+    },
+    ticket: () => ticket,
+  }
+}
+
+/** Without metering every LLM answer counts toward the per-IP backstop, as before. */
+function paidCallOf(req: Request, res: Response, usage: UsageService | undefined, ticket: Ticket | undefined): boolean {
+  if (identityOf(req, res).principal.kind === 'owner') return false
+  return usage ? ticket !== undefined : true
+}
+
+/** The user was charged a free unit, so the client should refresh its usage view. */
+function chargedTicket(ticket: Ticket | undefined, outcome: TranslateOutcome): Ticket | undefined {
+  return ticket && ticket.source === 'free' && outcome.tier === 'llm' ? ticket : undefined
+}
+
+export interface TranslateRouterOptions {
+  /** Usage metering (docs/design-llm-usage-quotas.md). Without it nothing is metered (tests, scripts). */
+  usage?: UsageService
+  /** `auth({ authRequired: false })`: sets `req.auth` for a valid token, ignores a missing or invalid one. */
+  optionalJwt?: RequestHandler
+}
+
 /** Builds the /api router with GET /translate/:text and GET /translate-stream/:text mounted under /api. */
 export function createTranslateRouter(
   dictionary: DictionaryProvider,
-  cache?: TranslationCache | null
+  cache?: TranslationCache | null,
+  options: TranslateRouterOptions = {}
 ): Router {
   const router = Router()
+  const { usage } = options
+  // Identity first: the per-minute limiter skips the owner and keys signed-in users by sub.
+  const identity: RequestHandler[] = options.optionalJwt ? [options.optionalJwt, identify] : [identify]
 
   router.get(
     '/translate/:text',
+    ...identity,
     translateLimiter,
     llmGuard,
     async (req: Request, res: Response, next: NextFunction) => {
@@ -589,9 +740,12 @@ export function createTranslateRouter(
         if (!lookup) return
         if (res.locals.llmBudgetExceeded && refuseOverBudget(res, !(await canServeWithoutLlm(lookup, cache)))) return
 
-        const llm = (req.app.locals.llmService as LlmService).current()
+        const metered = meterFor(req, res, lookup, usage)
         const started = Date.now()
-        const outcome = await translate(lookup, llm, dictionary, cache, { client: entryCreatorFromReq(req) })
+        const outcome = await translate(lookup, llmRouterFor(req), dictionary, cache, {
+          client: entryCreatorFromReq(req, res),
+          ...(metered.meter ? { meter: metered.meter } : {}),
+        })
         const latencyMs = Date.now() - started
 
         if (outcome.entries.length === 0) {
@@ -599,9 +753,12 @@ export function createTranslateRouter(
           return
         }
 
-        logAndRecord(req, lookup, outcome, latencyMs)
+        const ticket = metered.ticket()
+        logAndRecord(req, lookup, outcome, latencyMs, {}, paidCallOf(req, res, usage, ticket))
+        if (chargedTicket(ticket, outcome)) res.setHeader('X-Generation', 'charged')
         res.json(outcome.entries)
       } catch (err) {
+        if (sendMeterError(res, err)) return
         if ((err as { code?: string })?.code === 'not_found') {
           res.status(404).json({ error: 'not_found' })
           return
@@ -617,66 +774,95 @@ export function createTranslateRouter(
    * still writing the rest:
    *
    *   event: partial  data: DictionaryEntry[]   (0..n, each more complete than the last)
+   *   event: usage    data: { source, today }   (only after a generation charged to the caller's free allowance)
    *   event: done     data: DictionaryEntry[]   (final; identical to the /translate body)
    *   event: error    data: { error: "not_found" | "internal" }
    *
    * Cache hits send just `done`. Validation errors are ordinary JSON responses
-   * with a 4xx status, before any stream starts. Shares translateLimiter and
-   * the in-flight dedup with /translate.
+   * with a 4xx status, before any stream starts. The 200 and the event-stream
+   * headers go out with the first event, so a quota refusal (which always
+   * comes before the first partial) is a plain HTTP 429 with a JSON body, like
+   * on /translate. Shares translateLimiter and the in-flight dedup with
+   * /translate.
    */
-  router.get('/translate-stream/:text', translateLimiter, llmGuard, async (req: Request, res: Response) => {
-    const lookup = parseLookup(req, res)
-    if (!lookup) return
-    if (res.locals.llmBudgetExceeded && refuseOverBudget(res, !(await canServeWithoutLlm(lookup, cache)))) return
+  router.get(
+    '/translate-stream/:text',
+    ...identity,
+    translateLimiter,
+    llmGuard,
+    async (req: Request, res: Response) => {
+      const lookup = parseLookup(req, res)
+      if (!lookup) return
+      if (res.locals.llmBudgetExceeded && refuseOverBudget(res, !(await canServeWithoutLlm(lookup, cache)))) return
 
-    res.status(200)
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-    res.setHeader('Cache-Control', 'no-cache, no-transform')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no') // tell nginx not to buffer this response
-    res.flushHeaders()
-
-    let closed = false
-    res.on('close', () => {
-      closed = true
-    })
-    const send = (event: string, data: unknown): void => {
-      if (!closed) writeSse(res, event, data)
-    }
-
-    const started = Date.now()
-    let firstPartialMs: number | undefined
-    try {
-      const llm = (req.app.locals.llmService as LlmService).current()
-      const outcome = await translate(lookup, llm, dictionary, cache, {
-        client: entryCreatorFromReq(req),
-        onPartial: (entries) => {
-          firstPartialMs ??= Date.now() - started
-          send('partial', entries)
-        },
+      let closed = false
+      let streaming = false
+      res.on('close', () => {
+        closed = true
       })
-      const latencyMs = Date.now() - started
+      const send = (event: string, data: unknown): void => {
+        if (closed) return
+        if (!streaming) {
+          streaming = true
+          res.status(200)
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-cache, no-transform')
+          res.setHeader('Connection', 'keep-alive')
+          res.setHeader('X-Accel-Buffering', 'no') // tell nginx not to buffer this response
+          res.flushHeaders()
+        }
+        writeSse(res, event, data)
+      }
 
-      if (outcome.entries.length === 0) {
-        send('error', { error: 'not_found' })
-      } else {
-        logAndRecord(req, lookup, outcome, latencyMs, { stream: true, ...(firstPartialMs !== undefined ? { firstPartialMs } : {}) })
-        send('done', outcome.entries)
+      const metered = meterFor(req, res, lookup, usage)
+      const started = Date.now()
+      let firstPartialMs: number | undefined
+      try {
+        const outcome = await translate(lookup, llmRouterFor(req), dictionary, cache, {
+          client: entryCreatorFromReq(req, res),
+          ...(metered.meter ? { meter: metered.meter } : {}),
+          onPartial: (entries) => {
+            firstPartialMs ??= Date.now() - started
+            send('partial', entries)
+          },
+        })
+        const latencyMs = Date.now() - started
+
+        if (outcome.entries.length === 0) {
+          send('error', { error: 'not_found' })
+        } else {
+          const ticket = metered.ticket()
+          logAndRecord(
+            req,
+            lookup,
+            outcome,
+            latencyMs,
+            { stream: true, ...(firstPartialMs !== undefined ? { firstPartialMs } : {}) },
+            paidCallOf(req, res, usage, ticket)
+          )
+          const charged = chargedTicket(ticket, outcome)
+          if (charged) send('usage', { source: charged.source, today: charged.allowance(true) })
+          send('done', outcome.entries)
+        }
+      } catch (err) {
+        if (!streaming && !closed && sendMeterError(res, err)) return
+        if (err instanceof MeterError) {
+          send('error', err instanceof QuotaDeniedError ? err.toBody() : { error: 'internal' })
+        } else if ((err as { code?: string })?.code === 'not_found') {
+          send('error', { error: 'not_found' })
+        } else {
+          console.error('[api] GET /translate-stream ->', err)
+          send('error', { error: 'internal' })
+        }
+      } finally {
+        // Mark closed first so a straggling partial can never write after end().
+        const alreadyClosed = closed
+        closed = true
+        if (!alreadyClosed && streaming) res.end()
+        else if (!alreadyClosed && !res.headersSent) res.status(500).json({ error: 'internal' })
       }
-    } catch (err) {
-      if ((err as { code?: string })?.code === 'not_found') {
-        send('error', { error: 'not_found' })
-      } else {
-        console.error('[api] GET /translate-stream ->', err)
-        send('error', { error: 'internal' })
-      }
-    } finally {
-      // Mark closed first so a straggling partial can never write after end().
-      const alreadyClosed = closed
-      closed = true
-      if (!alreadyClosed) res.end()
     }
-  })
+  )
 
   return router
 }

@@ -69,6 +69,11 @@ export const entryStyles = `
   .od-link { display: inline-block; margin-top: 6px; color: #b81b21; text-decoration: none; font-size: 13px; }
   .od-link:hover { text-decoration: underline; }
   .od-error { color: #a33; padding: 8px 0; }
+  .od-quota { color: #333; }
+  .od-quota p { margin: 0 0 6px; }
+  .od-quota-note { color: #777; font-size: 12px; }
+  .od-quota-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+  .od-quota-button { background: #b81b21; color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
   .od-icon-btn {
     width: 28px;
     height: 28px;
