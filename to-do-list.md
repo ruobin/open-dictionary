@@ -272,9 +272,32 @@ Favorites + history exist but are a dead end today. Turn them into a learning lo
 - [ ] **Sustainability without ads.** The cache makes marginal cost per user tiny after warm-up, so
       a freemium model fits the existing architecture: free lookups for everyone; paid tier for
       learning features (unlimited regenerated examples, quizzes/SRS, sentence audio). Decide early
-      so §8 features are built with the gate in mind.
+      so §8 features are built with the gate in mind. (First step designed in §11: a free daily
+      allowance plus prepaid credits for new-word generation.)
 - [x] Add a public "About / how definitions are generated" page — transparency that content is
       AI-generated with a report/feedback loop (§4) builds trust and manages expectations.
+
+---
+
+## 11. Usage limits & paid credits — **P0** (cap the LLM bill before growth)
+
+Every lookup of a new word is a paid LLM call on public, unauthenticated routes. The design is in
+[`docs/design-llm-usage-quotas.md`](docs/design-llm-usage-quotas.md), with decisions recorded
+2026-11-12 in its §13. The phase-by-phase checklist is
+[`docs/to-do-llm-usage-quotas.md`](docs/to-do-llm-usage-quotas.md).
+
+- [ ] **Phase 0, measure:** token-usage accounting, per-model prices, and a usage ledger in shadow
+      mode; the web app sends tokens.
+- [ ] **Phase 1, extension 0.4.0:** a token on lookups, and quota-aware errors.
+- [ ] **Phase 2, route & enforce:**
+  - the owner stays unlimited on the full model setup; strangers get one metered model
+  - 5 free new words per IP per day without sign-in, and 20 a day with a verified email
+  - a free budget of $1 a day and $5 a month, paced across the month
+- [ ] **Phase 3, payments:** prepaid credit packs through Stripe Checkout, with Managed Payments as
+      merchant of record.
+- [ ] **Phase 4, tune.**
+
+**Effort:** ~2–3 weeks, including the store review and the Stripe setup.
 
 ---
 

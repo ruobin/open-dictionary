@@ -22,6 +22,7 @@ Read these for the *"why"* behind a subsystem.
 | [`design-admin-cache-entries.md`](./design-admin-cache-entries.md) | Admin **Entries / Reports** pages — browse/search/delete cached translations + triage user reports. See **§17** for as-built delta. |
 | [`design-user-activity-log.md`](./design-user-activity-log.md) | Admin **Activity** page — per-lookup activity log (word, IP, device) + aggregated summary for user-behavior/growth analytics. |
 | [`design-llm-abuse-guard.md`](./design-llm-abuse-guard.md) | LLM token-spend protection (per-IP daily LLM budget, bot refusal, IP/CIDR blocklist), admin **Clients** page, **Added by** attribution on Entries, privacy constraints. Includes the 2026-10-30 GPTBot incident write-up. |
+| [`design-llm-usage-quotas.md`](./design-llm-usage-quotas.md) | Who can trigger paid LLM generations, how many, on which model, and how people pay for more. Covers the owner (unlimited, full model setup), anonymous / unverified / verified-email tiers, a paced free budget ($1 a day, $5 a month), one metered model for strangers, cost metering from real token usage, and prepaid credit top-ups through Stripe Checkout (Managed Payments). **Final design · not yet implemented.** |
 | [`design-geo-load-balancing.md`](./design-geo-load-balancing.md) | Multi-region (SG / US / EU) deployment design — route each user to the nearest VPS. **Draft · not yet implemented.** |
 | [`ui-i18n-and-themes.md`](./ui-i18n-and-themes.md) | Dark/light theming + UI i18n design. |
 
@@ -41,6 +42,7 @@ Read these for the *"why"* behind a subsystem.
 |---|---|
 | [`llm-provider-operations.md`](./llm-provider-operations.md) | Production LLM provider behavior: config sources, timeouts/fallbacks, admin switching, NewAPI/Responses and OpenRouter notes, and the **lookup latency design** (parallel core/extras calls, reasoning-off ladder, streaming endpoint, fusion upgrade). |
 | [`to-do-geo-load-balancing.md`](./to-do-geo-load-balancing.md) | Phase-by-phase implementation checklist for `design-geo-load-balancing.md` (provisioning, mesh, routing, cutover). |
+| [`to-do-llm-usage-quotas.md`](./to-do-llm-usage-quotas.md) | Phase-by-phase implementation checklist for `design-llm-usage-quotas.md` (measure, extension release, route & enforce, payments, tune), including the owner-side Auth0, Stripe and legal steps. |
 
 ---
 
