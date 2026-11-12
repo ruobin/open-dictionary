@@ -13,6 +13,7 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 - **"More examples like this"** (`/api/more-examples`) — per-sense follow-up LLM call, optionally constrained by topic/CEFR level (cached 90 days)
 - **Report an entry** (`/api/report`) — one-click quality flag on any entry, triaged in the admin portal
 - **Favorites & history** — Auth0-backed, language-pair scoped, synced across devices
+- **Usage allowances** — usage chip and quota panels show anonymous / verified-account allowances; email verification can be resent and refreshed in-app (`/api/usage/me`, `/api/usage/verify-email/*`). Cached words remain free; payments and paid-credit checkout are not implemented yet.
 - **UI i18n + dark/light themes** ([docs/ui-i18n-and-themes.md](docs/ui-i18n-and-themes.md))
 - **Browser extension** (`extension/` — separate build; see [extension/README.md](extension/README.md)) — Chrome/Firefox popup lookup against the same API
 
@@ -20,10 +21,12 @@ A bilingual dictionary + translation app. Look up a word or expression in a sour
 
 - **Overview** — active provider + health, lookup/latency/fallback metrics, recent audit entries
 - **Providers** — runtime CRUD for LLM providers (encrypted keys, models, connection test, hot-swap the active provider/model without redeploy)
-- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; every uncached lookup calls both in parallel and answers with whichever finishes first. The two answers are then merged (the **primary model** folds paraphrased definitions and drops near-duplicate examples; a deterministic code merge is the fallback) **in the background**, and the merged entry overwrites the cached one for every later lookup — so the merge never makes a user wait. Graceful degradation — if one provider fails the other stands alone. Configured on the Overview page.
+- **LLM fusion** — optionally pair a *secondary* provider/model with the primary; uncached lookups routed to this fusion pair call both in parallel and answers with whichever finishes first. The two answers are then merged (the **primary model** folds paraphrased definitions and drops near-duplicate examples; a deterministic code merge is the fallback) **in the background**, and the merged entry overwrites the cached one for every later lookup — so the merge never makes a user wait. Graceful degradation — if one provider fails the other stands alone. Configured on the Overview page.
 - **Latency lab** — on-demand multi-provider benchmarks with history and compare mode
 - **Playground** — direct LLM lookups (cache bypassed) to compare raw model output side-by-side before promoting a model
-- **Entries** — browse/search/delete cached translations (regenerate-on-next-lookup)
+- **Usage & budget** — usage/cost summaries, daily/monthly free-tier budgets, enforcement mode, account allowances and overrides; provider token pricing is configurable under Providers
+- **Metered model routing** — non-owner generations default to the primary model alone, with an optional dedicated provider or owner-model routing; owner lookups can retain fusion
+- **Entries** — browse/search/delete cached translations, or explicitly regenerate an entry
 - **Reports** — triage user quality reports (dismiss, or delete the offending entry)
 - **Audit log** — append-only record of every admin mutation (365-day TTL)
 - **Clients** — top API clients by paid LLM calls, abuse flags, IP/CIDR blocklist ([docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md))
@@ -45,10 +48,11 @@ See [docs/design-translation-cache.md](docs/design-translation-cache.md) for the
 
 ```
 browser  →  localStorage L1  →  GET /api/translate-stream/:word?from=&to=   (SSE; web app)
-   │                                 GET /api/translate/:word?from=&to=          (plain JSON; extension, and the web app's fallback)
+   │                                 GET /api/translate/:word?from=&to=          (plain JSON; non-streaming clients and fallback)
    │                                         │
    │                           ┌────────── [Mongo cache] ──── hit → return
    │                           │        miss ↓
+   │                           │   [Usage allowance + budget reservation; non-owner model routing]
    │                           │   [LLM tier] two parallel calls — core (translation, IPA, senses; streamed)
    │                           │        + extras (mistakes, collocations, word family); in fusion mode the
    │                           │        first answer wins and the merge happens in the background
@@ -73,8 +77,14 @@ npm install
 ### 2. Start MongoDB
 
 ```bash
-docker compose up -d      # MongoDB 7 on localhost:27017 (data in a named volume)
+docker compose up -d mongo  # MongoDB 7, internal to the Compose network (no host port)
 ```
+
+For an API running on the host, publish MongoDB on loopback using a local-only
+Compose override (`ports: ["127.0.0.1:27017:27017"]` on the `mongo` service),
+or use another MongoDB instance reachable via `MONGODB_URI`. Do not change the
+production stack's private MongoDB exposure. Avoid bare `docker compose up -d`
+for local development: it also starts the production-configured API service.
 
 ### 3. Configure Auth0
 
@@ -114,7 +124,7 @@ npm run dev:all          # Vite web (:5173) + Express API (:3001), both with hot
 
 - Web: http://localhost:5173
 - API: http://localhost:3001 (proxied by Vite)
-- Mongo: `localhost:27017`
+- Mongo: the address configured in `MONGODB_URI` (e.g. `localhost:27017` with the local-only port override above)
 
 Verify the cache: watch the API logs — the first lookup of a word says *via llm* (or *via dictionary* if the LLM is unavailable); the second says *via cache*.
 
@@ -227,19 +237,19 @@ production troubleshooting.
 
 ```
 src/
-  api/            dictionary.ts, userData.ts, favorites.ts, report.ts, admin.ts
+  api/            dictionary.ts, userData.ts, favorites.ts, report.ts, admin.ts, usage.ts
   components/     SearchBar, WordEntry, PosSection, AudioButton, WordOfDay,
                   MoreExamplesButton, ReportButton, Sidebar, Header,
-                  AuthButton, ErrorBoundary
+                  AuthButton, ErrorBoundary, UsageChip, QuotaPanel, VerifyEmailCard
                   admin/          admin-only components (provider cards/forms,
                                   benchmark form/results, playground form/results,
                                   entry filters/rows/detail drawer, audit table)
   hooks/          useDictionary, useUserData, useFavorites, useTheme,
-                  useDocumentMeta, useAdminAuth
+                  useDocumentMeta, useAdminAuth, useAccessToken, useUsage
   i18n/           I18nContext, translations (UI copy, multiple languages)
-  pages/          Home, WordPage, HistoryPage, AboutPage, PrivacyPage
+  pages/          Home, WordPage, BrowsePage, HistoryPage, AboutPage, PrivacyPage
                   admin/          Overview, Providers, Latency, Playground,
-                                  Entries, Reports, Activity, Clients, Audit (lazy-loaded, §Admin portal)
+                                  Entries, Reports, Activity, Clients, Usage, Audit (lazy-loaded, §Admin portal)
   styles/         app.css, admin.css
   vite‑env.d.ts   Vite / import.meta.env typings
 public/           favicon.svg, favicon.png, favicon.jpeg, robots.txt
@@ -272,6 +282,8 @@ server/
   abuseGuard.ts   LLM abuse guard: IP blocklist, bot refusal, per-IP daily LLM budget
   activityLog.ts  Per-lookup activity log, entry-creator attribution + privacy retention
   db.ts           Mongo connection + index provisioning
+  usage/          Usage metering, pricing, reservations, UTC windows, account verification,
+                  settings, alerts and /api/usage/* routes
   cache/
     translationCache.ts   Cache for lookup results (TTL 1 year)
   providers/
@@ -279,7 +291,9 @@ server/
       types.ts          LlmProvider interface + error types
       openaiCompat.ts   Shared OpenAI‑compatible (Chat Completions) adapter
       responses.ts      OpenAI Responses adapter
-      translateFlow.ts  Lookup flow shared by both adapters: parallel core + extras calls, partial snapshots
+      anthropic.ts      Anthropic Messages adapter
+      usage.ts          Token usage normalization and aggregation
+      translateFlow.ts  Lookup flow shared by LLM adapters: parallel core + extras calls, partial snapshots
       prompts.ts        Prompt builders (constant system prefixes; request data only in user messages)
       parse.ts          Lenient JSON parsing of model output
       streamJson.ts     Repairs half-written model JSON into token-level partial snapshots
@@ -306,6 +320,7 @@ server/
     playground.ts     Ad-hoc direct LLM lookups (cache bypassed)
     entries.ts        Cache entries + reports browse/delete
     clients.ts        Per-client usage aggregation (admin Clients page)
+    usage.ts          Usage summaries and account allowance administration
     audit.ts          Append-only admin_audit log
 docs/
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
@@ -314,6 +329,8 @@ docs/
   design‑geo‑load‑balancing.md  Multi-region deployment design (not yet implemented)
   ui‑i18n‑and‑themes.md         Dark/light theming + UI i18n design
   design‑llm‑abuse‑guard.md     LLM spend protection, Clients page, entry attribution (2026-10-30 incident)
+  design-llm-usage-quotas.md     Usage tiers, budgets, metered routing and rollout design
+  to-do-llm-usage-quotas.md      Implementation status and deferred payments work
   security.md                   Threat model, findings & mitigations, hardening
 docker‑compose.yml      Production stack (mongo + api) — see Production deployment
 Dockerfile              Production API image
@@ -336,9 +353,19 @@ Dockerfile              Production API image
 | `npm run test:watch` | Tests in watch mode |
 | `npm run llm:ping` | Test the active LLM provider (via `scripts/llm‑ping.ts`) |
 | `npm run eval` | LLM output-quality eval harness (`scripts/eval-harness.ts`) |
+| `npm run deploy:prod` / `deploy:api` / `deploy:web` | Deploy all / API only / web only to production (live operation) |
+| `npm run prerender:prod` | Prerender using MongoDB on the production Compose network |
 | `npm run prerender` | Prerender word pages for SEO (`scripts/prerender.ts`) |
 | `npm run ext:build` / `ext:dev` / `ext:test` / `ext:install` | Browser extension build/dev/test (separate workspace in `extension/`) |
 | `npm start` | Production server start — for local/CI use only; **the live server runs via Docker** (`docker-compose.yml`), not this command. See [Production deployment](#production-deployment). |
+
+Root tests include `**/*.test.ts`, including extension tests, but root typecheck
+and build do **not** cover the extension. For extension changes, also run
+`npm run ext:install`, `npm run ext:test`, `npm run ext:build` and
+`npx tsc --noEmit -p extension/tsconfig.json`. Store packaging uses
+`npm --prefix extension run build:prod`; see [extension/RELEASE.md](extension/RELEASE.md).
+CI currently runs typecheck, frontend build, API health smoke-start and a production
+dependency audit; tests and extension checks must be run separately.
 
 Non-npm operational scripts (not run via npm):
 
@@ -378,6 +405,22 @@ Non-npm operational scripts (not run via npm):
 4. **Publish**: `rsync -a --delete dist/ /var/www/html/dict.ai-dictionary.org/` (override with `WEB_ROOT=…`).
 
 It fails fast if the web root doesn't exist (e.g. not on the prod host).
+
+### Verification and rollback preparation
+
+Before deploying, fetch and verify the intended branch/commit, run `npm ci`,
+`npm run typecheck` and `npm test`. Save the running API image ID/tag and back up
+the nginx web root if rollback is needed; the deploy script does not create backups.
+
+After deployment, check `docker compose ps`, API startup logs, and:
+
+```bash
+curl -fsS http://127.0.0.1:3002/health
+curl -fsSL https://dict.ai-dictionary.org/word/hello/ > /dev/null
+curl -fsS https://dict.ai-dictionary.org/sitemap.xml > /dev/null
+```
+
+The health endpoint is `/health` on the API, not `/api/health`.
 
 ### Frontend (static)
 
@@ -445,6 +488,7 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 ### Operational notes
 
 - Per‑IP rate limits (configurable via env): `/api/translate` and `/api/translate-stream` 5 req/min (shared), `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/admin/*` 30 req/min. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
+- **Usage tiers and free-tier spend controls** — default `USAGE_ENFORCEMENT=shadow` records usage and would-be quota refusals without enforcing usage quotas (existing abuse protections still apply). Review **Admin → Usage & budget** before switching to `on`; cached words do not consume generation allowances. Payments/credit checkout remain deferred. See [usage design](docs/design-llm-usage-quotas.md) and [implementation checklist](docs/to-do-llm-usage-quotas.md).
 - **Daily LLM budget, bot refusal and IP blocklist** (added after a GPTBot crawl drove up token spend on 2026-10-29/30): per-minute limits alone don't cap daily spend, so each IP also gets a rolling-24 h budget of paid LLM calls (`LLM_DAILY_BUDGET_PER_IP`), self-identified bots get 403 on LLM routes, and admins can block IPs/CIDRs from **Admin → Clients**. Host nginx also 403s known crawlers on `/api/` and 404s crawlers on `/word/*` pages that have no prerendered file. Details: [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md).
 - Every nginx vhost that proxies `/api/` **must** send `X-Forwarded-For`; otherwise the API (with `TRUST_PROXY=1`) sees all of that domain's visitors as the docker gateway IP, sharing one rate limit and budget.
 - Request body limit is 64 KB.
@@ -497,7 +541,8 @@ Implementation notes** for exactly what shipped vs. what's deferred) and
   5. Visit `/admin`.
 - Pages:
   - **Overview** — active provider, health, lookup/latency metrics, recent changes. The "Active provider" card also has an optional **Secondary** dropdown that enables **LLM fusion** (pair a second provider/model — lookups call both in parallel, answer with the first to finish, and cache the merged entry in the background).
-  - **Providers** — CRUD, encrypted keys, models, connection test, hot-swap active provider/model
+  - **Usage & budget** — spend and generation summaries, free-tier budget/enforcement settings, account search and allowance overrides
+  - **Providers** — CRUD, encrypted keys, models and token prices, connection test, hot-swap active provider/model
   - **Latency lab** — on-demand benchmarks, compare providers, promote a winner
   - **Playground** — look up a word via a *direct LLM call* (translation cache
     bypassed) against up to 6 provider/model targets at once; rendered preview
