@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import AuthButton from './AuthButton'
+import UsageChip from './UsageChip'
 import { useI18n } from '../i18n/I18nContext'
 import { LOCALES, LOCALE_NAMES, type Locale } from '../i18n/translations'
 import { useTheme } from '../hooks/useTheme'
@@ -104,6 +105,7 @@ export default function Header() {
         <Link to="/privacy" className="header-nav-link">{t('nav.privacy')}</Link>
         <LanguageSwitcher />
         <ThemeToggle />
+        <UsageChip />
         <AuthButton />
       </nav>
 
@@ -145,6 +147,9 @@ export default function Header() {
             <div className="header-menu-row">
               <span className="header-menu-label">{t('nav.interfaceLanguage')}</span>
               <LanguageSwitcher />
+            </div>
+            <div className="header-menu-usage">
+              <UsageChip />
             </div>
             <div className="header-menu-auth">
               <AuthButton />

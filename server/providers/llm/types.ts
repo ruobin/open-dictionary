@@ -94,11 +94,41 @@ export interface LlmTranslationContent {
 }
 
 /** Vendor-reported token usage, when the API surfaces it. Used by the Latency
- *  Lab benchmark to report `tokensOut` (design doc §9.3) — not persisted or
- *  shown anywhere in the normal translate path. */
+ *  Lab benchmark to report `tokensOut` (design doc §9.3). Usage metering
+ *  (docs/design-llm-usage-quotas.md §5.5) gets every call through a
+ *  {@link UsageSink} instead, because a result's `meta` misses retries and
+ *  fusion's background calls. */
 export interface LlmUsageMeta {
   promptTokens?: number
   completionTokens?: number
+}
+
+/** Which part of a generation a model call was for. */
+export type LlmCallKind = 'core' | 'extras' | 'fuse' | 'examples'
+
+/** Token usage of one upstream model call. */
+export interface LlmUsageRecord {
+  /** Provider id that made the call, e.g. "llm:deepseek:deepseek-v4-flash". */
+  providerId: string
+  kind: LlmCallKind
+  promptTokens: number
+  completionTokens: number
+  /** True when the vendor reported no usage and the numbers are a size-based estimate. */
+  estimated: boolean
+}
+
+/**
+ * Receives the token usage of every upstream call made for one generation,
+ * including discarded retries and fusion's late calls. Implementations must
+ * never throw.
+ */
+export interface UsageSink {
+  add(record: LlmUsageRecord): void
+}
+
+/** Per-call options for the non-translate provider methods. */
+export interface LlmCallOptions {
+  usage?: UsageSink
 }
 
 export interface LlmTranslationResult {
@@ -127,6 +157,8 @@ export interface LlmTranslateOptions {
    *  translate() is always the authority. Providers that cannot stream simply
    *  never call it. */
   onPartial?: (partial: LlmTranslationContent) => void
+  /** Receives the token usage of every upstream call this translate() makes. */
+  usage?: UsageSink
 }
 
 /**
@@ -167,6 +199,7 @@ export interface LlmMoreExamplesRequest {
 
 export interface LlmMoreExamplesResult {
   examples: LlmGradedExample[]
+  meta?: LlmUsageMeta
 }
 
 export type LlmErrorCode =
@@ -211,11 +244,11 @@ export interface LlmProvider {
   /** Stable cache-key id, e.g. "llm:glm:glm-5.2". */
   readonly id: string
   translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult>
-  moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult>
+  moreExamples(req: LlmMoreExamplesRequest, opts?: LlmCallOptions): Promise<LlmMoreExamplesResult>
   /** LLM-driven merge of two structured responses (fusion mode). Optional —
    *  backed by any provider that exposes a raw chat completion (the
    *  OpenAI-compatible adapter implements it). The {@link FusionProvider}
    *  falls back to a deterministic code merge when this is absent or throws,
    *  so fusion is never less available than a single provider. */
-  fuse?(req: LlmFuseRequest): Promise<LlmFuseResult>
+  fuse?(req: LlmFuseRequest, opts?: LlmCallOptions): Promise<LlmFuseResult>
 }

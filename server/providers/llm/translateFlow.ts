@@ -9,6 +9,7 @@ import {
 import { buildCoreMessages, buildExtrasMessages, type ChatMessage } from './prompts'
 import { parseContent, parseExtrasContent, type LlmExtras } from './parse'
 import { extractPartialContent, extractPartialExtras } from './streamJson'
+import { trackCall } from './usage'
 
 /**
  * Wire-agnostic translate flow shared by the Chat Completions and Responses
@@ -75,6 +76,8 @@ export type Transport = (messages: ChatMessage[], call: TransportCall) => Promis
 export interface TranslateFlowConfig {
   /** Retry the core call once when the model returns unparseable output. */
   retryBadResponse?: boolean
+  /** Provider id stamped on usage records (`llm:<vendor>:<model>`). Defaults to `llm:<vendor>`. */
+  providerId?: string
 }
 
 export function mergeUsage(a: LlmUsageMeta | undefined, b: LlmUsageMeta | undefined): LlmUsageMeta | undefined {
@@ -94,6 +97,7 @@ export async function runTranslate(
 ): Promise<LlmTranslationResult> {
   const label = `text="${req.text.slice(0, 60)}"`
   const sameLang = req.sourceLang.toLowerCase() === req.targetLang.toLowerCase()
+  const providerId = config.providerId ?? `llm:${vendor}`
 
   // ---- partial snapshots (display only; the resolved result is the authority) ----
   let coreText = ''
@@ -135,12 +139,24 @@ export async function runTranslate(
 
   try {
     const extrasAbort = new AbortController()
-    const extrasPromise = transport(buildExtrasMessages(req), {
+    const extrasMessages = buildExtrasMessages(req)
+    const extrasCall = trackCall(opts.usage, providerId, 'extras', extrasMessages)
+    const extrasPromise = transport(extrasMessages, {
       kind: 'extras',
       label: `extras ${label}`,
       onText: onExtrasText,
       signal: extrasAbort.signal,
     })
+      .then(
+        (r) => {
+          extrasCall.ok(r.content, r.meta)
+          return r
+        },
+        (err: unknown) => {
+          extrasCall.fail(err, extrasText)
+          throw err
+        }
+      )
       .then((r) => ({ extras: parseExtrasContent(vendor, r.content), meta: r.meta }))
       .catch((err: unknown) => {
         if (!extrasAbort.signal.aborted) {
@@ -152,9 +168,20 @@ export async function runTranslate(
     const attempts = config.retryBadResponse ? 2 : 1
     let content: ReturnType<typeof parseContent> | undefined
     let coreMeta: LlmUsageMeta | undefined
+    const coreMessages = buildCoreMessages(req)
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const res = await transport(buildCoreMessages(req), { kind: 'core', label: `core ${label}`, onText: onCoreText })
+        // Each attempt is reported, including one whose output is then
+        // discarded as unparseable: the vendor billed it either way.
+        const coreCall = trackCall(opts.usage, providerId, 'core', coreMessages)
+        let res: TransportResult
+        try {
+          res = await transport(coreMessages, { kind: 'core', label: `core ${label}`, onText: onCoreText })
+        } catch (err) {
+          coreCall.fail(err, coreText)
+          throw err
+        }
+        coreCall.ok(res.content, res.meta)
         coreText = res.content
         coreDone = true
         publish.call()

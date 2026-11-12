@@ -15,6 +15,10 @@ const ADMIN_AUDIT_TTL_SECONDS = 365 * 24 * 60 * 60 // 1 year
 // most privacy-sensitive collection in the app, so it gets the shortest TTL.
 const ACTIVITY_LOG_TTL_SECONDS = 180 * 24 * 60 * 60 // 180 days
 
+// LLM usage ledger (docs/design-llm-usage-quotas.md §5.6): same retention as
+// the activity log, which the privacy policy promises.
+const USAGE_LEDGER_TTL_SECONDS = 180 * 24 * 60 * 60 // 180 days
+
 /** Connects to MongoDB and ensures required indexes (idempotent). */
 export async function connectMongo(uri: string, dbName = 'open-dictionary'): Promise<Db> {
   client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 })
@@ -143,4 +147,22 @@ async function ensureIndexes(db: Db): Promise<void> {
     { expiresAt: 1 },
     { expireAfterSeconds: 0, name: 'blocked_clients_expiry' }
   )
+
+  // --- LLM usage tiers & quotas (docs/design-llm-usage-quotas.md §5.6) ---
+
+  // Day/month counters: each doc carries its own expiry (IP-keyed ones are gone within 2 days).
+  await db
+    .collection('usage_counters')
+    .createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'usage_counters_expiry' })
+  // One doc per settled generation; the TTL index on `ts` doubles as the time-range index.
+  const usageLedger = db.collection('usage_ledger')
+  await usageLedger.createIndex({ ts: 1 }, { expireAfterSeconds: USAGE_LEDGER_TTL_SECONDS, name: 'usage_ledger_ttl' })
+  await usageLedger.createIndex({ 'principal.sub': 1, ts: -1 }, { name: 'usage_ledger_sub_ts' })
+  await usageLedger.createIndex({ 'principal.ip': 1, ts: -1 }, { name: 'usage_ledger_ip_ts' })
+  // The reservation estimate reads the newest costs per provider and action.
+  await usageLedger.createIndex({ routeProviderId: 1, action: 1, ts: -1 }, { name: 'usage_ledger_provider_ts' })
+  await db.collection('accounts').createIndex({ lastSeenAt: -1 }, { name: 'accounts_last_seen' })
+  await db
+    .collection('usage_alerts')
+    .createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'usage_alerts_expiry' })
 }

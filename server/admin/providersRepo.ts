@@ -32,6 +32,12 @@ function settingsCol(db: Db) {
   return db.collection<LlmSettingsDoc>('llm_settings')
 }
 
+/** Price of a model in USD per million tokens (docs/design-llm-usage-quotas.md §5.5). */
+export interface LlmModelPricing {
+  inputUsdPerMTok: number
+  outputUsdPerMTok: number
+}
+
 export interface LlmProviderModel {
   id: string
   label?: string
@@ -39,6 +45,8 @@ export interface LlmProviderModel {
   timeoutMs?: number
   temperature?: number
   options?: LlmModelOptions
+  /** Unset = the env default price (LLM_DEFAULT_PRICE_*) is used, with a warning on the Usage page. */
+  pricing?: LlmModelPricing
 }
 
 export interface LlmProviderLastTest {
@@ -80,10 +88,18 @@ export interface LlmSettingsDoc {
    *  primary (activeProviderId) is always required for fusion. */
   secondaryProviderId?: ObjectId | null
   secondaryModelId?: string | null
+  /** Which model answers everyone except the owner (docs/design-llm-usage-quotas.md §5.4).
+   *  Absent = `primary`: the active primary on its own, without fusion. */
+  metered?: LlmMeteredSetting | null
   configVersion: number
   updatedAt?: Date
   updatedBy?: string
 }
+
+export type LlmMeteredSetting =
+  | { mode: 'primary' }
+  | { mode: 'same_as_owner' }
+  | { mode: 'provider'; providerId: ObjectId; modelId?: string | null }
 
 export interface LlmProviderView {
   id: string
@@ -124,6 +140,8 @@ const MAX_NAME_LEN = 64
 const MAX_MODELS = 20
 const MAX_MODEL_ID_LEN = 128
 const MAX_REQUEST_BODY_JSON_LEN = 2_000
+/** USD per million tokens; far above any real price, to catch typos (e.g. per-token prices). */
+const MAX_PRICE_PER_MTOK = 1_000
 
 export interface ValidatedProviderFields {
   name: string
@@ -242,7 +260,27 @@ function validateModels(raw: unknown, errors: string[]): LlmProviderModel[] {
         if (Object.keys(next).length > 0) options = next
       }
     }
-    out.push({ id, label, isDefault, timeoutMs, temperature, ...(options ? { options } : {}) })
+    let pricing: LlmModelPricing | undefined
+    if (e.pricing !== undefined && e.pricing !== null) {
+      const p = e.pricing as Record<string, unknown>
+      const price = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_PRICE_PER_MTOK
+      if (typeof p !== 'object' || Array.isArray(p) || !price(p.inputUsdPerMTok) || !price(p.outputUsdPerMTok)) {
+        errors.push(
+          `models[${i}].pricing must be { inputUsdPerMTok, outputUsdPerMTok }, each a number from 0 to ${MAX_PRICE_PER_MTOK}`
+        )
+      } else {
+        pricing = { inputUsdPerMTok: p.inputUsdPerMTok, outputUsdPerMTok: p.outputUsdPerMTok }
+      }
+    }
+    out.push({
+      id,
+      label,
+      isDefault,
+      timeoutMs,
+      temperature,
+      ...(options ? { options } : {}),
+      ...(pricing ? { pricing } : {}),
+    })
   })
   if (out.length === 0) return out
   if (defaultCount === 0) {
@@ -501,6 +539,35 @@ async function resolveTarget(
   if (!doc.enabled) return { ok: false, error: 'disabled' }
   if (modelId && !doc.models.some((m) => m.id === modelId)) return { ok: false, error: 'unknown_model' }
   return { ok: true, objectId, modelId }
+}
+
+export type SetMeteredResult =
+  | { ok: true; settings: LlmSettingsDoc }
+  | { ok: false; error: 'not_found' | 'disabled' | 'unknown_model' | 'validation' }
+
+/** Sets which model answers everyone except the owner (docs/design-llm-usage-quotas.md §5.4). */
+export async function setMetered(
+  input: { mode: 'primary' | 'same_as_owner' } | { mode: 'provider'; providerId: string; modelId?: string },
+  actorSub: string
+): Promise<SetMeteredResult> {
+  const db = requireDb()
+  let metered: LlmMeteredSetting
+  if (input.mode === 'provider') {
+    const r = await resolveTarget(db, input.providerId, input.modelId)
+    if (!r.ok) return r
+    metered = { mode: 'provider', providerId: r.objectId, modelId: r.modelId ?? null }
+  } else if (input.mode === 'primary' || input.mode === 'same_as_owner') {
+    metered = { mode: input.mode }
+  } else {
+    return { ok: false, error: 'validation' }
+  }
+  await settingsCol(db).updateOne(
+    { _id: 'llm' },
+    { $inc: { configVersion: 1 }, $set: { metered, updatedAt: new Date(), updatedBy: actorSub } },
+    { upsert: true }
+  )
+  const settings = await settingsCol(db).findOne({ _id: 'llm' })
+  return { ok: true, settings: settings as LlmSettingsDoc }
 }
 
 /**

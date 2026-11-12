@@ -137,6 +137,8 @@ describe('lookupWordStream', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const pending = lookupWordStream('hello', 'en', 'en', { signal: controller.signal })
+    // The request starts after the (async) token lookup; abort it once it's in flight.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     controller.abort()
     await expect(pending).rejects.toBeInstanceOf(LookupError)
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -144,5 +146,58 @@ describe('lookupWordStream', () => {
 
   it('rejects an empty word', async () => {
     await expect(lookupWordStream('   ')).rejects.toMatchObject({ code: 'not_found' })
+  })
+})
+
+describe('lookups and usage quotas (docs/design-llm-usage-quotas.md)', () => {
+  it('sends the access token of a signed-in user', async () => {
+    const fetchMock = vi.fn<FetchFn>(async () => sse([['done', FULL]]))
+    vi.stubGlobal('fetch', fetchMock)
+    await lookupWordStream('hello', 'en', 'en', { getToken: async () => 'tok-123' })
+    expect((fetchMock.mock.calls[0][1]?.headers as Record<string, string>).Authorization).toBe('Bearer tok-123')
+  })
+
+  it('goes out anonymous when there is no token', async () => {
+    const fetchMock = vi.fn<FetchFn>(async () => sse([['done', FULL]]))
+    vi.stubGlobal('fetch', fetchMock)
+    await lookupWordStream('hello', 'en', 'en', { getToken: async () => null })
+    expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty('Authorization')
+  })
+
+  it('turns a 429 quota refusal into LookupError(quota_exceeded) with its reason and next steps', async () => {
+    const body = {
+      error: 'quota_exceeded',
+      reason: 'anon_daily',
+      limit: 5,
+      used: 5,
+      resetAt: '2026-11-13T00:00:00.000Z',
+      actions: ['sign_in', 'wait'],
+    }
+    vi.stubGlobal('fetch', vi.fn<FetchFn>(async () => jsonResponse(body, 429)))
+    const err = await lookupWordStream('hello').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(LookupError)
+    expect(err).toMatchObject({ code: 'quota_exceeded', quota: { reason: 'anon_daily', limit: 5, actions: ['sign_in', 'wait'] } })
+  })
+
+  it('tells usage listeners when a new word was charged (usage event, or X-Generation on the plain route)', async () => {
+    const { onUsageChanged } = await import('./usage')
+    const listener = vi.fn()
+    const off = onUsageChanged(listener)
+    vi.stubGlobal('fetch', vi.fn<FetchFn>(async () => sse([['usage', { source: 'free' }], ['done', FULL]])))
+    await lookupWordStream('hello')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    store.clear()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchFn>(async (url) =>
+        String(url).includes('translate-stream')
+          ? new Response('nope', { status: 404 })
+          : new Response(JSON.stringify(FULL), { headers: { 'content-type': 'application/json', 'x-generation': 'charged' } })
+      )
+    )
+    await lookupWordStream('hello')
+    expect(listener).toHaveBeenCalledTimes(2)
+    off()
   })
 })

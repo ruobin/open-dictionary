@@ -91,7 +91,7 @@ export function startLookupStream(
     } else if (event.type === 'done') {
       finish({ ok: true, entries: event.entries })
     } else if (event.type === 'error') {
-      finish({ ok: false, error: event.error })
+      finish(event.quota ? { ok: false, error: event.error, quota: event.quota } : { ok: false, error: event.error })
     }
   })
 

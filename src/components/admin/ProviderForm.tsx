@@ -36,6 +36,9 @@ interface ModelRow {
   isDefault: boolean
   timeoutMs: string
   temperature: string
+  /** USD per million tokens; both blank = no price (the default price is charged). */
+  priceIn: string
+  priceOut: string
   options?: ProviderModelInput['options']
 }
 
@@ -49,6 +52,8 @@ function newModelRow(m?: ProviderModelInput): ModelRow {
     isDefault: m?.isDefault ?? false,
     timeoutMs: m?.timeoutMs ? String(m.timeoutMs) : '',
     temperature: m?.temperature !== undefined ? String(m.temperature) : '',
+    priceIn: m?.pricing ? String(m.pricing.inputUsdPerMTok) : '',
+    priceOut: m?.pricing ? String(m.pricing.outputUsdPerMTok) : '',
     options: m?.options,
   }
 }
@@ -162,6 +167,11 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
         isDefault: m.isDefault,
         timeoutMs: m.timeoutMs.trim() ? Number(m.timeoutMs) : undefined,
         temperature: m.temperature.trim() ? Number(m.temperature) : undefined,
+        // Both blank clears the price; one blank is sent as-is so the server's validation explains it.
+        pricing:
+          m.priceIn.trim() || m.priceOut.trim()
+            ? { inputUsdPerMTok: Number(m.priceIn), outputUsdPerMTok: Number(m.priceOut) }
+            : null,
         options: m.options,
       }))
   }
@@ -301,7 +311,8 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
         <table className="admin-table admin-models-table">
           <thead>
             <tr>
-              <th>Default</th><th>Model ID</th><th>Label</th><th>Timeout (ms)</th><th>Temp</th><th />
+              <th>Default</th><th>Model ID</th><th>Label</th><th>Timeout (ms)</th><th>Temp</th>
+              <th title="USD per million input tokens">$/M in</th><th title="USD per million output tokens">$/M out</th><th />
             </tr>
           </thead>
           <tbody>
@@ -320,6 +331,8 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
                 <td><input className="admin-input" value={m.label} onChange={(e) => updateModel(m.key, { label: e.target.value })} placeholder="optional" /></td>
                 <td><input className="admin-input admin-input-narrow" value={m.timeoutMs} onChange={(e) => updateModel(m.key, { timeoutMs: e.target.value })} placeholder="10000" /></td>
                 <td><input className="admin-input admin-input-narrow" value={m.temperature} onChange={(e) => updateModel(m.key, { temperature: e.target.value })} placeholder="0.7" /></td>
+                <td><input className="admin-input admin-input-narrow" value={m.priceIn} onChange={(e) => updateModel(m.key, { priceIn: e.target.value })} placeholder="0.30" inputMode="decimal" /></td>
+                <td><input className="admin-input admin-input-narrow" value={m.priceOut} onChange={(e) => updateModel(m.key, { priceOut: e.target.value })} placeholder="1.20" inputMode="decimal" /></td>
                 <td>
                   {models.length > 1 && (
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeModel(m.key)}>Remove</button>
@@ -330,6 +343,10 @@ export default function ProviderForm({ auth, mode, initial, onSaved, onCancel }:
           </tbody>
         </table>
         <button type="button" className="btn btn-ghost btn-sm" onClick={addModel}>+ model</button>
+        <p className="admin-hint">
+          Prices (USD per million tokens) turn token usage into the dollar budget on Usage &amp; budget. A model without
+          a price is charged the server's default price.
+        </p>
       </div>
 
       <div className="admin-field">

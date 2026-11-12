@@ -151,6 +151,14 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `*_RATE_LIMIT_RPM` | no | see [Operational notes](#operational-notes) | Per-route per-IP rate limits: `TRANSLATE`, `MORE_EXAMPLES`, `FAVORITES`, `USERDATA`, `SUGGEST`, `WORD_OF_DAY`, `REPORT`, `ADMIN` prefixes |
 | `LLM_DAILY_BUDGET_PER_IP` | no | `300` | Paid (cache-miss) LLM calls per IP per rolling 24 h; over it, only cached words are served (429 on misses). `0` disables. See [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md) |
 | `LLM_BLOCK_BOTS` | no | `1` | Refuse self-identified crawlers/scripts (GPTBot, curl, python-requests, …) on LLM routes with 403. `0` to allow (e.g. manual curl testing) |
+| `USAGE_ENFORCEMENT` | no | `shadow` | LLM usage quotas: `off`, `shadow` (count and record would-be refusals, refuse nothing) or `on`. See [docs/design-llm-usage-quotas.md](docs/design-llm-usage-quotas.md); every `USAGE_*` value can be overridden in **Admin → Usage & budget** |
+| `USAGE_FREE_TIER_DAILY_USD` / `USAGE_FREE_TIER_MONTHLY_USD` | no | `1.00` / `5.00` | Free budget (USD) for all free new words combined, per UTC day / month |
+| `USAGE_FREE_TIER_PACING` | no | `even` | `even`: today's budget = min(daily, what's left of the month ÷ days left); `off`: first come, first served |
+| `USAGE_ANON_DAILY_PER_IP` | no | `5` | Free new words per IP (IPv6 /64) per UTC day for anonymous and unverified users; `0` = sign in to generate |
+| `USAGE_ANON_SHARE` | no | `0.5` | Share of today's free budget the IP allowance may use |
+| `USAGE_USER_DAILY_FREE` | no | `20` | Free new words per UTC day for an account with a verified email |
+| `LLM_DEFAULT_PRICE_IN_PER_MTOK` / `LLM_DEFAULT_PRICE_OUT_PER_MTOK` | no | `1` / `4` | USD per million tokens for models with no price set in **Admin → Providers** |
+| `USAGE_ALERT_WEBHOOK_URL` | no | — | Optional URL budget alerts are POSTed to as JSON |
 
 #### Admin portal (`/admin` — see [docs/design-admin-portal.md](docs/design-admin-portal.md))
 

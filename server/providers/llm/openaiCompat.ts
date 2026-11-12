@@ -1,5 +1,6 @@
 import {
   LlmProviderError,
+  type LlmCallOptions,
   type LlmFuseRequest,
   type LlmFuseResult,
   type LlmMoreExamplesRequest,
@@ -17,6 +18,7 @@ import {
 } from './prompts'
 import { parseContent, parseMoreExamplesContent } from './parse'
 import { runTranslate, type Transport } from './translateFlow'
+import { trackCall } from './usage'
 import { readSse } from '../../../shared/sse'
 import { buildLadder, CORE_MAX_TOKENS, EXTRAS_MAX_TOKENS } from './requestVariants'
 
@@ -81,6 +83,8 @@ interface ChatCall {
   label: string
   maxTokens: number
   stream: boolean
+  /** Ask a streamed response to end with a usage chunk (`stream_options.include_usage`). */
+  includeUsage?: boolean
   onText?: (accumulated: string) => void
   signal?: AbortSignal
 }
@@ -119,6 +123,9 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
 
   const ladder = buildLadder(options.reasoningRungs ?? [{}], options.requestBody)
   let streamEnabled = options.stream ?? true
+  // Without `stream_options.include_usage`, a streamed Chat Completions call
+  // reports no token usage at all. Turned off for good if a gateway rejects it.
+  let streamUsageEnabled = true
 
   /** One POST /chat/completions (streaming or not) with timeout/error handling.
    *  `extraBody` is the current rung of the reasoning-off ladder. */
@@ -154,7 +161,10 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
       ...extraBody,
     }
     if (jsonMode) requestBody.response_format = { type: 'json_object' }
-    if (call.stream) requestBody.stream = true
+    if (call.stream) {
+      requestBody.stream = true
+      if (call.includeUsage) requestBody.stream_options = { include_usage: true }
+    }
 
     const abortError = (elapsed: number, phase: string): LlmProviderError =>
       timedOut
@@ -283,10 +293,24 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
   ): Promise<ChatResult> {
     const base = { label: call.label, maxTokens: call.maxTokens, onText: call.onText, signal: call.signal }
     if (call.wantStream && streamEnabled) {
+      const streamed = (includeUsage: boolean): Promise<ChatResult> =>
+        ladder.run((rung) => callChat(messages, { ...base, stream: true, includeUsage }, rung))
       try {
-        return await ladder.run((rung) => callChat(messages, { ...base, stream: true }, rung))
+        return await streamed(streamUsageEnabled)
       } catch (err) {
         if (!isBadRequest(err)) throw err
+        if (streamUsageEnabled) {
+          // A gateway that rejects `stream_options` still streams fine without
+          // it; try that before blaming streaming itself.
+          try {
+            const result = await streamed(false)
+            streamUsageEnabled = false
+            console.warn(`[${vendor}] gateway rejected stream_options.include_usage — not sending it for ${id}`)
+            return result
+          } catch (retryErr) {
+            if (!isBadRequest(retryErr)) throw retryErr
+          }
+        }
         const result = await ladder.run((rung) => callChat(messages, { ...base, stream: false }, rung))
         // Only blame streaming once the same request succeeds without it.
         streamEnabled = false
@@ -309,20 +333,34 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
   return {
     id,
     translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult> {
-      return runTranslate(vendor, transport, req, opts)
+      return runTranslate(vendor, transport, req, opts, { providerId: id })
     },
-    async moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
-      const { content } = await send(buildMoreExamplesMessages(req), {
-        label: `moreExamples word="${req.word.slice(0, 60)}"`,
-        maxTokens: EXTRAS_MAX_TOKENS,
-      })
-      return { examples: parseMoreExamplesContent(vendor, content) }
+    async moreExamples(req: LlmMoreExamplesRequest, opts?: LlmCallOptions): Promise<LlmMoreExamplesResult> {
+      const messages = buildMoreExamplesMessages(req)
+      const tracked = trackCall(opts?.usage, id, 'examples', messages)
+      let result: ChatResult
+      try {
+        result = await send(messages, { label: `moreExamples word="${req.word.slice(0, 60)}"`, maxTokens: EXTRAS_MAX_TOKENS })
+      } catch (err) {
+        tracked.fail(err)
+        throw err
+      }
+      tracked.ok(result.content, result.meta)
+      const examples = parseMoreExamplesContent(vendor, result.content)
+      return result.meta ? { examples, meta: result.meta } : { examples }
     },
-    async fuse(req: LlmFuseRequest): Promise<LlmFuseResult> {
-      const { content, meta } = await send(buildFuseMessages(req), {
-        label: `fuse text="${req.request.text.slice(0, 60)}"`,
-        maxTokens: CORE_MAX_TOKENS,
-      })
+    async fuse(req: LlmFuseRequest, opts?: LlmCallOptions): Promise<LlmFuseResult> {
+      const messages = buildFuseMessages(req)
+      const tracked = trackCall(opts?.usage, id, 'fuse', messages)
+      let result: ChatResult
+      try {
+        result = await send(messages, { label: `fuse text="${req.request.text.slice(0, 60)}"`, maxTokens: CORE_MAX_TOKENS })
+      } catch (err) {
+        tracked.fail(err)
+        throw err
+      }
+      tracked.ok(result.content, result.meta)
+      const { content, meta } = result
       const parsed = parseContent(vendor, content)
       // Same defensive guard as translate(): in same-language define mode the
       // model occasionally re-introduces a translation field from the inputs.

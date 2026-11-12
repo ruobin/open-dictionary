@@ -30,6 +30,10 @@ export type AdminAuditAction =
   | 'report.dismiss'
   | 'client.block'
   | 'client.unblock'
+  | 'usage.settings.update'
+  | 'account.update'
+  | 'llm.metered.update'
+  | 'entry.regenerate'
 
 export interface AdminAuditTarget {
   providerId?: string

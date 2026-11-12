@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAdminOutletContext } from './AdminLayout'
 import {
   getMetrics,
+  getUsageSummary,
   listAudit,
   listProviders,
   getReportsSummary,
@@ -10,9 +11,32 @@ import {
   type MetricsSnapshot,
   type ProviderView,
   type ReportsSummary,
+  type UsageSummary,
 } from '../../api/admin'
 import { describeApiError } from '../../components/admin/adminErrors'
 import ActiveSwitcher from '../../components/admin/ActiveSwitcher'
+import MeteredSwitcher from '../../components/admin/MeteredSwitcher'
+
+const usd = (n: number): string => `$${n.toFixed(2)}`
+
+/** Budget problems worth a banner (docs/design-llm-usage-quotas.md §5.8). */
+function usageWarnings(summary: UsageSummary | null): string[] {
+  if (!summary) return []
+  const b = summary.budget
+  const out: string[] = []
+  const monthPct = b.monthCapUsd > 0 ? b.monthSpentUsd / b.monthCapUsd : 0
+  if (!b.freeTierEnabled) out.push('Free new words are paused (kill switch).')
+  else if (monthPct >= 1) out.push(`The monthly free budget is used up (${usd(b.monthSpentUsd)} of ${usd(b.monthCapUsd)}).`)
+  else if (monthPct >= 0.8) out.push(`${Math.round(monthPct * 100)}% of the monthly free budget is used (${usd(b.monthSpentUsd)} of ${usd(b.monthCapUsd)}).`)
+  if (b.freeTierEnabled && monthPct < 1 && b.todayBudgetUsd > 0 && b.todaySpentUsd >= b.todayBudgetUsd) {
+    out.push(`Today's free budget (${usd(b.todayBudgetUsd)}) is used up.`)
+  }
+  if (summary.metered?.warning) out.push(summary.metered.warning)
+  if (summary.unpriced.length > 0) {
+    out.push(`${summary.unpriced.length} model(s) used recently have no price set, so the default price is charged.`)
+  }
+  return out
+}
 
 export default function Overview() {
   const { auth, status, refreshStatus } = useAdminOutletContext()
@@ -20,17 +44,26 @@ export default function Overview() {
   const [providers, setProviders] = useState<ProviderView[]>([])
   const [recentAudit, setRecentAudit] = useState<AuditEntry[]>([])
   const [reportsSummary, setReportsSummary] = useState<ReportsSummary | null>(null)
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const loadAll = useCallback(() => {
     setLoading(true)
-    Promise.all([getMetrics(auth), listProviders(auth), listAudit(auth, { limit: 8 }), getReportsSummary(auth)])
-      .then(([m, p, a, r]) => {
+    Promise.all([
+      getMetrics(auth),
+      listProviders(auth),
+      listAudit(auth, { limit: 8 }),
+      getReportsSummary(auth),
+      // The banner is a nice-to-have: a usage failure must not hide the rest.
+      getUsageSummary(auth, 7).catch(() => null),
+    ])
+      .then(([m, p, a, r, u]) => {
         setMetrics(m)
         setProviders(p)
         setRecentAudit(a)
         setReportsSummary(r)
+        setUsageSummary(u)
         setError(null)
       })
       .catch((err) => setError(describeApiError(err)))
@@ -57,9 +90,19 @@ export default function Overview() {
 
       {error && <div className="state-msg state-error">{error}</div>}
 
+      {usageWarnings(usageSummary).length > 0 && (
+        <div className="admin-banner" role="status">
+          {usageWarnings(usageSummary).map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+          <Link to="/admin/usage">Open Usage &amp; budget →</Link>
+        </div>
+      )}
+
       <section className="admin-card">
         <h2>Active provider{status?.secondaryProviderId ? 's (fusion)' : ''}</h2>
         <ActiveSwitcher auth={auth} status={status} providers={providers} onChanged={handleRefresh} />
+        <MeteredSwitcher auth={auth} status={status} providers={providers} onChanged={handleRefresh} />
         {status?.secondaryProviderId && (
           <p className="admin-hint">
             Fusion mode: every uncached lookup calls the primary and secondary in parallel and merges their results.

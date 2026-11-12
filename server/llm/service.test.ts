@@ -280,3 +280,84 @@ describe('llm/service: fusion (secondary provider)', () => {
     expect(service.status().secondaryProviderName).toBeUndefined()
   })
 })
+
+describe('llm/service: metered route (docs/design-llm-usage-quotas.md §5.4)', () => {
+  async function fusionService(metered?: Record<string, unknown>, extraDocs: LlmProviderDoc[] = []) {
+    process.env.CONFIG_ENCRYPTION_KEY = KEY
+    vi.resetModules()
+    const { createLlmService: freshCreate } = await import('./service')
+    const { encryptSecret } = await import('../admin/crypto')
+    const primaryId = new ObjectId()
+    const secondaryId = new ObjectId()
+    const docs = new Map<string, LlmProviderDoc>([
+      [primaryId.toHexString(), providerDoc({ _id: primaryId, apiKey: encryptSecret('sk-p') })],
+      [
+        secondaryId.toHexString(),
+        providerDoc({
+          _id: secondaryId,
+          name: 'Secondary',
+          vendor: 'glm',
+          apiKey: encryptSecret('sk-s'),
+          models: [{ id: 'glm-5.2', isDefault: true }],
+        }),
+      ],
+      ...extraDocs.map((d) => [d._id.toHexString(), { ...d, apiKey: encryptSecret('sk-x') }] as [string, LlmProviderDoc]),
+    ])
+    const service = freshCreate(ENV_ACTIVE, {
+      getSettings: async () => ({
+        _id: 'llm',
+        activeProviderId: primaryId,
+        secondaryProviderId: secondaryId,
+        configVersion: 30,
+        ...(metered ? { metered: metered as never } : {}),
+      }),
+      getProviderDoc: async (id: string) => docs.get(id) ?? null,
+    })
+    await service.reloadFromDb()
+    return service
+  }
+
+  it('defaults to the primary on its own, never the fusion pair', async () => {
+    const service = await fusionService()
+    expect(service.current()?.id).toMatch(/^llm:fusion:/)
+    expect(service.currentMetered()?.id).toBe('llm:deepseek:deepseek-chat')
+    expect(service.status().metered).toMatchObject({ mode: 'primary', id: 'llm:deepseek:deepseek-chat' })
+  })
+
+  it('"same as owner" gives everyone the full setup', async () => {
+    const service = await fusionService({ mode: 'same_as_owner' })
+    expect(service.currentMetered()).toBe(service.current())
+  })
+
+  it('uses a chosen provider and model', async () => {
+    const cheapId = new ObjectId()
+    const cheap = providerDoc({ _id: cheapId, name: 'Cheap', vendor: 'openrouter', models: [{ id: 'cheap/model', isDefault: true }] })
+    const service = await fusionService({ mode: 'provider', providerId: cheapId, modelId: 'cheap/model' }, [cheap])
+    expect(service.currentMetered()?.id).toBe('llm:openrouter:cheap/model')
+    expect(service.status().metered).toMatchObject({ mode: 'provider', providerName: 'Cheap', model: 'cheap/model' })
+  })
+
+  it('falls back to the primary alone (with a warning) when the chosen provider is gone or disabled', async () => {
+    const gone = await fusionService({ mode: 'provider', providerId: new ObjectId() })
+    expect(gone.currentMetered()?.id).toBe('llm:deepseek:deepseek-chat')
+    expect(gone.status().metered?.warning).toMatch(/no longer exists/)
+
+    const offId = new ObjectId()
+    const off = await fusionService({ mode: 'provider', providerId: offId }, [providerDoc({ _id: offId, name: 'Off', enabled: false })])
+    expect(off.currentMetered()?.id).toBe('llm:deepseek:deepseek-chat')
+    expect(off.status().metered?.warning).toMatch(/disabled/)
+  })
+
+  it('is the env provider in env-baseline mode, and off when the LLM tier is off', async () => {
+    const env = createLlmService(ENV_ACTIVE, { getSettings: async () => null, getProviderDoc: async () => null })
+    await env.reloadFromDb()
+    expect(env.currentMetered()).toBe(FAKE_ENV_PROVIDER)
+
+    const off = createLlmService(ENV_ACTIVE, {
+      getSettings: async () => ({ _id: 'llm', activeProviderId: null, configVersion: 1 }),
+      getProviderDoc: async () => null,
+    })
+    await off.reloadFromDb()
+    expect(off.currentMetered()).toBeNull()
+  })
+})

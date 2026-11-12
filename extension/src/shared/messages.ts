@@ -13,6 +13,28 @@ export type ExtensionErrorCode =
   | 'rate_limited'
   | 'unauthorized'
   | 'auth_failed'
+  /** A new word was refused by a usage quota (docs/design-llm-usage-quotas.md §5.7); see `quota`. */
+  | 'quota_exceeded'
+
+/** Body of a `429 quota_exceeded`: why, when it resets, and what the user can do. */
+export interface QuotaDetail {
+  reason: string
+  limit: number
+  used: number
+  resetAt: string
+  actions: string[]
+}
+
+/** `GET /api/usage/me` — the caller's free new words today. */
+export interface UsageInfo {
+  tier: 'owner' | 'exempt' | 'user' | 'anon'
+  authState: 'valid' | 'anonymous' | 'invalid'
+  enforcement: 'off' | 'shadow' | 'on'
+  emailVerified: boolean | null
+  today: { used: number; limit: number; pool: 'account' | 'ip'; resetAt: string } | null
+  freeTier: 'open' | 'budget_reached' | 'paused'
+  verifiedLimit?: number
+}
 
 export interface ExtensionSettings {
   sourceLang: string
@@ -49,6 +71,8 @@ export type ExtensionMessage =
   | { type: 'ADD_HISTORY'; entry: FavoriteKey }
   /** In-page card -> worker: play a pronunciation clip (the page's CSP would block it locally). */
   | { type: 'PLAY_AUDIO'; src: string }
+  /** Popup -> worker: the caller's free new words today. */
+  | { type: 'GET_USAGE' }
 
 /** Worker -> offscreen document. `target` lets the offscreen listener ignore everything else. */
 export interface OffscreenPlayAudioMessage {
@@ -61,7 +85,7 @@ export type AudioResponse = { ok: true } | { ok: false; error: 'audio_failed' }
 
 export type LookupResponse =
   | { ok: true; entries: DictionaryEntry[] }
-  | { ok: false; error: ExtensionErrorCode }
+  | { ok: false; error: ExtensionErrorCode; quota?: QuotaDetail }
 
 /** Name of the long-lived `chrome.runtime.connect` port used for streamed lookups. */
 export const LOOKUP_STREAM_PORT = 'lookup-stream'
@@ -80,7 +104,7 @@ export interface LookupStreamRequest {
 export type LookupStreamEvent =
   | { type: 'partial'; entries: DictionaryEntry[] }
   | { type: 'done'; entries: DictionaryEntry[] }
-  | { type: 'error'; error: ExtensionErrorCode }
+  | { type: 'error'; error: ExtensionErrorCode; quota?: QuotaDetail }
 
 export type SettingsResponse = { ok: true; settings: ExtensionSettings }
 
@@ -94,6 +118,8 @@ export type HistoryResponse =
   | { ok: true; history: FavoriteKey[] }
   | { ok: false; error: ExtensionErrorCode }
 
+export type UsageResponse = { ok: true; usage: UsageInfo } | { ok: false; error: ExtensionErrorCode }
+
 /** Union of every response shape a background message handler can return.
  *  Callers narrow on the message `type` they sent, then on `ok`. */
 export type ExtensionResponse =
@@ -102,4 +128,5 @@ export type ExtensionResponse =
   | AuthResponse
   | FavoritesResponse
   | HistoryResponse
+  | UsageResponse
   | AudioResponse

@@ -158,3 +158,69 @@ describe('lookupClient.lookupWordStream', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
+
+describe('lookupClient and usage quotas (docs/design-llm-usage-quotas.md)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    installFakeChromeStorage()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const DONE = [{ word: 'hello', meanings: [] }]
+  function doneStream(): Response {
+    const bytes = new TextEncoder().encode(`event: done\ndata: ${JSON.stringify(DONE)}\n\n`)
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(bytes)
+          c.close()
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream' } }
+    )
+  }
+
+  it('sends the signed-in user’s access token with a lookup', async () => {
+    await chrome.storage.local.set({
+      auth: { accessToken: 'tok-ext', idToken: 'id', expiresAt: Date.now() + 3_600_000, user: { sub: 'auth0|u' } },
+    })
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => doneStream())
+    vi.stubGlobal('fetch', fetchSpy)
+    const { lookupWordStream } = await import('./lookupClient')
+    expect(await lookupWordStream('hello', 'en', 'en')).toEqual({ ok: true, entries: DONE })
+    expect((fetchSpy.mock.calls[0][1]?.headers as Record<string, string>).Authorization).toBe('Bearer tok-ext')
+  })
+
+  it('goes out anonymous when signed out', async () => {
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => doneStream())
+    vi.stubGlobal('fetch', fetchSpy)
+    const { lookupWordStream } = await import('./lookupClient')
+    await lookupWordStream('hello', 'en', 'en')
+    expect(fetchSpy.mock.calls[0][1]?.headers).not.toHaveProperty('Authorization')
+  })
+
+  it('maps a 429 quota refusal to quota_exceeded with its reason', async () => {
+    const body = {
+      error: 'quota_exceeded',
+      reason: 'anon_daily',
+      limit: 5,
+      used: 5,
+      resetAt: '2026-11-13T00:00:00.000Z',
+      actions: ['sign_in', 'wait'],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 429, headers: { 'content-type': 'application/json' } }))
+    )
+    const { lookupWordStream } = await import('./lookupClient')
+    expect(await lookupWordStream('busy', 'en', 'en')).toEqual({
+      ok: false,
+      error: 'quota_exceeded',
+      quota: { reason: 'anon_daily', limit: 5, used: 5, resetAt: '2026-11-13T00:00:00.000Z', actions: ['sign_in', 'wait'] },
+    })
+  })
+})

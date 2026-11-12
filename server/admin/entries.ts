@@ -124,6 +124,9 @@ export interface ListEntriesQuery {
   hasReports?: boolean
   /** Exact match on `createdBy.ip`. */
   ip?: string
+  /** LLM entries not produced by a fusion merge: candidates for the owner's Regenerate
+   *  (docs/design-llm-usage-quotas.md §4.4). */
+  singleModel?: boolean
   sort: EntriesSort
   limit: number
   before?: Date
@@ -175,7 +178,18 @@ export function parseEntriesQuery(query: Record<string, unknown>): ListEntriesQu
   const ipRaw = typeof query.ip === 'string' ? query.ip.trim() : ''
   const ip = ipRaw && ipRaw.length <= 64 && /^[0-9a-fA-F:.]+$/.test(ipRaw) ? ipRaw : undefined
 
-  return { word, sourceLang, targetLang, tier, hasReports, ip, sort, limit, before }
+  const singleModel = query.singleModel === 'true' ? true : undefined
+
+  return { word, sourceLang, targetLang, tier, hasReports, ip, ...(singleModel ? { singleModel } : {}), sort, limit, before }
+}
+
+/** Filter fields shared by both list paths. */
+function applyCreatorFilters(filter: Record<string, unknown>, query: ListEntriesQuery): void {
+  if (query.ip) filter['createdBy.ip'] = query.ip
+  if (query.singleModel) {
+    filter.source = 'llm'
+    filter['entries.generatedBy.merged'] = { $ne: true }
+  }
 }
 
 /** Validates an opaque `translations._id` (sha1 hex) path param. */
@@ -260,7 +274,7 @@ function buildTranslationsFilter(query: ListEntriesQuery): Record<string, unknow
   if (query.sourceLang) filter.sourceLang = query.sourceLang
   if (query.targetLang) filter.targetLang = query.targetLang
   if (query.tier) filter.source = query.tier
-  if (query.ip) filter['createdBy.ip'] = query.ip
+  applyCreatorFilters(filter, query)
   return filter
 }
 
@@ -300,7 +314,7 @@ export async function listEntries(query: ListEntriesQuery): Promise<ListEntriesR
     const or = groups.map((g) => ({ word: g.word, sourceLang: g.sourceLang, targetLang: g.targetLang }))
     const filter: Record<string, unknown> = { $or: or }
     if (query.tier) filter.source = query.tier
-    if (query.ip) filter['createdBy.ip'] = query.ip
+    applyCreatorFilters(filter, query)
     if (query.before) filter.fetchedAt = { $lt: query.before }
 
     const docs = await translationsCol(db).find(filter).toArray()

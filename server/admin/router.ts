@@ -57,6 +57,31 @@ import {
   removeBlocked,
 } from '../abuseGuard'
 import type { LlmService } from '../llm/service'
+import type { UsageService } from '../usage'
+import {
+  saveUsageSettings,
+  usageSettingsView,
+  validateUsageSettingsPatch,
+  UsageSettingsUnavailableError,
+} from '../usage/settings'
+import { refreshPrices } from '../usage/pricing'
+import { getAccountView, getUsageSummary, listAccounts, updateAccount, validateAccountPatch } from './usage'
+import { setMetered } from './providersRepo'
+import { CACHE_VERSION, normalizeText, translate } from '../translate'
+import { translationDocId, type TranslationCache } from '../cache/translationCache'
+import type { DictionaryProvider } from '../providers/dictionary'
+import { buildEntryCreator } from '../activityLog'
+import { LANGUAGES } from '../../shared/languages'
+
+export interface AdminRouterOptions {
+  /** Usage metering (docs/design-llm-usage-quotas.md); the Usage page and account routes need it. */
+  usage?: UsageService
+  /** For owner Regenerate (§5.4). */
+  dictionary?: DictionaryProvider
+  cache?: TranslationCache | null
+}
+
+const LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code))
 
 /**
  * Admin API surface (design doc §8), mounted at /api/admin behind
@@ -165,7 +190,7 @@ function readEnvProviderCandidates(): EnvProviderCandidate[] {
   return candidates
 }
 
-export function createAdminRouter(llmService: LlmService): Router {
+export function createAdminRouter(llmService: LlmService, opts: AdminRouterOptions = {}): Router {
   const router = Router()
 
   const adminLimiter = rateLimit({
@@ -218,6 +243,7 @@ export function createAdminRouter(llmService: LlmService): Router {
         target: { providerId: result.view.id, name: result.view.name },
         diff: { created: result.view },
       })
+      void refreshPrices()
       res.status(201).json({ provider: result.view })
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
@@ -244,9 +270,11 @@ export function createAdminRouter(llmService: LlmService): Router {
         target: { providerId: result.view.id, name: result.view.name },
         diff: { updated: result.view },
       })
-      if (llmService.status().providerId === result.view.id) {
+      const live = llmService.status()
+      if ([live.providerId, live.secondaryProviderId, live.metered?.providerId].includes(result.view.id)) {
         await llmService.reloadFromDb()
       }
+      void refreshPrices()
       res.json({ provider: result.view })
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
@@ -275,6 +303,9 @@ export function createAdminRouter(llmService: LlmService): Router {
         action: 'provider.delete',
         target: { providerId: req.params.id },
       })
+      // A deleted metered provider hands the metered route back to the primary.
+      if (llmService.status().metered?.providerId === req.params.id) await llmService.reloadFromDb()
+      void refreshPrices()
       res.status(204).end()
     } catch (err) {
       if (err instanceof MongoUnavailableError) {
@@ -937,6 +968,218 @@ export function createAdminRouter(llmService: LlmService): Router {
       res.status(204).end()
     } catch (err) {
       if (err instanceof BlocklistUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  // --- LLM usage tiers & quotas (docs/design-llm-usage-quotas.md §5.7) ---
+
+  const usage = opts.usage
+
+  router.get('/usage/summary', async (req, res, next) => {
+    try {
+      if (!usage) {
+        res.status(503).json({ error: 'usage_unavailable' })
+        return
+      }
+      const raw = Number(req.query.days)
+      const days = Number.isInteger(raw) && raw >= 1 && raw <= 180 ? raw : 30
+      res.json(await getUsageSummary(usage, llmService.status().metered, days))
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  router.get('/usage/settings', (_req, res) => {
+    res.json(usageSettingsView())
+  })
+
+  router.put('/usage/settings', async (req, res, next) => {
+    try {
+      const patch = validateUsageSettingsPatch(req.body)
+      if (!patch.ok) {
+        res.status(400).json({ error: 'validation', errors: patch.errors })
+        return
+      }
+      const before = usageSettingsView().effective
+      const view = await saveUsageSettings(patch, actorSub(req))
+      await recordAudit({
+        actor: actorSub(req),
+        ip: reqIp(req),
+        action: 'usage.settings.update',
+        diff: {
+          set: patch.set,
+          ...(patch.unset.length > 0 ? { reset: patch.unset } : {}),
+          before: Object.fromEntries(
+            [...Object.keys(patch.set), ...patch.unset].map((k) => [k, before[k as keyof typeof before]])
+          ),
+        },
+      })
+      res.json(view)
+    } catch (err) {
+      if (err instanceof UsageSettingsUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  router.get('/accounts', async (req, res, next) => {
+    try {
+      if (!usage) {
+        res.status(503).json({ error: 'usage_unavailable' })
+        return
+      }
+      const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 200) : undefined
+      const raw = Number(req.query.limit)
+      const limit = Number.isInteger(raw) && raw >= 1 && raw <= 200 ? raw : 50
+      res.json({ accounts: await listAccounts(usage, q, limit) })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  router.get('/accounts/:sub', async (req, res, next) => {
+    try {
+      if (!usage) {
+        res.status(503).json({ error: 'usage_unavailable' })
+        return
+      }
+      const view = await getAccountView(usage, req.params.sub)
+      if (!view) {
+        res.status(404).json({ error: 'not_found' })
+        return
+      }
+      res.json({ account: view })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  router.patch('/accounts/:sub', async (req, res, next) => {
+    try {
+      if (!usage?.store) {
+        res.status(503).json({ error: 'usage_unavailable' })
+        return
+      }
+      const sub = req.params.sub
+      if (!sub || sub.length > 200) {
+        res.status(400).json({ error: 'validation', errors: ['invalid account id'] })
+        return
+      }
+      const patch = validateAccountPatch(req.body)
+      if (!patch.ok) {
+        res.status(400).json({ error: 'validation', errors: patch.errors })
+        return
+      }
+      const view = await updateAccount(usage, sub, patch.value)
+      await recordAudit({
+        actor: actorSub(req),
+        ip: reqIp(req),
+        action: 'account.update',
+        target: { name: sub },
+        diff: { ...patch.value },
+      })
+      res.json({ account: view })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  /** Which model answers everyone except the owner (§5.4). */
+  router.put('/llm/metered', async (req, res, next) => {
+    try {
+      const body = (req.body ?? {}) as { mode?: unknown; providerId?: unknown; modelId?: unknown }
+      const modelId = typeof body.modelId === 'string' && body.modelId.trim() ? body.modelId.trim() : undefined
+      let input: Parameters<typeof setMetered>[0]
+      if (body.mode === 'primary' || body.mode === 'same_as_owner') input = { mode: body.mode }
+      else if (body.mode === 'provider' && typeof body.providerId === 'string') {
+        input = { mode: 'provider', providerId: body.providerId, ...(modelId ? { modelId } : {}) }
+      } else {
+        res.status(400).json({
+          error: 'validation',
+          errors: ['mode must be "primary", "same_as_owner", or "provider" with a providerId'],
+        })
+        return
+      }
+      const result = await setMetered(input, actorSub(req))
+      if (!result.ok) {
+        const status = result.error === 'not_found' ? 404 : result.error === 'disabled' ? 409 : 400
+        res.status(status).json({ error: result.error })
+        return
+      }
+      await llmService.reloadFromDb()
+      await recordAudit({
+        actor: actorSub(req),
+        ip: reqIp(req),
+        action: 'llm.metered.update',
+        ...(input.mode === 'provider' ? { target: { providerId: input.providerId } } : {}),
+        diff: { ...input },
+      })
+      res.json({ status: llmService.status() })
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      next(err)
+    }
+  })
+
+  /**
+   * Owner Regenerate (§5.4): replaces a word's cached entry with a fresh
+   * generation on the full setup. If that generation fails, the previous
+   * entry is put back rather than leaving a dictionary-tier fallback cached.
+   */
+  router.post('/entries/regenerate', async (req, res, next) => {
+    try {
+      const cache = opts.cache
+      if (!cache || !opts.dictionary) {
+        res.status(503).json({ error: 'mongo_unavailable' })
+        return
+      }
+      const body = (req.body ?? {}) as { word?: unknown; sourceLang?: unknown; targetLang?: unknown }
+      const word = normalizeText(typeof body.word === 'string' ? body.word : '')
+      const sourceLang = typeof body.sourceLang === 'string' ? body.sourceLang.trim().toLowerCase() : 'en'
+      const targetLang = typeof body.targetLang === 'string' ? body.targetLang.trim().toLowerCase() : 'en'
+      if (!word || !LANGUAGE_CODES.has(sourceLang) || !LANGUAGE_CODES.has(targetLang)) {
+        res.status(400).json({ error: 'validation', errors: ['word, sourceLang and targetLang are required'] })
+        return
+      }
+      if (!llmService.current()) {
+        res.status(503).json({ error: 'llm_disabled' })
+        return
+      }
+
+      const previous = await cache.get(word, sourceLang, targetLang, CACHE_VERSION)
+      const id = translationDocId(word, sourceLang, targetLang, CACHE_VERSION)
+      if (previous) await deleteEntry(id, { resolveReports: true })
+
+      const sub = actorSub(req)
+      const outcome = await translate({ text: word, sourceLang, targetLang }, () => llmService.current(), opts.dictionary, cache, {
+        client: buildEntryCreator({ ip: clientIp(req), userAgent: req.get('user-agent'), origin: req.get('origin'), sub }),
+      })
+      if (outcome.tier !== 'llm' && previous) {
+        await cache.set(word, sourceLang, targetLang, previous.entries, previous.source, CACHE_VERSION)
+      }
+      await recordAudit({
+        actor: sub,
+        ip: reqIp(req),
+        action: 'entry.regenerate',
+        target: { name: `${word} (${sourceLang}→${targetLang})` },
+        diff: { tier: outcome.tier, replaced: Boolean(previous) },
+      })
+      if (outcome.tier !== 'llm') {
+        res.status(502).json({ error: 'regenerate_failed', restored: Boolean(previous) })
+        return
+      }
+      res.json({ entries: outcome.entries })
+    } catch (err) {
+      if (err instanceof MongoUnavailableError) {
         res.status(503).json({ error: 'mongo_unavailable' })
         return
       }

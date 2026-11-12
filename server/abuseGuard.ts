@@ -320,11 +320,15 @@ export function isCrawlerUserAgent(ua: string | undefined): boolean {
  * {@link refuseOverBudget}).
  */
 export function llmGuard(req: Request, res: Response, next: NextFunction): void {
-  if (LLM_BLOCK_BOTS && isCrawlerUserAgent(req.get('user-agent'))) {
+  // The owner is exempt from everything but the blocklist
+  // (docs/design-llm-usage-quotas.md §4.2). The identity comes from
+  // server/usage/principal.ts `identify`, which runs before this guard.
+  const owner = (res.locals.usageIdentity as { principal?: { kind?: string } } | undefined)?.principal?.kind === 'owner'
+  if (!owner && LLM_BLOCK_BOTS && isCrawlerUserAgent(req.get('user-agent'))) {
     res.status(403).json({ error: 'forbidden' })
     return
   }
-  res.locals.llmBudgetExceeded = llmBudget.exceeded(clientIp(req))
+  res.locals.llmBudgetExceeded = !owner && llmBudget.exceeded(clientIp(req))
   next()
 }
 

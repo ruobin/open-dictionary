@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { Router, type Request, type Response, type NextFunction } from 'express'
+import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import { normalizeText, type GradedExample } from './translate'
@@ -7,6 +7,11 @@ import type { LlmService } from './llm/service'
 import { LANGUAGES } from '../shared/languages'
 import { MORE_EXAMPLES_RATE_LIMIT_RPM } from './config'
 import { llmGuard, recordLlmSpend, refuseOverBudget } from './abuseGuard'
+import { classifyChannel } from './activityLog'
+import type { UsageService } from './usage'
+import type { Ticket } from './usage/meter'
+import { sendMeterError } from './usage/http'
+import { identify, identityOf, rateLimitKey } from './usage/principal'
 
 /**
  * "More examples like this" (to-do §3) — a follow-up LLM call scoped to one
@@ -72,17 +77,32 @@ const moreExamplesLimiter = rateLimit({
   max: MORE_EXAMPLES_RATE_LIMIT_RPM,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req, res) => identityOf(req, res).principal.kind === 'owner',
+  keyGenerator: (req, res) => rateLimitKey(identityOf(req, res)),
   message: { error: 'rate_limited' },
 })
 
-export function createMoreExamplesRouter(): Router {
+export interface MoreExamplesRouterOptions {
+  /** Usage metering (docs/design-llm-usage-quotas.md). Without it nothing is metered. */
+  usage?: UsageService
+  /** `auth({ authRequired: false })`. */
+  optionalJwt?: RequestHandler
+}
+
+export function createMoreExamplesRouter(options: MoreExamplesRouterOptions = {}): Router {
   const router = Router()
+  const { usage } = options
+  const identity: RequestHandler[] = options.optionalJwt ? [options.optionalJwt, identify] : [identify]
 
   router.get(
     '/more-examples',
+    ...identity,
     moreExamplesLimiter,
     llmGuard,
     async (req: Request, res: Response, next: NextFunction) => {
+      let ticket: Ticket | undefined
+      let charged = false
+      let providerId: string | undefined
       try {
         const normalized = normalizeRequest(req.query as Record<string, unknown>)
         if (!normalized) {
@@ -102,22 +122,46 @@ export function createMoreExamplesRouter(): Router {
 
         if (refuseOverBudget(res, true)) return
 
-        const llm = (req.app.locals.llmService as LlmService).current()
-        if (!llm) {
+        const svc = req.app.locals.llmService as LlmService
+        if (!svc.current() && !svc.currentMetered?.()) {
           res.status(503).json({ error: 'not_configured' })
           return
         }
 
-        const result = await llm.moreExamples({
-          word: normalized.word,
-          sourceLang: normalized.sourceLang,
-          targetLang: normalized.targetLang,
-          senseDefinition: normalized.senseDefinition,
-          topic: normalized.topic,
-          cefr: normalized.cefr,
-        })
+        // Quota check (docs/design-llm-usage-quotas.md §5.3): one uncached
+        // batch is one generation, on the same model route as lookups.
+        const { principal } = identityOf(req, res)
+        if (usage) {
+          ticket = await usage.meter.reserve({
+            principal,
+            action: 'examples',
+            channel: classifyChannel(req.get('origin')),
+            word: normalized.word,
+            sourceLang: normalized.sourceLang,
+            targetLang: normalized.targetLang,
+          })
+        }
+        const llm = ticket?.route === 'metered' ? (svc.currentMetered?.() ?? svc.current()) : svc.current()
+        if (!llm) {
+          res.status(503).json({ error: 'not_configured' })
+          return
+        }
+        providerId = llm.id
 
-        recordLlmSpend(req)
+        const result = await llm.moreExamples(
+          {
+            word: normalized.word,
+            sourceLang: normalized.sourceLang,
+            targetLang: normalized.targetLang,
+            senseDefinition: normalized.senseDefinition,
+            topic: normalized.topic,
+            cefr: normalized.cefr,
+          },
+          ticket ? { usage: ticket.usage } : undefined
+        )
+        charged = result.examples.length > 0
+
+        if (principal.kind !== 'owner') recordLlmSpend(req)
 
         if (col) {
           await col
@@ -129,9 +173,17 @@ export function createMoreExamplesRouter(): Router {
             .catch((err) => console.warn('[more-examples] cache write failed (non-fatal):', err))
         }
 
+        if (ticket?.source === 'free' && charged) res.setHeader('X-Generation', 'charged')
         res.json({ examples: result.examples })
       } catch (err) {
+        if (sendMeterError(res, err)) return
         next(err)
+      } finally {
+        if (ticket) {
+          void ticket
+            .settle({ charged, ...(providerId ? { providerId } : {}) })
+            .catch((err: unknown) => console.warn('[usage] settle failed (non-fatal):', err))
+        }
       }
     }
   )

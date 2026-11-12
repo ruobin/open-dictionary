@@ -58,7 +58,7 @@ export function handleLookupStreamPort(
           void recordHistory({ word: text.trim().toLowerCase(), sourceLang, targetLang })
           send({ type: 'done', entries: result.entries })
         } else {
-          send({ type: 'error', error: result.error })
+          send(result.quota ? { type: 'error', error: result.error, quota: result.quota } : { type: 'error', error: result.error })
         }
       })
       .catch(() => send({ type: 'error', error: 'api_error' }))

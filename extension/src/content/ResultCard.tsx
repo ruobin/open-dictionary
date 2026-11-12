@@ -38,7 +38,7 @@ export function ResultCard({
           <ErrorView error="not_found" />
         )
       ) : (
-        <ErrorView error={result.error} />
+        <ErrorView error={result.error} quota={result.quota} webAppUrl={webAppWordUrl(text)} />
       )}
     </div>
   )

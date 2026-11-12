@@ -37,6 +37,8 @@ export interface TranslationDoc {
 export interface EntryCreator {
   /** Removed after 180 days by `expireEntryCreatorIps()` (privacy retention). */
   ip?: string
+  /** Auth0 `sub` of a signed-in creator; removed with the IP after 180 days. */
+  sub?: string
   /** Raw User-Agent, bots only (see `uaForStorage()` in activityLog.ts). */
   ua?: string
   device: { type: string; browser?: string; os?: string }
@@ -62,6 +64,11 @@ export interface TranslationCache {
     version: string,
     createdBy?: EntryCreator
   ): Promise<void>
+}
+
+/** `translations._id` of a cache entry. */
+export function translationDocId(word: string, sourceLang: string, targetLang: string, version: string): string {
+  return docId(word, sourceLang, targetLang, version)
 }
 
 function docId(word: string, sourceLang: string, targetLang: string, version: string): string {

@@ -9,6 +9,7 @@ import Entries from './Entries'
 import Reports from './Reports'
 import Activity from './Activity'
 import Clients from './Clients'
+import Usage from './Usage'
 import Audit from './Audit'
 import '../../styles/admin.css'
 
@@ -27,6 +28,7 @@ export default function AdminApp() {
           <Route path="reports" element={<Reports />} />
           <Route path="activity" element={<Activity />} />
           <Route path="clients" element={<Clients />} />
+          <Route path="usage" element={<Usage />} />
           <Route path="audit" element={<Audit />} />
         </Route>
       </Routes>

@@ -1,5 +1,5 @@
 import type { ExtensionMessage, ExtensionResponse, LookupResponse } from '../shared/messages'
-import { lookupWord } from './lookupClient'
+import { fetchUsage, lookupWord } from './lookupClient'
 import { handleLookupStreamPort } from './streamPort'
 import { getSettings, setSettings } from './settings'
 import { PENDING_RESULT_KEY } from '../shared/constants'
@@ -113,6 +113,9 @@ async function handleMessage(message: ExtensionMessage): Promise<ExtensionRespon
     }
     case 'PLAY_AUDIO': {
       return playAudio(message.src)
+    }
+    case 'GET_USAGE': {
+      return fetchUsage()
     }
   }
 }

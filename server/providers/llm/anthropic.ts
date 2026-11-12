@@ -2,10 +2,14 @@ import { DEFAULT_TIMEOUT_MS } from './openaiCompat'
 import { buildFuseMessages, buildMoreExamplesMessages, type ChatMessage } from './prompts'
 import { parseContent, parseMoreExamplesContent } from './parse'
 import { runTranslate, type Transport } from './translateFlow'
+import { trackCall } from './usage'
 import { readSse } from '../../../shared/sse'
 import { buildLadder, CORE_MAX_TOKENS, EXTRAS_MAX_TOKENS } from './requestVariants'
 import {
   LlmProviderError,
+  type LlmCallKind,
+  type LlmCallOptions,
+  type UsageSink,
   type LlmFuseRequest,
   type LlmFuseResult,
   type LlmMoreExamplesRequest,
@@ -279,11 +283,21 @@ export function createAnthropicProvider(options: AnthropicOptions): LlmProvider 
     messages: ChatMessage[],
     label: string,
     maxTokens: number,
-    parse: (content: string) => T
+    parse: (content: string) => T,
+    usage: { sink: UsageSink | undefined; kind: LlmCallKind }
   ): Promise<{ content: T; meta?: LlmUsageMeta }> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      // Every attempt is reported, including one discarded as unparseable.
+      const tracked = trackCall(usage.sink, id, usage.kind, messages)
       try {
-        const result = await send(messages, { label, maxTokens })
+        let result: Awaited<ReturnType<typeof send>>
+        try {
+          result = await send(messages, { label, maxTokens })
+        } catch (err) {
+          tracked.fail(err)
+          throw err
+        }
+        tracked.ok(result.content, result.meta)
         const content = parse(result.content)
         return result.meta ? { content, meta: result.meta } : { content }
       } catch (err) {
@@ -306,23 +320,25 @@ export function createAnthropicProvider(options: AnthropicOptions): LlmProvider 
     id,
     translate(req: LlmTranslationRequest, opts?: LlmTranslateOptions): Promise<LlmTranslationResult> {
       // No JSON mode on this API: retry the core call once on unparseable output.
-      return runTranslate(vendor, transport, req, opts, { retryBadResponse: true })
+      return runTranslate(vendor, transport, req, opts, { retryBadResponse: true, providerId: id })
     },
-    async moreExamples(req: LlmMoreExamplesRequest): Promise<LlmMoreExamplesResult> {
-      const { content: examples } = await callAndParse(
+    async moreExamples(req: LlmMoreExamplesRequest, opts?: LlmCallOptions): Promise<LlmMoreExamplesResult> {
+      const { content: examples, meta } = await callAndParse(
         buildMoreExamplesMessages(req),
         `moreExamples word="${req.word.slice(0, 60)}"`,
         EXTRAS_MAX_TOKENS,
-        (content) => parseMoreExamplesContent(vendor, content)
+        (content) => parseMoreExamplesContent(vendor, content),
+        { sink: opts?.usage, kind: 'examples' }
       )
-      return { examples }
+      return meta ? { examples, meta } : { examples }
     },
-    async fuse(req: LlmFuseRequest): Promise<LlmFuseResult> {
+    async fuse(req: LlmFuseRequest, opts?: LlmCallOptions): Promise<LlmFuseResult> {
       const { content: parsed, meta } = await callAndParse(
         buildFuseMessages(req),
         `fuse text="${req.request.text.slice(0, 60)}"`,
         CORE_MAX_TOKENS,
-        (content) => parseContent(vendor, content)
+        (content) => parseContent(vendor, content),
+        { sink: opts?.usage, kind: 'fuse' }
       )
       if (req.request.sourceLang.toLowerCase() === req.request.targetLang.toLowerCase()) delete parsed.translation
       return meta ? { content: parsed, meta } : { content: parsed }

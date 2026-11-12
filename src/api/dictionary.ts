@@ -1,4 +1,5 @@
 import { readSse } from '../../shared/sse'
+import { authHeaders, notifyUsageChanged, parseQuota, type QuotaInfo, type TokenGetter } from './usage'
 
 const CACHE_PREFIX = 'dict:v1:'
 const TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -84,15 +85,37 @@ export interface GeneratedBy {
   merged?: boolean
 }
 
-export type LookupErrorCode = 'not_found' | 'timeout' | 'network' | 'api_error'
+export type LookupErrorCode = 'not_found' | 'timeout' | 'network' | 'api_error' | 'quota_exceeded'
 
 export class LookupError extends Error {
   readonly code: LookupErrorCode
-  constructor(code: LookupErrorCode, message?: string) {
+  /** Set for `quota_exceeded`: why, and what the user can do (docs/design-llm-usage-quotas.md §4.6). */
+  readonly quota?: QuotaInfo
+  constructor(code: LookupErrorCode, message?: string, quota?: QuotaInfo) {
     super(message ?? code)
     this.name = 'LookupError'
     this.code = code
+    if (quota) this.quota = quota
   }
+}
+
+export interface LookupOptions {
+  /** Access token for signed-in users: the server meters new words per account. */
+  getToken?: TokenGetter
+}
+
+/** A 429 is a quota refusal (with a reason) or the per-minute rate limit. */
+async function refusalError(res: Response): Promise<LookupError> {
+  let body: unknown = null
+  try {
+    body = await res.json()
+  } catch {
+    // not JSON
+  }
+  const quota = parseQuota(body)
+  return quota
+    ? new LookupError('quota_exceeded', `Quota exceeded: ${quota.reason}`, quota)
+    : new LookupError('api_error', `API error: ${res.status}`)
 }
 
 interface CacheEnvelope {
@@ -152,10 +175,21 @@ function pingClientCacheHit(word: string, sourceLang: string, targetLang: string
   }
 }
 
+/** Removes a word from the browser cache, e.g. after the owner regenerated its entry. */
+export function forgetCachedEntry(rawWord: string, sourceLang: string, targetLang: string): void {
+  const word = rawWord.trim().toLowerCase()
+  try {
+    localStorage.removeItem(`${CACHE_PREFIX}${sourceLang.toLowerCase()}:${targetLang.toLowerCase()}:${word}`)
+  } catch {
+    // unavailable
+  }
+}
+
 export async function lookupWord(
   rawWord: string,
   sourceLang: string = DEFAULT_SOURCE_LANG,
-  targetLang: string = DEFAULT_TARGET_LANG
+  targetLang: string = DEFAULT_TARGET_LANG,
+  options: LookupOptions = {}
 ): Promise<DictionaryEntry[]> {
   const word = rawWord.trim().toLowerCase()
   if (!word) throw new LookupError('not_found', 'Empty word')
@@ -170,6 +204,8 @@ export async function lookupWord(
     return cached
   }
 
+  // Before the timeout starts: a slow silent sign-in must not eat into it.
+  const headers = await authHeaders(options.getToken)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
@@ -179,6 +215,7 @@ export async function lookupWord(
   try {
     res = await fetch(`/api/translate/${encodeURIComponent(word)}?${qs.toString()}`, {
       signal: controller.signal,
+      headers,
     })
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -190,14 +227,16 @@ export async function lookupWord(
   }
 
   if (res.status === 404) throw new LookupError('not_found')
+  if (res.status === 429) throw await refusalError(res)
   if (!res.ok) throw new LookupError('api_error', `API error: ${res.status}`)
+  if (res.headers.get('x-generation') === 'charged') notifyUsageChanged()
 
   const data = (await res.json()) as DictionaryEntry[]
   writeCache(storageKey, data)
   return data
 }
 
-export interface StreamLookupOptions {
+export interface StreamLookupOptions extends LookupOptions {
   /** Called with progressively more complete entries while the server is still
    *  writing the answer (translation first, then each part of speech). */
   onPartial?: (entries: DictionaryEntry[]) => void
@@ -235,6 +274,8 @@ export async function lookupWordStream(
     return cached
   }
 
+  // Before the timeout starts: a slow silent sign-in must not eat into it.
+  const auth = await authHeaders(options.getToken)
   const controller = new AbortController()
   const onCallerAbort = (): void => controller.abort()
   if (options.signal?.aborted) throw new LookupError('network')
@@ -246,14 +287,15 @@ export async function lookupWordStream(
   }, FETCH_TIMEOUT_MS)
 
   const qs = new URLSearchParams({ from: src, to: tgt })
-  const fallback = (): Promise<DictionaryEntry[]> => lookupWord(rawWord, sourceLang, targetLang)
+  const fallback = (): Promise<DictionaryEntry[]> =>
+    lookupWord(rawWord, sourceLang, targetLang, options.getToken ? { getToken: options.getToken } : {})
 
   try {
     let res: Response
     try {
       res = await fetch(`/api/translate-stream/${encodeURIComponent(word)}?${qs.toString()}`, {
         signal: controller.signal,
-        headers: { Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream', ...auth },
       })
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -262,7 +304,7 @@ export async function lookupWordStream(
       return await fallback()
     }
 
-    if (res.status === 429) throw new LookupError('api_error', `API error: ${res.status}`)
+    if (res.status === 429) throw await refusalError(res)
     const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
     // 404 here may just mean "this server has no stream route"; the plain
     // endpoint gives the authoritative answer (including a real not_found).
@@ -282,9 +324,17 @@ export async function lookupWordStream(
           if (!options.signal?.aborted) options.onPartial?.(payload as DictionaryEntry[])
         } else if (event === 'done' && Array.isArray(payload)) {
           final = payload as DictionaryEntry[]
+        } else if (event === 'usage') {
+          // A new word was charged to this user's free allowance.
+          notifyUsageChanged()
         } else if (event === 'error') {
           const code = (payload as { error?: string } | null)?.error
-          failure = code === 'not_found' ? new LookupError('not_found') : new LookupError('api_error', `Stream error: ${code ?? 'unknown'}`)
+          const quota = parseQuota(payload)
+          failure = quota
+            ? new LookupError('quota_exceeded', `Quota exceeded: ${quota.reason}`, quota)
+            : code === 'not_found'
+              ? new LookupError('not_found')
+              : new LookupError('api_error', `Stream error: ${code ?? 'unknown'}`)
         }
       })
     } catch (err) {

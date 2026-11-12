@@ -112,8 +112,10 @@ or browsing history ever leaves the browser. See the privacy policy above
 for the full statement.
 
 For the optional sign-in feature: an Auth0 access token is sent only to
-the Open Dictionary API to authenticate favorites/history sync requests;
-it is never sent anywhere else.
+the Open Dictionary API, to authenticate favorites/history sync requests
+and (from 0.4.0) lookups, so new words count against the signed-in
+account's free daily allowance instead of the anonymous one
+(docs/design-llm-usage-quotas.md). It is never sent anywhere else.
 
 ## Store listing copy (draft)
 
