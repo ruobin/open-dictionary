@@ -46,21 +46,38 @@ See [docs/design-translation-cache.md](docs/design-translation-cache.md) for the
 
 ## Architecture (lookup flow)
 
+```mermaid
+flowchart TD
+    Client["Web app / browser extension"] --> Local{"Local cache hit?"}
+    Local -->|Yes| Display["Display entry"]
+    Local -->|No| API["Lookup API · SSE or JSON"]
+    API --> Mongo{"MongoDB cache hit?"}
+    Mongo -->|Yes| Response["Return dictionary entries"]
+    Mongo -->|No| Gate["Usage allowance & budget reservation"]
+    Gate -->|Refused| Error["Return quota / availability error"]
+    Gate -->|Allowed| Route["Select owner or metered model"]
+    Route --> LLM["LLM · parallel core + extras"]
+    LLM -->|Success| Cache["Cache result in MongoDB · 1 year"]
+    LLM -->|Failure or unavailable| MW["Merriam-Webster fallback · English only"]
+    MW --> Cache
+    Cache --> Response
+    Response --> Display
 ```
-browser  →  localStorage L1  →  GET /api/translate-stream/:word?from=&to=   (SSE; web app)
-   │                                 GET /api/translate/:word?from=&to=          (plain JSON; non-streaming clients and fallback)
-   │                                         │
-   │                           ┌────────── [Mongo cache] ──── hit → return
-   │                           │        miss ↓
-   │                           │   [Usage allowance + budget reservation; non-owner model routing]
-   │                           │   [LLM tier] two parallel calls — core (translation, IPA, senses; streamed)
-   │                           │        + extras (mistakes, collocations, word family); in fusion mode the
-   │                           │        first answer wins and the merge happens in the background
-   │                           │        error ↓
-   │                           │   [Merriam-Webster] (English-only, fallback only on LLM failure)
-   │                           │
-   │←── normalized DictionaryEntry[] (SSE `partial` events as it is written, then `done`) ─── (cached for 1 year)
-```
+
+- **Transport:** `/api/translate-stream/:word?from=&to=` streams SSE `partial`
+  events followed by `done`; `/api/translate/:word?from=&to=` returns JSON.
+- **Cache:** entries are keyed by **(word, sourceLang, targetLang)**. Cache hits
+  skip generation and do not consume usage allowances. In default **shadow
+  mode**, usage quotas are recorded but do not block requests.
+- **Generation:** core (translation, IPA, senses) and extras (mistakes,
+  collocations, word family) run in parallel. English pronunciation audio is
+  best-effort enriched from Merriam-Webster.
+- **Fusion:** when the selected route uses two providers, the first answer is
+  served immediately. Merging runs in the background and updates the shared
+  cache for later lookups; it does not delay the initial response.
+- **Failures:** enforced quota refusals return an error, not a dictionary
+  fallback. Merriam-Webster is used only when the LLM fails or is unavailable;
+  a lookup with no result returns `not_found`.
 
 Favorites: `GET/POST/DELETE /api/favorites`, keyed by **(user, word, sourceLang, targetLang)**. **All favorites routes require a valid Auth0 access token**; the caller's identity is the verified JWT `sub` (never a client-supplied identity header, which would be spoofable). Anonymous users are prompted to log in before favoriting.
 
