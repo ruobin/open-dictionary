@@ -38,6 +38,16 @@ function Auth0ProviderWithNavigate({ children }: ProviderProps) {
         audience,
       }}
       cacheLocation="localstorage"
+      // Renew tokens with a rotating refresh token, so a login lasts as long as
+      // the refresh token lifetime set on the Auth0 application (README,
+      // "Configure Auth0"). The default renews through a hidden iframe that needs
+      // Auth0's session cookie, which lapses after a few idle days and which many
+      // browsers block as a third-party cookie.
+      // The fallback sends sessions with no usable refresh token (e.g. signed in
+      // before refresh tokens were enabled) through that iframe, which renews them
+      // or signs them out; without it they'd look signed in but get no token.
+      useRefreshTokens
+      useRefreshTokensFallback
       onRedirectCallback={onRedirectCallback}
     >
       {children}
