@@ -21,6 +21,13 @@ Static SPA assets (/var/www/…, content-hashed)
 - **Identity** is an Auth0 access token (JWT, RS256, audience
   `AUTH0_AUDIENCE`). The server trusts **only** the verified token's `sub` —
   never a client-supplied identity header.
+- **Sessions**: the SPA keeps its Auth0 tokens in `localStorage`, including a
+  rotating refresh token that keeps a login alive for 90 days (README,
+  "Configure Auth0"). Script running in the page (XSS) could read it and mint
+  access tokens until it expires; rotation's reuse detection revokes the token
+  family once both the stolen copy and the user's copy are used. Logging out
+  deletes the local copy but doesn't revoke it at Auth0, so to cut a session
+  off, revoke that user's refresh tokens in Auth0 or block the user.
 - **Translate** (`GET /api/translate/:text`, `/api/translate-stream/:text`) and **more-examples** (`GET /api/more-examples`) are public and **optionally authenticated** (since the usage quotas, docs/design-llm-usage-quotas.md): a valid Auth0 access token identifies the owner (`ADMIN_USER_IDS`, never limited) or a signed-in user (metered by `sub`); a missing *or invalid* token is treated as anonymous, the least-privileged principal (metered by IP, IPv6 by /64). Identity only ever comes from a verified `sub`. Rate limits are 5 req/min per IP or per account (hard-capped — see below); the owner is exempt. New words (cache misses) are refused with `429 quota_exceeded` once the caller's allowance or the global free budget is used up; cache hits are never refused. The Chrome extension (`extension/`) is an additional caller of the translate endpoint — see [design-browser-extension.md](../design-browser-extension.md) §6. Its `chrome-extension://<id>` origin is allowlisted in `ALLOWED_ORIGINS` alongside the web app's origin(s); no new trust boundary since the endpoint was already public/unauthenticated. Extension traffic does add a new class of caller behind the shared per-IP rate limiter (design doc §6) — a lever to revisit if adversarial/heavy extension traffic appears.
 - **Favorites** (`/api/favorites`) and **user-data** (`/api/user-data`) require
   a valid access token and operate only on the caller's own data.

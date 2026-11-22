@@ -111,12 +111,22 @@ In the Auth0 dashboard:
    - Allowed Callback URLs: `http://localhost:5173`
    - Allowed Logout URLs: `http://localhost:5173`
    - Allowed Web Origins: `http://localhost:5173`
+   - **Refresh Token Rotation**: turn on *Allow Refresh Token Rotation*. This needs the
+     Refresh Token grant, which SPAs have by default (Advanced Settings → Grant Types).
+   - **Refresh Token Expiration**: turn on *Set Idle Refresh Token Lifetime* and
+     *Set Maximum Refresh Token Lifetime* and set both to `7776000` seconds (90 days).
+     This is how long a login lasts: the SPA renews its tokens with the refresh token
+     (`useRefreshTokens` in `src/main.tsx`), and rotation never extends the maximum,
+     so users sign in again every 90 days.
    - Note the **Domain** and **Client ID**.
 
 2. **Enable social connections** (Google / Facebook) — optional.
 
 3. **Create a custom API** (JWT audience)
    - APIs → Create API — Identifier e.g. `https://open-dictionary-api`. Signing: `RS256`.
+   - On the API's Settings tab, turn on **Allow Offline Access**. Without it Auth0 issues
+     no refresh tokens for this API, and logins only last as long as the Auth0 session
+     cookie (a few idle days by default).
 
 4. **Create a Machine‑to‑Machine application** for the server
    - Applications → Create → Machine to Machine
