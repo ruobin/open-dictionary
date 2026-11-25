@@ -4,6 +4,7 @@ import { createDeepSeekProvider } from './deepseek'
 import { createGlmProvider } from './glm'
 import { createOpenRouterProvider } from './openrouter'
 import { buildCoreMessages, buildExtrasMessages, buildFuseMessages, buildMoreExamplesMessages } from './prompts'
+import { buildLlmProvider } from './index'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -406,5 +407,73 @@ describe('prompts — static system prefix', () => {
   it('same-language lookups are marked as definition requests with no translation', () => {
     const user = buildCoreMessages({ text: 'run', sourceLang: 'en', targetLang: 'en' })[1].content
     expect(user).toContain('DEFINITION request')
+  })
+})
+
+describe('custom "openai-compat" providers — output cap', () => {
+  const REQUEST = { text: 'run', sourceLang: 'en', targetLang: 'zh' }
+  const custom = (options?: { requestBody?: Record<string, unknown> }) =>
+    buildLlmProvider({
+      vendor: 'openai-compat',
+      apiKey: 'sk-test',
+      model: 'some-model',
+      baseUrl: 'https://gateway.example/v1',
+      ...(options ? { options } : {}),
+    })
+
+  it('sends a loose max_tokens to an endpoint it knows nothing about', async () => {
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => completion(kindOf(init) === 'core' ? CORE : EXTRAS))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await custom().translate(REQUEST)
+
+    for (const [, init] of fetchMock.mock.calls) expect(bodyOf(init).max_tokens).toBe(16_384)
+  })
+
+  it('drops the cap for good when the endpoint refuses it, without failing the lookup', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => {
+      if ('max_tokens' in bodyOf(init)) {
+        return new Response("Unsupported parameter: 'max_tokens'", { status: 400 })
+      }
+      return completion(kindOf(init) === 'core' ? CORE : EXTRAS)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = custom()
+
+    const first = await provider.translate(REQUEST)
+    expect((first.content as { headword: string }).headword).toBe('run')
+    expect(first.incomplete).toBeUndefined()
+
+    fetchMock.mockClear()
+    await provider.translate(REQUEST)
+    expect(fetchMock).toHaveBeenCalledTimes(2) // core + extras, no refused attempts
+    for (const [, init] of fetchMock.mock.calls) expect(bodyOf(init)).not.toHaveProperty('max_tokens')
+  })
+
+  it('leaves the cap to the admin when requestBody sets one, under either name', async () => {
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => completion(kindOf(init) === 'core' ? CORE : EXTRAS))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await custom({ requestBody: { max_completion_tokens: 900 } }).translate(REQUEST)
+
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(bodyOf(init).max_completion_tokens).toBe(900)
+      expect(bodyOf(init)).not.toHaveProperty('max_tokens')
+    }
+  })
+
+  it('sends no cap from the bare adapter unless asked to', async () => {
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => completion(kindOf(init) === 'core' ? CORE : EXTRAS))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await createOpenAiCompatibleProvider({
+      vendor: 'openai-compat',
+      apiKey: 'sk-test',
+      model: 'some-model',
+      baseUrl: 'https://gateway.example/v1',
+    }).translate(REQUEST)
+
+    for (const [, init] of fetchMock.mock.calls) expect(bodyOf(init)).not.toHaveProperty('max_tokens')
   })
 })

@@ -1,4 +1,6 @@
 import type { DictionaryEntry } from '../server/translate'
+import type { TranslationDoc } from '../server/cache/translationCache'
+import { isPublishableTerm, sameTerm } from '../shared/term'
 import { buildWordDescription, buildWordTitle } from '../shared/seo'
 import { wordHref } from '../shared/wordLink'
 import { bucketLetter, paginate, WORDS_PER_BROWSE_PAGE } from '../shared/browse'
@@ -33,6 +35,27 @@ export interface RenderedPage {
   noindex?: boolean
 }
 
+/**
+ * What one cache doc publishes as a static word page: the term its path, URL
+ * and browse listing use, and the entry to render. `null` when the doc has
+ * nothing to publish (typo-only, no senses); `'unsafe'` when its term cannot
+ * be a path segment.
+ *
+ * The term is the cache key (`doc.word`), never `entry.word`: for an LLM entry
+ * that is the model's echo of the term and is untrusted, so trusting it would
+ * let one entry overwrite another word's page. The headword is shown only when
+ * it is the same term in another case ("Paris" for "paris").
+ */
+export function wordPageFor(
+  doc: Pick<TranslationDoc, 'word' | 'entries'>
+): { term: string; entry: DictionaryEntry } | 'unsafe' | null {
+  const entry: DictionaryEntry | undefined = doc.entries[0]
+  if (!entry || entry.typo || !entry.meanings.length) return null
+  const term = doc.word
+  if (!isPublishableTerm(term)) return 'unsafe'
+  return { term, entry: sameTerm(entry.word, term) ? entry : { ...entry, word: term } }
+}
+
 function renderChips(items: string[] | undefined): string {
   if (!items || items.length === 0) return ''
   return `<div class="chips">${items
@@ -42,9 +65,14 @@ function renderChips(items: string[] | undefined): string {
 
 /** Server-rendered content mirroring src/components/WordEntry.tsx +
  *  PosSection.tsx, minus the client-only bits (favorite/audio/report
- *  buttons) that need JS/auth anyway. */
-export function renderWordPage(entry: DictionaryEntry, publicBaseUrl: string): RenderedPage {
-  const canonical = `${publicBaseUrl}/word/${encodeURIComponent(entry.word)}`
+ *  buttons) that need JS/auth anyway.
+ *
+ *  `term` is the looked-up term the page lives at (`/word/<term>`), i.e. the
+ *  cache key. It decides the canonical URL; `entry.word` is only display text.
+ *  The two differ in case at most for LLM entries, and can differ entirely
+ *  for dictionary-tier ones. */
+export function renderWordPage(entry: DictionaryEntry, publicBaseUrl: string, term: string = entry.word): RenderedPage {
+  const canonical = `${publicBaseUrl}/word/${encodeURIComponent(term)}`
   const description = buildWordDescription(pickFirstDefinition(entry), entry.word)
   const phoneticText = entry.phonetics.find((p) => p.text)?.text
 

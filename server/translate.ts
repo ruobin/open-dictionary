@@ -12,7 +12,7 @@ import type { EntryCreator, TranslationCache } from './cache/translationCache'
 import type { LlmService } from './llm/service'
 import { TRANSLATE_RATE_LIMIT_RPM } from './config'
 import { LANGUAGES } from '../shared/languages'
-import { MAX_LOOKUP_TEXT_LENGTH } from '../shared/limits'
+import { normalizeTerm, sameTerm } from '../shared/term'
 import {
   recordDictError,
   recordDictFallbackUsed,
@@ -123,8 +123,6 @@ export interface TranslateOutcome {
   tier: 'cache' | 'llm' | 'dictionary'
 }
 
-const MAX_TEXT_LENGTH = MAX_LOOKUP_TEXT_LENGTH
-
 // Whitelist of accepted language codes. Rejecting unknown `from`/`to` values
 // bounds the cache cardinality and prevents LLM-cost abuse (every distinct
 // (word, sourceLang, targetLang) tuple would otherwise create a cache doc +
@@ -156,14 +154,26 @@ export const translateLimiter = rateLimit({
   message: { error: 'rate_limited' },
 })
 
+/** Canonical form of the looked-up text; see `normalizeTerm` in shared/term.ts. */
 export function normalizeText(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .normalize('NFC')
-    .replace(/\s+/g, ' ')
-    .replace(/[\u0000-\u001f\u007f]/g, '') // strip non-whitespace control chars (log/cache integrity)
-    .slice(0, MAX_TEXT_LENGTH)
+  return normalizeTerm(raw)
+}
+
+/**
+ * Makes an LLM entry's headword the looked-up term. The model is asked to echo
+ * the term as `headword`, but its output is untrusted: a prompt-injected or
+ * simply sloppy answer can put any text there, and the headword is what the
+ * page shows as the entry's title. A headword that is the term in another
+ * case or spacing ("Paris" for "paris") is kept; anything else is replaced.
+ *
+ * Applied to fresh answers, streamed previews, fusion upgrades and LLM cache
+ * hits, so entries cached before this check are corrected when served.
+ * Dictionary-tier entries are left alone: their headwords are the
+ * dictionary's own (looking up "ran" really does return the entry "run").
+ */
+export function withQueryHeadword(entries: DictionaryEntry[], text: string): DictionaryEntry[] {
+  if (entries.every((e) => sameTerm(e.word, text))) return entries
+  return entries.map((e) => (sameTerm(e.word, text) ? e : { ...e, word: text }))
 }
 
 /** Returns the validated lowercase language code, or `null` if not in the
@@ -233,6 +243,12 @@ async function cacheSetSafe(
   } catch (err) {
     console.warn('[cache] write failed (non-fatal):', err)
   }
+}
+
+/** Whether the model produced anything worth serving. Judged on its own
+ *  output, before {@link withQueryHeadword} fills in the headword. */
+function hasContent(entries: DictionaryEntry[]): boolean {
+  return entries.some((e) => e.word || e.meanings.length > 0)
 }
 
 /** How long, after the LLM answer is ready, to keep waiting for the (parallel)
@@ -505,7 +521,9 @@ async function doTranslate(
   if (cache) {
     try {
       const hit = await cache.get(req.text, req.sourceLang, req.targetLang, CACHE_VERSION)
-      if (hit) return { entries: hit.entries, tier: 'cache' }
+      if (hit) {
+        return { entries: hit.source === 'llm' ? withQueryHeadword(hit.entries, req.text) : hit.entries, tier: 'cache' }
+      }
     } catch (err) {
       console.warn('[cache] read failed (continuing to providers):', err)
     }
@@ -521,15 +539,22 @@ async function doTranslate(
       const result = await llm.translate(req, {
         onPartial: (partial) => {
           const preview = adaptLlm(partial)
-          if (preview.some((e) => e.word || e.meanings.length > 0)) emit(preview)
+          if (hasContent(preview)) emit(withQueryHeadword(preview, req.text))
         },
         ...(metering.ticket ? { usage: metering.ticket.usage } : {}),
       })
       recordLlmLatency(llm.id, Date.now() - started)
       const content = result.content as LlmTranslationContent
-      let entries = withGeneratedBy(adaptLlm(content), result.generatedBy ?? [llm.id])
+      const adapted = adaptLlm(content)
+      if (adapted.some((e) => e.word && !sameTerm(e.word, req.text))) {
+        // Lengths only, never the text (design doc §12).
+        console.warn(
+          `[translate] model headword did not match the looked-up term (headwordLength=${adapted[0]?.word.length ?? 0}, textLength=${req.text.length}); using the term`
+        )
+      }
+      let entries = withGeneratedBy(withQueryHeadword(adapted, req.text), result.generatedBy ?? [llm.id])
       const isTypoResponse = entries.some((e) => Boolean(e.typo?.suggestion))
-      if (entries.some((e) => e.word || e.meanings.length > 0)) {
+      if (hasContent(adapted)) {
         let lateAudio: Promise<Phonetic[]> | null = null
         if (!isTypoResponse) {
           const audio = await withinGrace(audioPromise, AUDIO_GRACE_MS)
@@ -559,8 +584,13 @@ async function doTranslate(
             upgrade
               .then(async (merged) => {
                 if (!merged) return
-                let upgraded = withGeneratedBy(adaptLlm(merged), result.upgradeGeneratedBy ?? [llm.id], true)
-                if (!upgraded.some((e) => e.word || e.meanings.length > 0)) return
+                const mergedEntries = adaptLlm(merged)
+                if (!hasContent(mergedEntries)) return
+                let upgraded = withGeneratedBy(
+                  withQueryHeadword(mergedEntries, req.text),
+                  result.upgradeGeneratedBy ?? [llm.id],
+                  true
+                )
                 if (!upgraded.some((e) => Boolean(e.typo?.suggestion))) {
                   upgraded = withAudio(upgraded, await audioPromise)
                 }

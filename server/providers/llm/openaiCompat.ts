@@ -20,7 +20,14 @@ import { parseContent, parseMoreExamplesContent } from './parse'
 import { runTranslate, type Transport } from './translateFlow'
 import { trackCall } from './usage'
 import { readSse } from '../../../shared/sse'
-import { buildLadder, CORE_MAX_TOKENS, EXTRAS_MAX_TOKENS } from './requestVariants'
+import {
+  buildLadder,
+  CORE_MAX_TOKENS,
+  createOptionalOutputCap,
+  EXTRAS_MAX_TOKENS,
+  hasOutputCap,
+  RUNAWAY_MAX_TOKENS,
+} from './requestVariants'
 
 /**
  * Shared adapter for any OpenAI-compatible Chat Completions API. Both the GLM
@@ -49,9 +56,13 @@ export interface OpenAiCompatOptions {
   /** Admin-supplied extra top-level request fields (model option `requestBody`).
    *  Always sent; setting any reasoning field here disables the built-in rungs. */
   requestBody?: Record<string, unknown>
-  /** Send `max_tokens` runaway caps. Default false — some gateways reject
-   *  `max_tokens` for newer OpenAI models (they want `max_completion_tokens`). */
-  capOutput?: boolean
+  /** Send `max_tokens` runaway caps. `true`: always, with the per-call caps
+   *  (vendors known to accept it). `'auto'`: a loose cap the endpoint may
+   *  refuse — some gateways reject `max_tokens` for newer OpenAI models (they
+   *  want `max_completion_tokens`), so a 400/422 is retried without it and the
+   *  cap is then dropped (see `createOptionalOutputCap`). Skipped when the
+   *  admin `requestBody` sets a cap itself. Default false. */
+  capOutput?: boolean | 'auto'
   /** Stream the core call upstream so partial answers can be shown early.
    *  Default true; falls back to a plain request if the gateway rejects it. */
   stream?: boolean
@@ -122,6 +133,10 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
   if (!apiKey) throw new LlmProviderError('not_configured', `${vendor} API key is not set`)
 
   const ladder = buildLadder(options.reasoningRungs ?? [{}], options.requestBody)
+  const optionalCap =
+    options.capOutput === 'auto' && !hasOutputCap(options.requestBody)
+      ? createOptionalOutputCap('max_tokens', RUNAWAY_MAX_TOKENS, id)
+      : null
   let streamEnabled = options.stream ?? true
   // Without `stream_options.include_usage`, a streamed Chat Completions call
   // reports no token usage at all. Turned off for good if a gateway rejects it.
@@ -157,7 +172,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
       messages,
       temperature,
       ...(options.extraBody ?? {}),
-      ...(options.capOutput ? { max_tokens: call.maxTokens } : {}),
+      ...(options.capOutput === true ? { max_tokens: call.maxTokens } : {}),
       ...extraBody,
     }
     if (jsonMode) requestBody.response_format = { type: 'json_object' }
@@ -285,6 +300,14 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
     }
   }
 
+  /** callChat with the optional output cap (if any) under the rung's fields,
+   *  so an admin `requestBody` on the rung always wins. */
+  function chat(messages: ChatMessage[], call: ChatCall, rung: Record<string, unknown>): Promise<ChatResult> {
+    return optionalCap
+      ? optionalCap.run((capBody) => callChat(messages, call, { ...capBody, ...rung }))
+      : callChat(messages, call, rung)
+  }
+
   /** callChat through the reasoning-off ladder, with a plain-request fallback
    *  if the gateway rejects streaming outright. */
   async function send(
@@ -294,7 +317,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
     const base = { label: call.label, maxTokens: call.maxTokens, onText: call.onText, signal: call.signal }
     if (call.wantStream && streamEnabled) {
       const streamed = (includeUsage: boolean): Promise<ChatResult> =>
-        ladder.run((rung) => callChat(messages, { ...base, stream: true, includeUsage }, rung))
+        ladder.run((rung) => chat(messages, { ...base, stream: true, includeUsage }, rung))
       try {
         return await streamed(streamUsageEnabled)
       } catch (err) {
@@ -311,14 +334,14 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatOptions): Ll
             if (!isBadRequest(retryErr)) throw retryErr
           }
         }
-        const result = await ladder.run((rung) => callChat(messages, { ...base, stream: false }, rung))
+        const result = await ladder.run((rung) => chat(messages, { ...base, stream: false }, rung))
         // Only blame streaming once the same request succeeds without it.
         streamEnabled = false
         console.warn(`[${vendor}] gateway rejected stream:true — streaming disabled for ${id}`)
         return result
       }
     }
-    return ladder.run((rung) => callChat(messages, { ...base, stream: false }, rung))
+    return ladder.run((rung) => chat(messages, { ...base, stream: false }, rung))
   }
 
   const transport: Transport = (messages, call) =>

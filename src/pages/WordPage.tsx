@@ -176,6 +176,7 @@ export default function WordPage({
             <WordEntry
               key={word}
               entry={shownEntry}
+              term={word}
               sourceLang={sourceLang}
               targetLang={targetLang}
               isFavorite={favorites.isFavorite(favKey)}

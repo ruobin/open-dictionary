@@ -7,6 +7,7 @@ import {
   paginate,
   renderBrowsePage,
   renderWordPage,
+  wordPageFor,
 } from './render'
 import type { DictionaryEntry } from '../server/translate'
 
@@ -122,6 +123,46 @@ describe('renderWordPage', () => {
   it('percent-encodes the word in the canonical URL', () => {
     const page = renderWordPage(makeEntry({ word: 'café au lait' }), 'https://example.com')
     expect(page.canonical).toBe('https://example.com/word/caf%C3%A9%20au%20lait')
+  })
+})
+
+describe('wordPageFor — which page a cache doc publishes', () => {
+  const doc = (word: string, entry = makeEntry({ word })) => ({ word, entries: [entry] })
+
+  it('publishes an ordinary entry under its cache term', () => {
+    expect(wordPageFor(doc('hello'))).toEqual({ term: 'hello', entry: makeEntry({ word: 'hello' }) })
+  })
+
+  it('keeps a headword that is the term in another case', () => {
+    const target = wordPageFor(doc('paris', makeEntry({ word: 'Paris' })))
+    expect(target).toMatchObject({ term: 'paris', entry: { word: 'Paris' } })
+  })
+
+  it('never lets an entry claim another word: a foreign headword is replaced by the term', () => {
+    // e.g. a prompt-injected lookup whose answer says headword "hello".
+    const target = wordPageFor(doc('some injected lookup text', makeEntry({ word: 'hello' })))
+    expect(target).toMatchObject({ term: 'some injected lookup text', entry: { word: 'some injected lookup text' } })
+  })
+
+  it('publishes nothing for a typo-only entry or one with no senses', () => {
+    expect(wordPageFor(doc('helo', makeEntry({ word: 'helo', typo: { suggestion: 'hello' } })))).toBeNull()
+    expect(wordPageFor(doc('hollow', makeEntry({ word: 'hollow', meanings: [] })))).toBeNull()
+    expect(wordPageFor({ word: 'empty', entries: [] })).toBeNull()
+  })
+
+  it('flags a term that cannot be a directory name instead of failing later', () => {
+    expect(wordPageFor(doc('a/b'))).toBe('unsafe')
+    expect(wordPageFor(doc('..'))).toBe('unsafe')
+    expect(wordPageFor(doc('x'.repeat(256)))).toBe('unsafe')
+  })
+})
+
+describe('renderWordPage — term vs headword', () => {
+  it('takes the canonical URL from the term, and display text from the entry', () => {
+    const page = renderWordPage(makeEntry({ word: 'Paris' }), 'https://example.com', 'paris')
+    expect(page.canonical).toBe('https://example.com/word/paris')
+    expect(page.jsonLd?.url).toBe('https://example.com/word/paris')
+    expect(page.bodyHtml).toContain('<h1 class="headword">Paris</h1>')
   })
 })
 

@@ -170,7 +170,7 @@ export function createApp({ llmService, dictionaryProvider, translationCache, us
   app.use('/api', createReportRouter())
   app.use('/api', createActivityPingRouter())
   app.use('/api', createWordOfDayRouter())
-  app.use('/api', createMoreExamplesRouter({ usage, optionalJwt }))
+  app.use('/api', createMoreExamplesRouter({ usage, optionalJwt, cache: translationCache }))
   app.use('/api', createUsageRouter({ usage, optionalJwt, fullModels: () => fullModelsOf(llmService) }))
   app.use('/api', createBrowseRouter())
   app.use('/api', createFavoritesRouter(checkJwt))

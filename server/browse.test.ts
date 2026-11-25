@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { getBrowsePage } from './browse'
 import type { TranslationDoc } from './cache/translationCache'
 
-function makeDoc(word: string, overrides: Partial<TranslationDoc['entries'][0]> = {}): Pick<TranslationDoc, 'entries'> {
+function makeDoc(
+  word: string,
+  overrides: Partial<TranslationDoc['entries'][0]> = {}
+): Pick<TranslationDoc, 'word' | 'entries'> {
   return {
+    word,
     entries: [
       {
         word,
@@ -48,6 +52,18 @@ describe('getBrowsePage', () => {
     const docs = [makeDoc('hello'), makeDoc('he/llo')]
     const result = await getBrowsePage(docs, 'h', 1)
     expect(result?.words).toEqual(['hello'])
+  })
+
+  it('lists the cache term, never the headword the entry carries', async () => {
+    // An LLM entry's headword is the model's echo of the term and is untrusted.
+    const docs = [makeDoc('hijacked lookup text', { word: 'hello' }), makeDoc('paris', { word: 'Paris' })]
+    expect((await getBrowsePage(docs, 'h', 1))?.words).toEqual(['hijacked lookup text'])
+    expect((await getBrowsePage(docs, 'p', 1))?.words).toEqual(['paris'])
+  })
+
+  it('excludes terms too long to be a path segment', async () => {
+    const docs = [makeDoc('hello'), makeDoc(`h${'a'.repeat(250)}`)]
+    expect((await getBrowsePage(docs, 'h', 1))?.words).toEqual(['hello'])
   })
 
   it('paginates and clamps an out-of-range page to the last page', async () => {
