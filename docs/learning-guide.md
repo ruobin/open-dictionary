@@ -774,8 +774,6 @@ refactor once you are comfortable.
 - **In-process state assumes one API container.** The daily IP budget, rate
   limits and in-flight dedup would each need a shared store before running a
   second instance. `design-geo-load-balancing.md` discusses this.
-- **CI does not typecheck or build the extension.** It runs the extension's
-  unit tests (root `npm test` picks them up) but nothing else there.
 - **`admin/router.ts` is one 1,191-line file.** It would split cleanly by page.
 - **Older design docs name files that have moved.** `design-translation-cache.md`
   refers to a `TranslateService` class; the orchestrator is the `translate()`
