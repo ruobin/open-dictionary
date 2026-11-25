@@ -561,6 +561,7 @@ out are constrained.
 | Output shape | `parse.ts` | The answer is rebuilt field by field: wrong types dropped, counts and lengths bounded by `OUTPUT_LIMITS`. Streamed previews go through the same code. |
 | Output size | adapters | `max_tokens` on DeepSeek, GLM, OpenRouter and Anthropic. Custom `openai-compat` and `openai-responses` endpoints get a loose 16,384-token cap that is dropped if the endpoint refuses it. A 30-second timeout covers the whole response. |
 | Entry identity | `translate.ts`, `scripts/render.ts`, `browse.ts` | The headword is forced to the looked-up term, and static pages, canonical URLs and browse lists are keyed on the cache term, never on the entry's headword. |
+| What is listed | `shared/term.ts` `isListableTerm` | The cache holds whatever anyone typed. Only terms shaped like a headword or short phrase are shown to other people in autocomplete, browse pages, prerendered pages and the sitemap: at most 64 characters, 8 words and 4 digits, no `@ : /` or domain-style dots. Word of the day takes single Latin-script words with no open report. An unlisted term still works at `/word/<term>`, with `noindex`. |
 | Rendering | React, `escapeHtml`, CSP | Everything the model writes is escaped wherever it is rendered. |
 
 None of the prompt-level rules is a guarantee; a model can still be talked
@@ -569,8 +570,8 @@ includes prompt-injection terms so `npm run eval` shows how the configured
 model actually behaves.
 
 Not covered: what a model says *within* a well-formed entry is not moderated,
-and any term anyone looks up can appear in autocomplete, browse pages and the
-sitemap.
+and the listing rule looks at a term's shape, not its meaning, so a short
+phrase of ordinary words is still listed.
 
 ### 8.2 One lookup is two model calls
 
@@ -1095,7 +1096,8 @@ flowchart LR
   prerendered page from the live site if the prerender step were skipped.
 - **Prerender is a batch job, not server-side rendering.** It reads the cache
   and writes one static HTML file per cached en→en word (at `word/<cache term>`,
-  see `wordPageFor`), with a real title,
+  see `wordPageFor`; terms that fail `isListableTerm` get no page and no
+  sitemap line, and the summary log counts them), with a real title,
   description, canonical link and JSON-LD. nginx serves
   `word/<term>/index.html` when it exists and the SPA shell otherwise. React
   uses `createRoot`, so it replaces the static HTML on load rather than
@@ -1125,6 +1127,7 @@ its failure must not fail the lookup.
 | Model returns far more than asked | Extra items are dropped and over-long text is cut by the parser. |
 | More-examples request names a sense the entry does not have | `400 unknown_sense`; no model call, nothing charged. The web app drops its stale local copy of the entry. |
 | A cache entry cannot be rendered by the prerender | That entry is skipped with a warning. More than a handful of failures aborts the run before anything is published. |
+| Someone looks up a pasted sentence, an email address or a number | The lookup works and is cached like any other. The term fails `isListableTerm`, so it is left out of autocomplete, browse pages, the prerender, the sitemap and word of the day, and its page carries `noindex`. |
 | Activity log, ledger, or alert write fails | Logged and ignored. |
 | Metering storage fails | `shadow`: generation proceeds. `on`: `503`. |
 | Admin-configured provider is broken | Env baseline provider takes over; status says why. |

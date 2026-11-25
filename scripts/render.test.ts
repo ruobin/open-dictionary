@@ -151,9 +151,16 @@ describe('wordPageFor — which page a cache doc publishes', () => {
   })
 
   it('flags a term that cannot be a directory name instead of failing later', () => {
-    expect(wordPageFor(doc('a/b'))).toBe('unsafe')
-    expect(wordPageFor(doc('..'))).toBe('unsafe')
-    expect(wordPageFor(doc('x'.repeat(256)))).toBe('unsafe')
+    expect(wordPageFor(doc('a/b'))).toBe('unlisted')
+    expect(wordPageFor(doc('..'))).toBe('unlisted')
+    expect(wordPageFor(doc('x'.repeat(256)))).toBe('unlisted')
+  })
+
+  it('publishes no page for text that is not a headword or short phrase', () => {
+    expect(wordPageFor(doc('john.smith@example.com'))).toBe('unlisted')
+    expect(wordPageFor(doc('call me on 0412 345 678'))).toBe('unlisted')
+    expect(wordPageFor(doc('this is a whole sentence somebody pasted into the search box'))).toBe('unlisted')
+    expect(wordPageFor(doc('heavy rain'))).toMatchObject({ term: 'heavy rain' })
   })
 })
 

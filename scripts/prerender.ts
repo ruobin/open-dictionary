@@ -78,7 +78,7 @@ async function main(): Promise<void> {
   ]
 
   let wordPageCount = 0
-  let skippedUnsafe = 0
+  let skippedUnlisted = 0
   const failed: string[] = []
   const wordsByLetter = new Map<string, string[]>()
 
@@ -87,8 +87,8 @@ async function main(): Promise<void> {
     // (see wordPageFor).
     const target = wordPageFor(doc)
     if (!target) continue
-    if (target === 'unsafe') {
-      skippedUnsafe += 1
+    if (target === 'unlisted') {
+      skippedUnlisted += 1
       continue
     }
     const { term, entry } = target
@@ -149,7 +149,9 @@ async function main(): Promise<void> {
 
   console.log(
     `[prerender] wrote ${wordPageCount} word page(s), ${browsePageCount} browse page(s), sitemap.xml (${sitemapUrls.length} URLs), and updated robots.txt` +
-      (skippedUnsafe > 0 ? `; skipped ${skippedUnsafe} entr${skippedUnsafe === 1 ? 'y' : 'ies'} whose term cannot be a path` : '') +
+      (skippedUnlisted > 0
+        ? `; skipped ${skippedUnlisted} entr${skippedUnlisted === 1 ? 'y' : 'ies'} whose term is not listed publicly`
+        : '') +
       (failed.length > 0 ? `; ${failed.length} failed (see warnings above)` : '')
   )
   process.exit(0)

@@ -4,7 +4,7 @@ import { getMongoDb } from './db'
 import { CACHE_VERSION, type DictionaryEntry } from './translate'
 import type { TranslationDoc } from './cache/translationCache'
 import { bucketLetter, paginate, WORDS_PER_BROWSE_PAGE } from '../shared/browse'
-import { isPublishableTerm } from '../shared/term'
+import { isListableTerm } from '../shared/term'
 import { BROWSE_RATE_LIMIT_RPM } from './config'
 
 /**
@@ -33,11 +33,14 @@ export interface BrowsePageResult {
  * The term a cache doc is listed under, or null when it isn't listed. The
  * term is the cache key (`doc.word`), never `entry.word`: for an LLM entry
  * that is the model's echo of the term and is untrusted (mirrors
- * scripts/prerender.ts, so the live list and the static pages agree).
+ * scripts/prerender.ts, so the live list and the static pages agree). Terms
+ * that do not look like a headword or short phrase are left out
+ * (`isListableTerm`), so text someone pasted into the search box is not
+ * shown to everyone else.
  */
 function eligibleWord(doc: Pick<TranslationDoc, 'word' | 'entries'>): string | null {
   const entry: DictionaryEntry | undefined = doc.entries[0]
-  if (!entry || entry.typo || !entry.meanings.length || !isPublishableTerm(doc.word)) return null
+  if (!entry || entry.typo || !entry.meanings.length || !isListableTerm(doc.word)) return null
   return doc.word
 }
 

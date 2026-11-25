@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
 import { CACHE_VERSION, type DictionaryEntry } from './translate'
 import type { TranslationDoc } from './cache/translationCache'
+import { isListableTerm } from '../shared/term'
 import { WORD_OF_DAY_RATE_LIMIT_RPM } from './config'
 
 /**
@@ -11,6 +12,10 @@ import { WORD_OF_DAY_RATE_LIMIT_RPM } from './config'
  * requests don't reshuffle it. No LLM call — picked only from words already
  * sitting in the cache, same "never cost more just because someone looked"
  * principle as the SEO prerender (scripts/prerender.ts).
+ *
+ * This is the one place a cached term is pushed to every visitor's home page
+ * without them asking, so the bar is higher than for browse pages: a single
+ * word in Latin letters (`isWordOfDayTerm`), with no open report against it.
  */
 interface WordOfDayDoc {
   _id: string
@@ -22,9 +27,27 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-export function isEligible(doc: TranslationDoc): boolean {
+/** One word: Latin letters, optionally joined by hyphens or apostrophes
+ *  ("well-being", "o'clock"). No phrases, digits or other scripts. */
+const SINGLE_LATIN_WORD = /^\p{Script=Latin}+(?:[-'’]\p{Script=Latin}+)*$/u
+
+export function isWordOfDayTerm(term: string): boolean {
+  return isListableTerm(term) && SINGLE_LATIN_WORD.test(term)
+}
+
+export function isEligible(doc: Pick<TranslationDoc, 'word' | 'entries'>): boolean {
   const entry: DictionaryEntry | undefined = doc.entries[0]
-  return Boolean(entry && !entry.typo && entry.meanings.length > 0)
+  return Boolean(entry && !entry.typo && entry.meanings.length > 0) && isWordOfDayTerm(doc.word)
+}
+
+/** The words today's pick is drawn from: eligible entries, minus any word a
+ *  visitor has reported and the admin has not yet reviewed. */
+export function wordOfDayCandidates(
+  docs: Pick<TranslationDoc, 'word' | 'entries'>[],
+  reportedWords: Iterable<string>
+): string[] {
+  const reported = new Set(reportedWords)
+  return docs.filter(isEligible).map((d) => d.word).filter((word) => !reported.has(word))
 }
 
 /** Exported for the eval harness / manual testing; not otherwise called directly. */
@@ -41,7 +64,11 @@ export async function pickWordOfDay(): Promise<string | null> {
     .collection<TranslationDoc>('translations')
     .find({ sourceLang: 'en', targetLang: 'en', source: 'llm', version: CACHE_VERSION })
     .toArray()
-  const eligible = docs.filter(isEligible).map((d) => d.word)
+  // A report stays in `reports` until the admin dismisses it or deletes the entry.
+  const reportedWords = await db
+    .collection<{ word: string }>('reports')
+    .distinct('word', { sourceLang: 'en', targetLang: 'en' })
+  const eligible = wordOfDayCandidates(docs, reportedWords)
   if (eligible.length === 0) return null
 
   const candidate = eligible[Math.floor(Math.random() * eligible.length)]

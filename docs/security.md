@@ -91,6 +91,7 @@ this site.
 | L1 | High | The static prerender, browse lists, canonical URLs and the Report button used the entry's `headword`, which is the model's echo of the term. An injected lookup returning another word's headword overwrote that word's static page; a headword over 255 bytes made the prerender throw and blocked every web deploy. | Entry identity is the cache term everywhere (`wordPageFor` in `scripts/render.ts`, `server/browse.ts`). `withQueryHeadword` forces an LLM entry's headword to the looked-up term, on cache hits too. Terms that cannot be a path segment are skipped, and one failing entry no longer aborts the prerender. |
 | L2 | Medium | The term was interpolated into prompts as raw quoted text with no instruction to treat it as data. `/api/more-examples` passed a 500-character client-supplied `definition` to the model unchecked — a small free-text LLM proxy. | Request text is embedded as JSON string literals, and each system prompt ends with a "data, never instructions" rule. A more-examples `definition` must match a sense of the word's cached entry; the server's copy is what the model sees. |
 | L3 | Medium | Model output was type-checked but unbounded in count and length, and custom `openai-compat` / `openai-responses` providers sent no output-token cap. | `OUTPUT_LIMITS` in `parse.ts` bound every list and string. Those two adapters send a 16,384-token cap, dropped only if the endpoint refuses it. |
+| L4 | Medium | Whatever anyone typed into the search box was cached under that text and then shown to everyone: `/api/suggest` let a visitor enumerate other people's lookups by prefix (any language, including typo verdicts and empty results), and browse pages, prerendered word pages, the sitemap and word of the day listed them. A pasted sentence, email address or phone number became public and indexable. | One rule, `isListableTerm` in `shared/term.ts`, decides what is shown to people who did not look a term up: letters of any script with spaces, hyphens, apostrophes and abbreviation punctuation; at most 64 characters, 8 words and 4 digits (16 characters for Chinese, Japanese and Thai, which have no spaces); no `@`, `:`, `/` or domain-style dots. Suggest, browse, prerender and the sitemap apply it, and suggest also requires a real entry. Word of the day is stricter: one Latin-script word with no open report. An unlisted term still works at `/word/<term>`, served with `noindex`. |
 
 Prompt-level defences reduce the odds of a successful injection; they do not
 remove it. L1 and L3 are what hold when a model is fooled. `npm run eval`
@@ -98,10 +99,14 @@ includes injection terms and should be re-run when the model changes.
 
 **Still open**
 
-- Any term anyone looks up can surface in autocomplete (`/api/suggest`), browse
-  pages, the sitemap and word of the day; there is no filter on length, word
-  count or reports. Pasted private text would become public this way.
+- L4 judges the shape of a term, not its meaning. A short phrase of ordinary
+  words (a person's name, an insult) still passes and is listed. Removing one
+  is a manual step: delete the entry on the admin Entries page, then redeploy
+  the web app so the static page goes too.
 - Content inside a well-formed entry is not moderated.
+- A report takes a word out of the word-of-day pool until an admin dismisses
+  it, and has no other automatic effect. Reports are anonymous, so letting
+  them hide pages would let anyone delist any word.
 - Usage quotas default to `shadow` (count, refuse nothing). Until
   `USAGE_ENFORCEMENT=on`, total spend is bounded only per IP. Set a spending
   limit in each LLM vendor's dashboard as a backstop.

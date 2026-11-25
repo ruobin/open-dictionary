@@ -11,6 +11,7 @@ import { forgetCachedEntry, type DictionaryEntry, type GeneratedBy } from '../ap
 import { regenerateEntry } from '../api/usage'
 import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { buildWordDescription, buildWordTitle } from '../../shared/seo'
+import { isListableTerm, normalizeTerm } from '../../shared/term'
 import type { FavoriteKey } from '../../shared/favorites'
 import type { useUserData } from '../hooks/useUserData'
 import type { useFavorites } from '../hooks/useFavorites'
@@ -83,8 +84,10 @@ export default function WordPage({
       )
     ) : null
 
+  // Only terms the site lists publicly (shared/term.ts) ask to be indexed;
+  // anything else someone typed or linked to gets `noindex`.
   useDocumentMeta(
-    entry && !isTypo
+    entry && !isTypo && isListableTerm(normalizeTerm(word))
       ? {
           title: buildWordTitle(entry.word),
           description: buildWordDescription(entry.meanings?.[0]?.definitions?.[0]?.definition, entry.word),

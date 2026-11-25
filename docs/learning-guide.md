@@ -705,6 +705,11 @@ README.
   on reload.
 - *Prerendering.* Generating static HTML ahead of time for crawlers, from data
   you already have.
+- *Private until listed.* The cache stores whatever anyone typed, so being in
+  the cache is not the same as being public. `isListableTerm` in
+  `shared/term.ts` is the one rule that decides which terms are shown to other
+  people; `suggest.ts`, `browse.ts`, `wordOfDay.ts` and `scripts/render.ts`
+  all call it.
 - *Content Security Policy.* A response header listing where scripts, media
   and connections may go.
 
@@ -715,6 +720,16 @@ README.
 `vite build` empties `dist/`. `rsync --delete` makes the web root match
 `dist/` exactly. If prerender were skipped, every static word page would be
 deleted from the live site. The deploy script fixes the order.
+</details>
+
+<details><summary>Someone pastes their email address into the search box. Where does it end up?</summary>
+
+In the cache, under that text, and on their own `/word/<term>` page, which is
+marked `noindex`. Nowhere else: the term fails `isListableTerm` (it contains
+`@` and a domain-style dot), so autocomplete, browse pages, the prerender, the
+sitemap and word of the day all skip it. The rule checks shape only. A short
+phrase of ordinary words would pass, and removing one of those is a manual
+delete on the admin Entries page.
 </details>
 
 ---

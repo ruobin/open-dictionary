@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { isEligible } from './wordOfDay'
+import { isEligible, isWordOfDayTerm, wordOfDayCandidates } from './wordOfDay'
 import type { TranslationDoc } from './cache/translationCache'
 
-function makeDoc(overrides: Partial<TranslationDoc['entries'][0]> = {}): TranslationDoc {
+function makeDoc(overrides: Partial<TranslationDoc['entries'][0]> = {}, word = 'hello'): TranslationDoc {
   return {
     _id: 'x',
-    word: 'hello',
+    word,
     sourceLang: 'en',
     targetLang: 'en',
     source: 'llm',
@@ -14,7 +14,7 @@ function makeDoc(overrides: Partial<TranslationDoc['entries'][0]> = {}): Transla
     schemaVersion: 1,
     entries: [
       {
-        word: 'hello',
+        word,
         phonetics: [],
         meanings: [{ partOfSpeech: 'interjection', definitions: [{ definition: 'A greeting' }] }],
         ...overrides,
@@ -40,5 +40,29 @@ describe('isEligible', () => {
     const doc = makeDoc()
     doc.entries = []
     expect(isEligible(doc)).toBe(false)
+  })
+})
+
+describe('isWordOfDayTerm — the home page only features a single word', () => {
+  it('accepts single words, including hyphenated, apostrophised and accented ones', () => {
+    for (const term of ['serendipity', 'well-being', "o'clock", 'café', 'naïve']) expect(isWordOfDayTerm(term), term).toBe(true)
+  })
+
+  it('rejects phrases, digits, abbreviations and other scripts', () => {
+    for (const term of ['heavy rain', 'catch-22', 'e.g.', 'r&d', '一石二鳥', 'привет', '-ness', ''])
+      expect(isWordOfDayTerm(term), term).toBe(false)
+  })
+
+  it('is part of eligibility: the cache term decides, not the headword', () => {
+    expect(isEligible(makeDoc({}, 'a herd of plains zebras'))).toBe(false)
+    expect(isEligible(makeDoc({ word: 'hello' }, 'some pasted sentence'))).toBe(false)
+  })
+})
+
+describe('wordOfDayCandidates', () => {
+  it('keeps eligible words and drops any with an open report', () => {
+    const docs = [makeDoc({}, 'serendipity'), makeDoc({}, 'ephemeral'), makeDoc({}, 'heavy rain'), makeDoc({ meanings: [] }, 'hollow')]
+    expect(wordOfDayCandidates(docs, [])).toEqual(['serendipity', 'ephemeral'])
+    expect(wordOfDayCandidates(docs, ['ephemeral'])).toEqual(['serendipity'])
   })
 })

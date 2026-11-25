@@ -61,6 +61,17 @@ describe('getBrowsePage', () => {
     expect((await getBrowsePage(docs, 'p', 1))?.words).toEqual(['paris'])
   })
 
+  it('excludes text that is not a headword or short phrase', async () => {
+    const docs = [
+      makeDoc('hello'),
+      makeDoc('heavy rain'),
+      makeDoc('helen.jones@example.com'),
+      makeDoc('his number is 0412 345 678'),
+      makeDoc('how do i tell my manager that i am leaving the company next month'),
+    ]
+    expect((await getBrowsePage(docs, 'h', 1))?.words).toEqual(['heavy rain', 'hello'])
+  })
+
   it('excludes terms too long to be a path segment', async () => {
     const docs = [makeDoc('hello'), makeDoc(`h${'a'.repeat(250)}`)]
     expect((await getBrowsePage(docs, 'h', 1))?.words).toEqual(['hello'])
