@@ -6,6 +6,16 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   test: {
     include: ['**/*.test.ts'],
+    // server/config.ts exits the process when a required AUTH0_* variable is
+    // missing, and most server tests import it. No test talks to Auth0, so
+    // placeholders are enough; they also keep `npm test` working on a fresh
+    // clone (or in CI) with no server/.env.
+    env: {
+      AUTH0_DOMAIN: 'test.invalid',
+      AUTH0_AUDIENCE: 'https://test.invalid/api',
+      AUTH0_MGMT_CLIENT_ID: 'test-client-id',
+      AUTH0_MGMT_CLIENT_SECRET: 'test-client-secret',
+    },
   },
   server: {
     port: 5173,

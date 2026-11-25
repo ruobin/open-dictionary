@@ -3,7 +3,7 @@
  * (src/components/WordEntry.tsx, scripts/render.ts).
  *
  * The LLM is instructed to return bare, look-up-able terms (see
- * server/providers/llm/openaiCompat.ts buildMessages), but strips a trailing
+ * EXTRAS_SYSTEM in server/providers/llm/prompts.ts), but strips a trailing
  * parenthetical annotation defensively — e.g. "runner (noun)" -> "runner" —
  * since prompt compliance isn't guaranteed and a stray "(noun)" would
  * otherwise become part of the lookup query. The annotation is still shown

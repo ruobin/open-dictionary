@@ -2,6 +2,11 @@
 
 A bilingual dictionary + translation app. Look up a word or expression in a source language; definitions and translations come from a configurable LLM tier (DeepSeek by default, or OpenRouter / Z.AI GLM), with the Merriam-Webster Collegiate API as a fallback (English-only). Results are cached in MongoDB keyed by **(word, sourceLang, targetLang)** so identical lookups skip the LLM entirely. After the LLM produces an entry, pronunciation audio URLs are best-effort merged from Merriam-Webster (English source) and cached with the entry. Per-user favorites (**language**-scoped) live in MongoDB; history (now also language-scoped, `{word, sourceLang, targetLang}` shape) stays in browser localStorage (anonymous) or Auth0 `user_metadata` (authenticated). Anonymous users are prompted to log in before favoriting — a pending favorite is stashed in `sessionStorage` and applied on return. The last‑used source/target language pair is persisted in `localStorage` so the pickers survive refreshes.
 
+> **New to the codebase?** [docs/architecture.md](docs/architecture.md) is the
+> as-built map (diagrams of the lookup pipeline, LLM layer, quotas, data model,
+> deployment), and [docs/learning-guide.md](docs/learning-guide.md) is a staged
+> reading order with experiments and exercises.
+
 ## Features
 
 **User-facing**
@@ -78,6 +83,10 @@ flowchart TD
 - **Failures:** enforced quota refusals return an error, not a dictionary
   fallback. Merriam-Webster is used only when the LLM fails or is unavailable;
   a lookup with no result returns `not_found`.
+
+For the full picture — middleware chain, in-flight dedup, streaming, fusion,
+usage metering, data model, deployment — see
+[docs/architecture.md](docs/architecture.md).
 
 Favorites: `GET/POST/DELETE /api/favorites`, keyed by **(user, word, sourceLang, targetLang)**. **All favorites routes require a valid Auth0 access token**; the caller's identity is the verified JWT `sub` (never a client-supplied identity header, which would be spoofable). Anonymous users are prompted to log in before favoriting.
 
@@ -185,7 +194,7 @@ Verify the cache: watch the API logs — the first lookup of a word says *via ll
 | `LLM_REQUEST_TIMEOUT_MS` | no | `30000` | Per‑request LLM timeout (ms) |
 | `LLM_DEBUG` | no | off | `true` prints full prompts and response bodies |
 | `PUBLIC_BASE_URL` | no | `http://localhost:5173` | Site origin — used only by `scripts/prerender.ts` for canonical URLs/sitemap |
-| `*_RATE_LIMIT_RPM` | no | see [Operational notes](#operational-notes) | Per-route per-IP rate limits: `TRANSLATE`, `MORE_EXAMPLES`, `FAVORITES`, `USERDATA`, `SUGGEST`, `WORD_OF_DAY`, `REPORT`, `ADMIN` prefixes |
+| `*_RATE_LIMIT_RPM` | no | see [Operational notes](#operational-notes) | Per-route per-IP rate limits: `TRANSLATE`, `MORE_EXAMPLES`, `FAVORITES`, `USERDATA`, `SUGGEST`, `BROWSE`, `WORD_OF_DAY`, `REPORT`, `ACTIVITY_PING`, `ADMIN` prefixes |
 | `LLM_DAILY_BUDGET_PER_IP` | no | `300` | Paid (cache-miss) LLM calls per IP per rolling 24 h; over it, only cached words are served (429 on misses). `0` disables. See [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md) |
 | `LLM_BLOCK_BOTS` | no | `1` | Refuse self-identified crawlers/scripts (GPTBot, curl, python-requests, …) on LLM routes with 403. `0` to allow (e.g. manual curl testing) |
 | `USAGE_ENFORCEMENT` | no | `shadow` | LLM usage quotas: `off`, `shadow` (count and record would-be refusals, refuse nothing) or `on`. See [docs/design-llm-usage-quotas.md](docs/design-llm-usage-quotas.md); every `USAGE_*` value can be overridden in **Admin → Usage & budget** |
@@ -264,15 +273,17 @@ production troubleshooting.
 
 ```
 src/
-  api/            dictionary.ts, userData.ts, favorites.ts, report.ts, admin.ts, usage.ts
+  api/            dictionary.ts, userData.ts, favorites.ts, suggest.ts, wordOfDay.ts,
+                  moreExamples.ts, browse.ts, report.ts, usage.ts, admin.ts
   components/     SearchBar, WordEntry, PosSection, AudioButton, WordOfDay,
                   MoreExamplesButton, ReportButton, Sidebar, Header,
-                  AuthButton, ErrorBoundary, UsageChip, QuotaPanel, VerifyEmailCard
+                  AuthButton, ErrorBoundary, UsageChip, QuotaPanel, VerifyEmailCard,
+                  LiveText (streamed-text reveal), ExtensionBanner
                   admin/          admin-only components (provider cards/forms,
                                   benchmark form/results, playground form/results,
                                   entry filters/rows/detail drawer, audit table)
   hooks/          useDictionary, useUserData, useFavorites, useTheme,
-                  useDocumentMeta, useAdminAuth, useAccessToken, useUsage
+                  useDocumentMeta, useAdminAuth, useAccessToken, useUsage, useDismissible
   i18n/           I18nContext, translations (UI copy, multiple languages)
   pages/          Home, WordPage, BrowsePage, HistoryPage, AboutPage, PrivacyPage
                   admin/          Overview, Providers, Latency, Playground,
@@ -294,6 +305,9 @@ shared/
   liveReveal.ts   Pure maths for the chat‑style text reveal, shared by the web app and the extension
   wordLink.ts     Canonical /word/:term URL builder
   seo.ts          Shared SEO/meta helpers
+  browse.ts       Letter bucketing + pagination for the /browse pages
+  limits.ts       Limits shared by client and server (max lookup text length)
+  providerDefaults.ts  Vendor default request headers (OpenRouter attribution), shared with the admin provider form
 extension/        Browser extension (separate npm workspace — npm run ext:build)
 server/
   index.ts        Boot: connect Mongo, create providers, listen + shutdown
@@ -304,6 +318,8 @@ server/
   wordOfDay.ts    /api/word-of-day
   moreExamples.ts /api/more-examples — per-sense follow-up LLM call
   report.ts       /api/report — user quality reports
+  browse.ts       /api/browse/:letter — alphabetical index of cached words
+  activityPing.ts /api/activity-ping — client-cache hit beacon for the activity log
   favorites.ts    /api/favorites (Mongo‑backed)
   metrics.ts      In-memory lookup/latency/error counters (admin Overview)
   abuseGuard.ts   LLM abuse guard: IP blocklist, bot refusal, per-IP daily LLM budget
@@ -336,6 +352,7 @@ server/
     service.ts      LlmService — hot-swappable active provider (env ⇄ db), see admin portal design doc §7
   util/
     regex.ts        escapeRegex (safe user input → Mongo regex)
+    userAgent.ts    Coarse User-Agent parser (device/browser/OS, bot detection)
   admin/
     router.ts        /api/admin/* routes (status, providers, test, benchmark,
                      playground, active, entries, reports, activity,
@@ -350,18 +367,22 @@ server/
     usage.ts          Usage summaries and account allowance administration
     audit.ts          Append-only admin_audit log
 docs/
+  architecture.md               As-built architecture with diagrams — start here
+  learning-guide.md             Staged reading order, experiments and exercises
   design‑translation‑cache.md   Full design rationale for cache + LLM tier
   design‑admin‑portal.md        Admin portal design + §18 implementation notes
   design‑admin‑cache‑entries.md Admin Entries/Reports pages design + §17 as-built delta
   design‑geo‑load‑balancing.md  Multi-region deployment design (not yet implemented)
   ui‑i18n‑and‑themes.md         Dark/light theming + UI i18n design
   design‑llm‑abuse‑guard.md     LLM spend protection, Clients page, entry attribution (2026-10-30 incident)
+  design-user-activity-log.md   Per-lookup activity log + admin Activity page
+  llm-provider-operations.md    Provider config sources, timeouts, latency design, troubleshooting
   design-llm-usage-quotas.md     Usage tiers, budgets, metered routing and rollout design
   to-do-llm-usage-quotas.md      Implementation status and deferred payments work
   security.md                   Threat model, findings & mitigations, hardening
 docker‑compose.yml      Production stack (mongo + api) — see Production deployment
 Dockerfile              Production API image
-.github/workflows/      CI (build + typecheck + smoke‑start)
+.github/workflows/      CI (typecheck + tests + build + smoke‑start + audit)
 ```
 
 > **Docs index:** see [`docs/README.md`](docs/README.md) for a categorized index
@@ -391,8 +412,11 @@ and build do **not** cover the extension. For extension changes, also run
 `npm run ext:install`, `npm run ext:test`, `npm run ext:build` and
 `npx tsc --noEmit -p extension/tsconfig.json`. Store packaging uses
 `npm --prefix extension run build:prod`; see [extension/RELEASE.md](extension/RELEASE.md).
-CI currently runs typecheck, frontend build, API health smoke-start and a production
-dependency audit; tests and extension checks must be run separately.
+CI runs typecheck, the unit tests (`npm test`, which includes the extension's tests),
+frontend build, API health smoke-start and a production dependency audit. The
+extension's typecheck and build are not in CI and must be run separately. `npm test`
+needs no `server/.env`, database or network (`vite.config.ts` supplies placeholder
+`AUTH0_*` values for test runs).
 
 Non-npm operational scripts (not run via npm):
 
@@ -514,7 +538,7 @@ The server connects to MongoDB via `MONGODB_URI`. For production, point it at a 
 
 ### Operational notes
 
-- Per‑IP rate limits (configurable via env): `/api/translate` and `/api/translate-stream` 5 req/min (shared), `/api/more-examples` 5 req/min, `/api/favorites` 60 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/admin/*` 30 req/min. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
+- Per‑IP rate limits (configurable via env): `/api/translate` and `/api/translate-stream` 5 req/min (shared), `/api/more-examples` 5 req/min, `/api/favorites` 120 req/min, `/api/user-data` 60 req/min, `/api/suggest` 60 req/min, `/api/browse` 60 req/min, `/api/word-of-day` 30 req/min, `/api/report` 10 req/min, `/api/activity-ping` 60 req/min, `/api/admin/*` 30 req/min. Signed-in callers of the lookup routes are keyed by account rather than IP, and the owner is exempt. The two LLM endpoints (translate, more-examples) are hard-capped at 5 req/min to bound token spend. Set `TRANSLATE_RATE_LIMIT_RPM`, `MORE_EXAMPLES_RATE_LIMIT_RPM`, `FAVORITES_RATE_LIMIT_RPM`, `USERDATA_RATE_LIMIT_RPM`, `SUGGEST_RATE_LIMIT_RPM`, `BROWSE_RATE_LIMIT_RPM`, `WORD_OF_DAY_RATE_LIMIT_RPM`, `REPORT_RATE_LIMIT_RPM`, `ACTIVITY_PING_RATE_LIMIT_RPM`, `ADMIN_RATE_LIMIT_RPM` in `server/.env`.
 - **Usage tiers and free-tier spend controls** — default `USAGE_ENFORCEMENT=shadow` records usage and would-be quota refusals without enforcing usage quotas (existing abuse protections still apply). Review **Admin → Usage & budget** before switching to `on`; cached words do not consume generation allowances. Payments/credit checkout remain deferred. See [usage design](docs/design-llm-usage-quotas.md) and [implementation checklist](docs/to-do-llm-usage-quotas.md).
 - **Daily LLM budget, bot refusal and IP blocklist** (added after a GPTBot crawl drove up token spend on 2026-10-29/30): per-minute limits alone don't cap daily spend, so each IP also gets a rolling-24 h budget of paid LLM calls (`LLM_DAILY_BUDGET_PER_IP`), self-identified bots get 403 on LLM routes, and admins can block IPs/CIDRs from **Admin → Clients**. Host nginx also 403s known crawlers on `/api/` and 404s crawlers on `/word/*` pages that have no prerendered file. Details: [docs/design-llm-abuse-guard.md](docs/design-llm-abuse-guard.md).
 - Every nginx vhost that proxies `/api/` **must** send `X-Forwarded-For`; otherwise the API (with `TRUST_PROXY=1`) sees all of that domain's visitors as the docker gateway IP, sharing one rate limit and budget.

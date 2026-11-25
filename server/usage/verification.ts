@@ -5,8 +5,9 @@ import type { AccountDoc } from './types'
 /**
  * Email verification for the signed-in free allowance
  * (docs/design-llm-usage-quotas.md §5.2). Access tokens don't carry
- * `email_verified`, and the web app renews tokens through iframe silent auth,
- * so a token claim would go stale. The server asks Auth0 instead, through the
+ * `email_verified`, and the web app renews tokens silently in the background
+ * (rotating refresh tokens, src/main.tsx), so a token claim would only be as
+ * fresh as the last renewal. The server asks Auth0 instead, through the
  * Management API client the app already holds, and caches the answer on the
  * account.
  */

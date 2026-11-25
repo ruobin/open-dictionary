@@ -29,7 +29,6 @@ export const PORT = Number(process.env.PORT ?? 3001)
 export const IS_PROD = NODE_ENV === 'production'
 export const MONGODB_URI = process.env.MONGODB_URI?.trim()
 export const MONGODB_DB = process.env.MONGODB_DB?.trim() || undefined
-export const FREE_DICTIONARY_API_BASE = process.env.FREE_DICTIONARY_API_BASE?.trim() || undefined
 export const DICTIONARY_API_BASE = process.env.DICTIONARY_API_BASE?.trim() || undefined
 export const MERRIAM_WEBSTER_API_KEY = process.env.MERRIAM_WEBSTER_API_KEY?.trim() || undefined
 // Absolute origin the site is deployed at (no trailing slash). Used only by

@@ -11,9 +11,21 @@ documents only.
 
 ---
 
+## Start here
+
+| Doc | What it covers |
+|---|---|
+| [`architecture.md`](./architecture.md) | **As-built architecture.** System, deployment and module diagrams; the lookup pipeline step by step; the LLM provider layer, streaming and fusion; cost control; the data model; auth; the web app and the extension; failure behaviour. Also the tech stack and codebase size at a glance. |
+| [`learning-guide.md`](./learning-guide.md) | **Staged reading order for learning the codebase.** Twelve stages, each with files to read, the concepts they rely on, an experiment to run and questions with answers; plus recurring patterns, exercises, known rough edges and a glossary. |
+
+---
+
 ## Design docs (architecture rationale)
 
-Read these for the *"why"* behind a subsystem.
+Read these for the *"why"* behind a subsystem. They are point-in-time documents:
+each records the design as it was decided, with an "as built" or
+"implementation notes" section where the code later diverged. For how things
+work today, prefer [`architecture.md`](./architecture.md).
 
 | Doc | What it covers |
 |---|---|

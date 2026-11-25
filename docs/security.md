@@ -99,7 +99,7 @@ without deliberately configuring it.
 ## Defense in depth (controls always on)
 
 - Per-IP, per-route rate limits: translate 5/min, more-examples 5/min,
-  activity-ping 60/min (client-cache hit beacons, no LLM), favorites 60/min,
+  activity-ping 60/min (client-cache hit beacons, no LLM), favorites 120/min,
   user-data 60/min (configurable via env). The two LLM
   endpoints are hard-capped at 5/min (`LLM_RATE_LIMIT_MAX_RPM` in
   `server/config.ts`) so a single client can't drive unbounded token spend.
