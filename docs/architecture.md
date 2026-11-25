@@ -98,7 +98,7 @@ Four things worth holding on to:
 | Extension | Manifest V3, React, `@crxjs/vite-plugin` | `extension/` |
 | Tests | Vitest (unit tests next to the code, `*.test.ts`) | everywhere |
 | Deploy | Docker Compose (API + Mongo), host nginx for TLS and static files | `docker-compose.yml`, `scripts/deploy-prod.sh` |
-| CI | GitHub Actions: typecheck, unit tests, build, smoke-start, `npm audit` | `.github/workflows/ci.yml` |
+| CI | GitHub Actions: typecheck, unit tests, build, smoke-start, `npm audit`; a second job typechecks and builds the extension | `.github/workflows/ci.yml` |
 
 ## 3. Codebase at a glance
 
@@ -1068,9 +1068,9 @@ flowchart LR
   `word/<term>/index.html` when it exists and the SPA shell otherwise. React
   uses `createRoot`, so it replaces the static HTML on load rather than
   hydrating it.
-- **CI** runs typecheck, the unit tests, the web build, a server smoke start
-  and a dependency audit. It does not typecheck or build the extension; that
-  is done locally.
+- **CI** has two jobs. `build` runs typecheck, the unit tests, the web build,
+  a server smoke start and a dependency audit. `extension` installs the
+  extension's own dependencies, then typechecks and builds it.
 
 ## 16. Failure behaviour
 

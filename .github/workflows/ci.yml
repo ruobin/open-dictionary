@@ -46,3 +46,33 @@ jobs:
 
       - name: Audit (production deps only)
         run: npm audit --omit=dev --audit-level=high
+
+  # The browser extension is its own npm package with its own tsconfig, so the
+  # root typecheck and build above do not cover it. (Its unit tests already run
+  # in the job above: the root `npm test` picks them up.)
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            extension/package-lock.json
+
+      # The root install is needed too: extension/tsconfig.json includes
+      # ../shared, whose test files import vitest from the root node_modules.
+      - name: Install (root)
+        run: npm ci
+
+      - name: Install (extension)
+        run: npm --prefix extension ci
+
+      - name: Typecheck extension
+        run: npx tsc --noEmit -p extension/tsconfig.json
+
+      - name: Build extension
+        run: npm run ext:build
