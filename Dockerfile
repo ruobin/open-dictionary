@@ -15,7 +15,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --chown=app:nodejs package.json ./
 COPY --chown=app:nodejs tsconfig.json ./
 COPY --chown=app:nodejs server ./server
-# server/providers/llm/openaiCompat.ts has a runtime import from ../shared/languages
+# server/ imports from ../shared at runtime (languages, sse, limits, ...)
 COPY --chown=app:nodejs shared ./shared
 USER app
 EXPOSE 3001

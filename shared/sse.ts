@@ -1,7 +1,9 @@
 /**
- * Minimal Server-Sent-Events reader for upstream LLM streams (`stream: true`
- * on Chat Completions / Responses). Handles chunk boundaries that split lines
- * or UTF-8 sequences, `\r\n` line endings, comments, and multi-line `data:`.
+ * Minimal Server-Sent-Events reader. Used in three places: the server reading
+ * upstream LLM streams (`stream: true` on Chat Completions / Responses /
+ * Anthropic Messages), and the web app and the extension reading
+ * `/api/translate-stream`. Handles chunk boundaries that split lines or UTF-8
+ * sequences, `\r\n` line endings, comments, and multi-line `data:`.
  */
 export interface SseMessage {
   event?: string

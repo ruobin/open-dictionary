@@ -35,7 +35,7 @@ export interface LlmServiceState {
   providerName?: string
   vendor?: string
   model?: string
-  /** The built provider's own cache-key id, e.g. "llm:deepseek:deepseek-v4-flash". */
+  /** The built provider's own id, e.g. "llm:deepseek:deepseek-v4-flash". */
   id?: string
   /** When fusion mode is active: the secondary provider/model. Absent
    *  otherwise (single-provider mode). */

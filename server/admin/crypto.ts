@@ -3,7 +3,7 @@ import { CONFIG_ENCRYPTION_KEY, CONFIG_ENCRYPTION_KEY_PREVIOUS } from '../config
 
 /**
  * AES-256-GCM encryption for LLM provider API keys at rest (design doc §5.1).
- * A Mongo dump (e.g. the nightly backup archive, scripts/mongodb-backup.sh)
+ * A Mongo dump (e.g. the weekly backup archive, scripts/mongodb-backup.sh)
  * must not by itself leak keys — decrypting requires the master key, which
  * lives only in server/.env, never in the database.
  */

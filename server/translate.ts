@@ -135,10 +135,10 @@ const LLM_DEBUG = /^(1|true|yes|on)$/i.test(process.env.LLM_DEBUG ?? '')
 
 /**
  * Cache-key version component (to-do §2). Bump whenever `adaptLlm()`'s output
- * shape changes, or the LLM prompt/schema in
- * `server/providers/llm/openaiCompat.ts` (`buildMessages`/`parseContent`)
- * changes in a way that would produce a different cached result for the same
- * input — otherwise the change is invisible for up to the 1-year cache TTL.
+ * shape changes, or the LLM prompts (`server/providers/llm/prompts.ts`) or
+ * the parsed schema (`server/providers/llm/parse.ts`) change in a way that
+ * would produce a different cached result for the same input — otherwise the
+ * change is invisible for up to the 1-year cache TTL.
  * Old-version cache docs are left to TTL-expire rather than eagerly purged
  * (see docs/design-translation-cache.md §2).
  */
@@ -239,8 +239,8 @@ async function cacheSetSafe(
  *  pronunciation-audio lookup before answering without it. */
 const AUDIO_GRACE_MS = 1_500
 
-/** Best-effort: fetch audio URLs from the Free Dictionary API. Only attempts for
- *  English source words (the dict API is English-only). NEVER rejects — a
+/** Best-effort: fetch audio URLs from the dictionary provider (Merriam-Webster).
+ *  Only attempts for English source words (the provider is English-only). NEVER rejects — a
  *  failure just means the entry has no audio. Started in parallel with the LLM
  *  call so it adds no latency in the common case. */
 async function fetchAudioPhonetics(req: TranslateRequest, dictionary: DictionaryProvider): Promise<Phonetic[]> {

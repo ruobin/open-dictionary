@@ -25,7 +25,7 @@ export interface DefineRequest {
 }
 
 export interface DictionaryProvider {
-  /** Stable cache-key id. */
+  /** Stable provider id (not part of the cache key). */
   readonly id: string
   /** Returns parsed entries in the shared DictionaryEntry shape. */
   define(req: DefineRequest): Promise<unknown[]>
