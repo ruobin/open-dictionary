@@ -28,7 +28,7 @@ Static SPA assets (/var/www/…, content-hashed)
   family once both the stolen copy and the user's copy are used. Logging out
   deletes the local copy but doesn't revoke it at Auth0, so to cut a session
   off, revoke that user's refresh tokens in Auth0 or block the user.
-- **Translate** (`GET /api/translate/:text`, `/api/translate-stream/:text`) and **more-examples** (`GET /api/more-examples`) are public and **optionally authenticated** (since the usage quotas, docs/design-llm-usage-quotas.md): a valid Auth0 access token identifies the owner (`ADMIN_USER_IDS`, never limited) or a signed-in user (metered by `sub`); a missing *or invalid* token is treated as anonymous, the least-privileged principal (metered by IP, IPv6 by /64). Identity only ever comes from a verified `sub`. Rate limits are 5 req/min per IP or per account (hard-capped — see below); the owner is exempt. New words (cache misses) are refused with `429 quota_exceeded` once the caller's allowance or the global free budget is used up; cache hits are never refused. The Chrome extension (`extension/`) is an additional caller of the translate endpoint — see [design-browser-extension.md](../design-browser-extension.md) §6. Its `chrome-extension://<id>` origin is allowlisted in `ALLOWED_ORIGINS` alongside the web app's origin(s); no new trust boundary since the endpoint was already public/unauthenticated. Extension traffic does add a new class of caller behind the shared per-IP rate limiter (design doc §6) — a lever to revisit if adversarial/heavy extension traffic appears.
+- **Translate** (`GET /api/translate/:text`, `/api/translate-stream/:text`) and **more-examples** (`GET /api/more-examples`) are public and **optionally authenticated** (since the usage quotas, docs/design-llm-usage-quotas.md): a valid Auth0 access token identifies the owner (`ADMIN_USER_IDS`, never limited) or a signed-in user (metered by `sub`); a missing *or invalid* token is treated as anonymous, the least-privileged principal (metered by IP, IPv6 by /64). Identity only ever comes from a verified `sub`. Rate limits are 5 req/min per IP or per account (hard-capped — see below); the owner is exempt. New words (cache misses) are refused with `429 quota_exceeded` once the caller's allowance or the global free budget is used up; cache hits are never refused. The Chrome extension (`extension/`) is an additional caller of the translate endpoint — see [design-browser-extension.md](../extension/design-browser-extension.md) §6. Its `chrome-extension://<id>` origin is allowlisted in `ALLOWED_ORIGINS` alongside the web app's origin(s); no new trust boundary since the endpoint was already public/unauthenticated. Extension traffic does add a new class of caller behind the shared per-IP rate limiter (design doc §6) — a lever to revisit if adversarial/heavy extension traffic appears.
 - **Favorites** (`/api/favorites`) and **user-data** (`/api/user-data`) require
   a valid access token and operate only on the caller's own data.
 - **Admin** (`/api/admin/*`) requires a valid access token **and** an
@@ -78,6 +78,33 @@ controls, expanded from design doc §13:
 unset by default. With both unset, `/api/admin/*` fail-closed (every request
 403s) rather than failing open — there is no way to reach the admin plane
 without deliberately configuring it.
+
+## LLM guardrails (added 2026-11-25)
+
+The lookup text is typed by anonymous visitors and placed in an LLM prompt, and
+the answer is cached for a year and published as static pages. The model has no
+tools, so prompt injection can only change *text* — but that text is content on
+this site.
+
+| ID | Severity | Finding | Mitigation |
+|----|----------|---------|------------|
+| L1 | High | The static prerender, browse lists, canonical URLs and the Report button used the entry's `headword`, which is the model's echo of the term. An injected lookup returning another word's headword overwrote that word's static page; a headword over 255 bytes made the prerender throw and blocked every web deploy. | Entry identity is the cache term everywhere (`wordPageFor` in `scripts/render.ts`, `server/browse.ts`). `withQueryHeadword` forces an LLM entry's headword to the looked-up term, on cache hits too. Terms that cannot be a path segment are skipped, and one failing entry no longer aborts the prerender. |
+| L2 | Medium | The term was interpolated into prompts as raw quoted text with no instruction to treat it as data. `/api/more-examples` passed a 500-character client-supplied `definition` to the model unchecked — a small free-text LLM proxy. | Request text is embedded as JSON string literals, and each system prompt ends with a "data, never instructions" rule. A more-examples `definition` must match a sense of the word's cached entry; the server's copy is what the model sees. |
+| L3 | Medium | Model output was type-checked but unbounded in count and length, and custom `openai-compat` / `openai-responses` providers sent no output-token cap. | `OUTPUT_LIMITS` in `parse.ts` bound every list and string. Those two adapters send a 16,384-token cap, dropped only if the endpoint refuses it. |
+
+Prompt-level defences reduce the odds of a successful injection; they do not
+remove it. L1 and L3 are what hold when a model is fooled. `npm run eval`
+includes injection terms and should be re-run when the model changes.
+
+**Still open**
+
+- Any term anyone looks up can surface in autocomplete (`/api/suggest`), browse
+  pages, the sitemap and word of the day; there is no filter on length, word
+  count or reports. Pasted private text would become public this way.
+- Content inside a well-formed entry is not moderated.
+- Usage quotas default to `shadow` (count, refuse nothing). Until
+  `USAGE_ENFORCEMENT=on`, total spend is bounded only per IP. Set a spending
+  limit in each LLM vendor's dashboard as a backstop.
 
 ## Verified safe (no change required)
 

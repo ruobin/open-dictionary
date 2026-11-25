@@ -7,7 +7,13 @@ import { parseContent, parseMoreExamplesContent } from './parse'
 import { runTranslate, type Transport } from './translateFlow'
 import { trackCall } from './usage'
 import { readSse } from '../../../shared/sse'
-import { buildLadder, RESPONSES_RUNGS } from './requestVariants'
+import {
+  buildLadder,
+  createOptionalOutputCap,
+  hasOutputCap,
+  RESPONSES_RUNGS,
+  RUNAWAY_MAX_TOKENS,
+} from './requestVariants'
 import {
   LlmProviderError,
   type LlmCallKind,
@@ -100,6 +106,11 @@ export function createOpenAiResponsesProvider(options: OpenAiResponsesOptions): 
   if (!apiKey) throw new LlmProviderError('not_configured', `${vendor} API key is not set`)
 
   const ladder = buildLadder(RESPONSES_RUNGS, options.requestBody)
+  // A loose runaway cap the gateway may refuse; skipped when the admin
+  // `requestBody` sets one (see `createOptionalOutputCap`).
+  const optionalCap = hasOutputCap(options.requestBody)
+    ? null
+    : createOptionalOutputCap('max_output_tokens', RUNAWAY_MAX_TOKENS, id)
   let streamEnabled = options.stream ?? true
 
   async function callResponses(
@@ -221,6 +232,18 @@ export function createOpenAiResponsesProvider(options: OpenAiResponsesOptions): 
     }
   }
 
+  /** callResponses with the optional output cap (if any) under the rung's
+   *  fields, so an admin `requestBody` on the rung always wins. */
+  function capped(
+    messages: Message[],
+    call: ResponsesCall,
+    rung: Record<string, unknown>
+  ): Promise<{ content: string; meta?: LlmUsageMeta }> {
+    return optionalCap
+      ? optionalCap.run((capBody) => callResponses(messages, call, { ...capBody, ...rung }))
+      : callResponses(messages, call, rung)
+  }
+
   async function send(
     messages: Message[],
     call: Omit<ResponsesCall, 'stream'> & { wantStream?: boolean }
@@ -228,16 +251,16 @@ export function createOpenAiResponsesProvider(options: OpenAiResponsesOptions): 
     const base = { label: call.label, onText: call.onText, signal: call.signal }
     if (call.wantStream && streamEnabled) {
       try {
-        return await ladder.run((rung) => callResponses(messages, { ...base, stream: true }, rung))
+        return await ladder.run((rung) => capped(messages, { ...base, stream: true }, rung))
       } catch (err) {
         if (!isBadRequest(err)) throw err
-        const result = await ladder.run((rung) => callResponses(messages, { ...base, stream: false }, rung))
+        const result = await ladder.run((rung) => capped(messages, { ...base, stream: false }, rung))
         streamEnabled = false
         console.warn(`[${vendor}] gateway rejected stream:true — streaming disabled for ${id}`)
         return result
       }
     }
-    return ladder.run((rung) => callResponses(messages, { ...base, stream: false }, rung))
+    return ladder.run((rung) => capped(messages, { ...base, stream: false }, rung))
   }
 
   async function callAndParse<T>(

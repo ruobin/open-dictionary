@@ -226,6 +226,8 @@ export function buildLlmProvider(cfg: LlmProviderConfig): LlmProvider {
         timeoutMs: cfg.timeoutMs,
         temperature: cfg.temperature,
         requestBody: cfg.options?.requestBody,
+        // An unknown endpoint: cap output, but let it refuse the field.
+        capOutput: 'auto',
         stream: cfg.options?.stream,
       })
 

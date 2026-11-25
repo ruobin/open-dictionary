@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MONGODB_DB, MONGODB_URI, PUBLIC_BASE_URL } from '../server/config'
 import { connectMongo } from '../server/db'
-import { CACHE_VERSION, type DictionaryEntry } from '../server/translate'
+import { CACHE_VERSION } from '../server/translate'
 import type { TranslationDoc } from '../server/cache/translationCache'
 import {
   WORDS_PER_BROWSE_PAGE,
@@ -32,20 +32,18 @@ import {
   paginate,
   renderBrowsePage,
   renderWordPage,
+  wordPageFor,
 } from './render'
 
 const DIST_DIR = join(process.cwd(), 'dist')
 
+/** Tolerated word-page failures before the run aborts: this many, or this share of the pages written. */
+const MAX_FAILED_PAGES = 5
+const MAX_FAILED_SHARE = 0.01
+
 interface SitemapUrl {
   loc: string
   lastmod?: string
-}
-
-/** Words with '/' (or similar) would produce an invalid/unsafe directory
- *  name or escape the intended output directory; skip them defensively —
- *  real dictionary headwords essentially never contain these. */
-function isSafeWord(word: string): boolean {
-  return word.length > 0 && !/[/\\]|^\.\.?$/.test(word)
 }
 
 function writeHtmlFile(relDir: string, html: string): void {
@@ -80,21 +78,45 @@ async function main(): Promise<void> {
   ]
 
   let wordPageCount = 0
+  let skippedUnsafe = 0
+  const failed: string[] = []
   const wordsByLetter = new Map<string, string[]>()
 
   for (const doc of docs) {
-    const entry: DictionaryEntry | undefined = doc.entries[0]
-    if (!entry || entry.typo || !entry.meanings.length || !isSafeWord(entry.word)) continue
+    // Path, URL and listing come from the cache key, not the entry's headword
+    // (see wordPageFor).
+    const target = wordPageFor(doc)
+    if (!target) continue
+    if (target === 'unsafe') {
+      skippedUnsafe += 1
+      continue
+    }
+    const { term, entry } = target
 
-    const page = renderWordPage(entry, PUBLIC_BASE_URL)
-    writeHtmlFile(`word/${entry.word}`, injectPage(template, page))
-    sitemapUrls.push({ loc: page.canonical, lastmod: doc.fetchedAt.toISOString().slice(0, 10) })
+    try {
+      const page = renderWordPage(entry, PUBLIC_BASE_URL, term)
+      writeHtmlFile(`word/${term}`, injectPage(template, page))
+      sitemapUrls.push({ loc: page.canonical, lastmod: doc.fetchedAt.toISOString().slice(0, 10) })
+    } catch (err) {
+      // One odd entry must not abort the run (and with it the deploy).
+      failed.push(doc._id)
+      console.warn(`[prerender] skipped entry ${doc._id}: ${err instanceof Error ? err.message : String(err)}`)
+      continue
+    }
     wordPageCount += 1
 
-    const letter = bucketLetter(entry.word)
+    const letter = bucketLetter(term)
     const list = wordsByLetter.get(letter) ?? []
-    list.push(entry.word)
+    list.push(term)
     wordsByLetter.set(letter, list)
+  }
+
+  // A few bad entries are skipped; many failures mean something systemic (a
+  // full disk, a broken template). Stop before the deploy script's
+  // `rsync --delete` publishes a site with most of its pages missing.
+  if (failed.length > Math.max(MAX_FAILED_PAGES, wordPageCount * MAX_FAILED_SHARE)) {
+    console.error(`[prerender] ${failed.length} word page(s) failed to render — aborting.`)
+    process.exit(1)
   }
 
   const letters = [...wordsByLetter.keys()].sort()
@@ -126,7 +148,9 @@ async function main(): Promise<void> {
   writeFileSync(robotsPath, `${robots}\nSitemap: ${PUBLIC_BASE_URL}/sitemap.xml\n`, 'utf8')
 
   console.log(
-    `[prerender] wrote ${wordPageCount} word page(s), ${browsePageCount} browse page(s), sitemap.xml (${sitemapUrls.length} URLs), and updated robots.txt`
+    `[prerender] wrote ${wordPageCount} word page(s), ${browsePageCount} browse page(s), sitemap.xml (${sitemapUrls.length} URLs), and updated robots.txt` +
+      (skippedUnsafe > 0 ? `; skipped ${skippedUnsafe} entr${skippedUnsafe === 1 ? 'y' : 'ies'} whose term cannot be a path` : '') +
+      (failed.length > 0 ? `; ${failed.length} failed (see warnings above)` : '')
   )
   process.exit(0)
 }

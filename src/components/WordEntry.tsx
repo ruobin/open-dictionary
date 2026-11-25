@@ -55,6 +55,10 @@ export function DictionaryAttribution({ source, englishOnly }: { source: Diction
 
 interface WordEntryProps {
   entry: DictionaryEntry
+  /** The looked-up term this entry was served for (the cache key). Reports and
+   *  "more examples" are filed under it; a dictionary-tier entry's own headword
+   *  can be a different word ("ran" returns "run"). Defaults to `entry.word`. */
+  term?: string
   sourceLang: string
   targetLang: string
   isFavorite: boolean
@@ -65,12 +69,14 @@ interface WordEntryProps {
 
 export default function WordEntry({
   entry,
+  term,
   sourceLang,
   targetLang,
   isFavorite,
   onToggleFavorite,
   generatedByAction,
 }: WordEntryProps) {
+  const lookupTerm = term ?? entry.word
   const phonetics = entry.phonetics ?? []
   const { uk, us, fallback } = pickAudio(phonetics)
   const phoneticText = pickPhoneticText(phonetics)
@@ -110,7 +116,7 @@ export default function WordEntry({
 
       <div className="meanings">
         {(entry.meanings ?? []).map((m, i) => (
-          <PosSection key={i} meaning={m} word={entry.word} sourceLang={sourceLang} targetLang={targetLang} />
+          <PosSection key={i} meaning={m} word={lookupTerm} sourceLang={sourceLang} targetLang={targetLang} />
         ))}
       </div>
 
@@ -186,7 +192,7 @@ export default function WordEntry({
       )}
 
       <div className="word-report-row">
-        <ReportButton word={entry.word} sourceLang={sourceLang} targetLang={targetLang} />
+        <ReportButton word={lookupTerm} sourceLang={sourceLang} targetLang={targetLang} />
       </div>
     </article>
   )

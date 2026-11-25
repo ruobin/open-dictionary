@@ -2,7 +2,9 @@ import { createHash } from 'crypto'
 import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getMongoDb } from './db'
-import { normalizeText, type GradedExample } from './translate'
+import { CACHE_VERSION, normalizeText, type DictionaryEntry, type GradedExample } from './translate'
+import type { TranslationCache } from './cache/translationCache'
+import { definitionsSimilar } from './providers/llm'
 import type { LlmService } from './llm/service'
 import { LANGUAGES } from '../shared/languages'
 import { MORE_EXAMPLES_RATE_LIMIT_RPM } from './config'
@@ -67,6 +69,25 @@ export function normalizeRequest(query: Record<string, unknown>): NormalizedRequ
   return { word, sourceLang, targetLang, senseDefinition, ...(topic ? { topic } : {}), ...(cefr ? { cefr } : {}) }
 }
 
+/**
+ * The sense of a cached entry that a client-supplied definition refers to, as
+ * the server's own text, or null when the entry has no such sense.
+ *
+ * `definition` is free text in the query string and ends up in an LLM prompt,
+ * so the client's copy is only used to pick a sense: an exact match, or (the
+ * entry may have been regenerated or fusion-merged since the client loaded
+ * it) the first sense that reads as a paraphrase of it. Text that matches no
+ * sense of the word is not a sense of the word, and is refused.
+ */
+export function resolveSenseDefinition(entries: DictionaryEntry[], definition: string): string | null {
+  const senses = entries
+    .flatMap((e) => e.meanings)
+    .flatMap((m) => m.definitions)
+    .map((d) => d.definition.trim().slice(0, MAX_DEFINITION_LENGTH))
+    .filter(Boolean)
+  return senses.find((s) => s === definition) ?? senses.find((s) => definitionsSimilar(s, definition)) ?? null
+}
+
 function cacheKey(req: NormalizedRequest): string {
   const raw = `${req.sourceLang}|${req.targetLang}|${req.word}|${req.senseDefinition}|${req.topic ?? ''}|${req.cefr ?? ''}`
   return createHash('sha1').update(raw).digest('hex')
@@ -87,11 +108,15 @@ export interface MoreExamplesRouterOptions {
   usage?: UsageService
   /** `auth({ authRequired: false })`. */
   optionalJwt?: RequestHandler
+  /** The translation cache. With it, a request's `definition` must be a sense
+   *  of the word's cached entry ({@link resolveSenseDefinition}); without it
+   *  (no MongoDB, tests) the definition cannot be checked and is used as sent. */
+  cache?: TranslationCache | null
 }
 
 export function createMoreExamplesRouter(options: MoreExamplesRouterOptions = {}): Router {
   const router = Router()
-  const { usage } = options
+  const { usage, cache: translationCache } = options
   const identity: RequestHandler[] = options.optionalJwt ? [options.optionalJwt, identify] : [identify]
 
   router.get(
@@ -121,6 +146,24 @@ export function createMoreExamplesRouter(options: MoreExamplesRouterOptions = {}
         }
 
         if (refuseOverBudget(res, true)) return
+
+        // Before anything is charged or generated: the definition must name a
+        // real sense of this word, and the prompt gets the server's copy of it.
+        let senseDefinition = normalized.senseDefinition
+        if (translationCache) {
+          const entry = await translationCache.get(
+            normalized.word,
+            normalized.sourceLang,
+            normalized.targetLang,
+            CACHE_VERSION
+          )
+          const sense = entry ? resolveSenseDefinition(entry.entries, normalized.senseDefinition) : null
+          if (!sense) {
+            res.status(400).json({ error: 'unknown_sense' })
+            return
+          }
+          senseDefinition = sense
+        }
 
         const svc = req.app.locals.llmService as LlmService
         if (!svc.current() && !svc.currentMetered?.()) {
@@ -153,7 +196,7 @@ export function createMoreExamplesRouter(options: MoreExamplesRouterOptions = {}
             word: normalized.word,
             sourceLang: normalized.sourceLang,
             targetLang: normalized.targetLang,
-            senseDefinition: normalized.senseDefinition,
+            senseDefinition,
             topic: normalized.topic,
             cefr: normalized.cefr,
           },
@@ -167,7 +210,7 @@ export function createMoreExamplesRouter(options: MoreExamplesRouterOptions = {}
           await col
             .updateOne(
               { _id: key },
-              { $set: { ...normalized, examples: result.examples, fetchedAt: new Date() } },
+              { $set: { ...normalized, senseDefinition, examples: result.examples, fetchedAt: new Date() } },
               { upsert: true }
             )
             .catch((err) => console.warn('[more-examples] cache write failed (non-fatal):', err))

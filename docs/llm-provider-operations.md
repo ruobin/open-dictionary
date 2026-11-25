@@ -37,10 +37,18 @@ Other behaviors that matter when debugging a slow or odd lookup:
   on every lookup. A 400 that is unrelated to the switch does not downgrade
   anything permanently (the rung is only remembered after a lower one succeeds).
   GLM-5.3 models force thinking on, so they will land on the plain rung.
-- **`max_tokens` is a runaway guard only** (core 4096, extras 2048) and is sent
-  only for DeepSeek, GLM and OpenRouter — generic `openai-compat` gateways are
-  left alone because newer OpenAI models reject `max_tokens`. Reasoning tokens
-  count against it on several vendors, so keep it generous.
+- **`max_tokens` is a runaway guard only** (core 4096, extras 2048) for
+  DeepSeek, GLM, OpenRouter and Anthropic. Reasoning tokens count against it
+  on several vendors, so keep it generous.
+- **Custom endpoints get a looser cap they may refuse.** For the generic
+  `openai-compat` vendor (`max_tokens`) and `openai-responses`
+  (`max_output_tokens`) the cap is 16,384 tokens on every call: nothing is
+  known about the model behind the endpoint, and it may reason before it
+  answers. Some gateways reject `max_tokens` for newer OpenAI models, so a
+  400/422 is retried once without the cap; if that works, a
+  `endpoint rejected max_tokens` warning is logged and the cap is not sent
+  again until the API restarts. Setting `max_tokens`, `max_completion_tokens`
+  or `max_output_tokens` in a model's `requestBody` replaces the built-in cap.
 - **Prompts have a constant system prefix.** Language names, mode and the term
   go in the user message so providers' automatic prefix caching applies. Never
   interpolate request data into the system strings in `prompts.ts`.

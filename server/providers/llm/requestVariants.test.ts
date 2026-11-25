@@ -4,8 +4,11 @@ import {
   GLM_RUNGS,
   OPENROUTER_RUNGS,
   RESPONSES_RUNGS,
+  RUNAWAY_MAX_TOKENS,
   buildLadder,
+  createOptionalOutputCap,
   createVariantLadder,
+  hasOutputCap,
   hasReasoningOverride,
 } from './requestVariants'
 import { LlmProviderError } from './types'
@@ -93,5 +96,68 @@ describe('vendor reasoning-off rungs', () => {
     for (const rungs of [DEEPSEEK_RUNGS, GLM_RUNGS, OPENROUTER_RUNGS, RESPONSES_RUNGS]) {
       expect(rungs[rungs.length - 1]).toEqual({})
     }
+  })
+})
+
+describe('createOptionalOutputCap', () => {
+  const cap = () => createOptionalOutputCap('max_tokens', 1000, 'llm:test:model')
+
+  it('sends the cap when the endpoint accepts it', async () => {
+    const c = cap()
+    const fn = vi.fn(async (body: Record<string, unknown>) => body)
+    expect(await c.run(fn)).toEqual({ max_tokens: 1000 })
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(c.enabled).toBe(true)
+  })
+
+  it('retries without the cap on 400/422 and, once that works, stops sending it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const c = cap()
+    const fn = vi.fn(async (body: Record<string, unknown>) => {
+      if ('max_tokens' in body) throw badRequest()
+      return body
+    })
+    expect(await c.run(fn)).toEqual({})
+    expect(fn).toHaveBeenCalledTimes(2)
+    expect(c.enabled).toBe(false)
+
+    expect(await c.run(fn)).toEqual({})
+    expect(fn).toHaveBeenCalledTimes(3) // no wasted round trip the second time
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the cap, and rethrows the original error, when the request fails without it too', async () => {
+    const c = cap()
+    const first = badRequest()
+    const fn = vi.fn(async (body: Record<string, unknown>) => {
+      if ('max_tokens' in body) throw first
+      throw new LlmProviderError('api_error', 'still bad', 400)
+    })
+    await expect(c.run(fn)).rejects.toBe(first)
+    expect(c.enabled).toBe(true)
+  })
+
+  it('does not retry errors that are not a refusal of the request', async () => {
+    const c = cap()
+    const fn = vi.fn(async () => {
+      throw new LlmProviderError('timeout', 'slow')
+    })
+    await expect(c.run(fn)).rejects.toMatchObject({ code: 'timeout' })
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(c.enabled).toBe(true)
+  })
+})
+
+describe('hasOutputCap', () => {
+  it('recognises each output-cap field an admin may set', () => {
+    expect(hasOutputCap({ max_tokens: 1 })).toBe(true)
+    expect(hasOutputCap({ max_completion_tokens: 1 })).toBe(true)
+    expect(hasOutputCap({ max_output_tokens: 1 })).toBe(true)
+    expect(hasOutputCap({ temperature: 0 })).toBe(false)
+    expect(hasOutputCap(undefined)).toBe(false)
+  })
+
+  it('the runaway cap is looser than the per-call caps, to leave room for reasoning tokens', () => {
+    expect(RUNAWAY_MAX_TOKENS).toBeGreaterThan(4096)
   })
 })

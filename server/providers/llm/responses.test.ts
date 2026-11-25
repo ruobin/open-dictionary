@@ -195,3 +195,43 @@ describe('OpenAI Responses provider', () => {
     expect(fetchMock.mock.calls.every(([, init]) => !bodyOf(init).stream)).toBe(true)
   })
 })
+
+describe('OpenAI Responses provider — output cap', () => {
+  it('sends a loose max_output_tokens on every call', async () => {
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => json(kindOf(init) === 'core' ? CORE : EXTRAS))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await makeProvider().translate(REQ)
+
+    for (const [, init] of fetchMock.mock.calls) expect(bodyOf(init).max_output_tokens).toBe(16_384)
+  })
+
+  it('drops the cap for good when the gateway refuses it, without failing the lookup', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => {
+      if ('max_output_tokens' in bodyOf(init)) return new Response('unknown parameter', { status: 400 })
+      return json(kindOf(init) === 'core' ? CORE : EXTRAS)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = makeProvider()
+
+    const first = await provider.translate(REQ)
+    expect((first.content as { headword: string }).headword).toBe('run')
+    expect(first.incomplete).toBeUndefined()
+
+    fetchMock.mockClear()
+    await provider.translate(REQ)
+    expect(fetchMock).toHaveBeenCalledTimes(2) // core + extras, no refused attempts
+    for (const [, init] of fetchMock.mock.calls) expect(bodyOf(init)).not.toHaveProperty('max_output_tokens')
+    vi.restoreAllMocks()
+  })
+
+  it('leaves the cap to the admin when requestBody sets one', async () => {
+    const fetchMock = vi.fn<FetchFn>(async (_url, init) => json(kindOf(init) === 'core' ? CORE : EXTRAS))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await makeProvider({ requestBody: { max_output_tokens: 900 } }).translate(REQ)
+
+    for (const [, init] of fetchMock.mock.calls) expect(bodyOf(init).max_output_tokens).toBe(900)
+  })
+})

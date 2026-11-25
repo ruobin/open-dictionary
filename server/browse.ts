@@ -4,6 +4,7 @@ import { getMongoDb } from './db'
 import { CACHE_VERSION, type DictionaryEntry } from './translate'
 import type { TranslationDoc } from './cache/translationCache'
 import { bucketLetter, paginate, WORDS_PER_BROWSE_PAGE } from '../shared/browse'
+import { isPublishableTerm } from '../shared/term'
 import { BROWSE_RATE_LIMIT_RPM } from './config'
 
 /**
@@ -28,17 +29,16 @@ export interface BrowsePageResult {
   totalPages: number
 }
 
-/** Words with '/' (or similar) would be unsafe to link to /word/<word> or
- *  could escape an intended path; skip them defensively — real dictionary
- *  headwords essentially never contain these (mirrors
- *  scripts/prerender.ts's isSafeWord). */
-function isSafeWord(word: string): boolean {
-  return word.length > 0 && !/[/\\]|^\.\.?$/.test(word)
-}
-
-function eligibleWord(entry: DictionaryEntry | undefined): string | null {
-  if (!entry || entry.typo || !entry.meanings.length || !isSafeWord(entry.word)) return null
-  return entry.word
+/**
+ * The term a cache doc is listed under, or null when it isn't listed. The
+ * term is the cache key (`doc.word`), never `entry.word`: for an LLM entry
+ * that is the model's echo of the term and is untrusted (mirrors
+ * scripts/prerender.ts, so the live list and the static pages agree).
+ */
+function eligibleWord(doc: Pick<TranslationDoc, 'word' | 'entries'>): string | null {
+  const entry: DictionaryEntry | undefined = doc.entries[0]
+  if (!entry || entry.typo || !entry.meanings.length || !isPublishableTerm(doc.word)) return null
+  return doc.word
 }
 
 /** Reads the whole en→en cache (LLM + dictionary-fallback tiers) once and
@@ -46,7 +46,7 @@ function eligibleWord(entry: DictionaryEntry | undefined): string | null {
  *  sorted/paginated word list.
  *  Returns null for a malformed `letter` param. */
 export async function getBrowsePage(
-  docs: Pick<TranslationDoc, 'entries'>[],
+  docs: Pick<TranslationDoc, 'word' | 'entries'>[],
   letter: string,
   page: number
 ): Promise<BrowsePageResult | null> {
@@ -54,7 +54,7 @@ export async function getBrowsePage(
 
   const wordsByLetter = new Map<string, string[]>()
   for (const doc of docs) {
-    const word = eligibleWord(doc.entries[0])
+    const word = eligibleWord(doc)
     if (!word) continue
     const bucket = bucketLetter(word)
     const list = wordsByLetter.get(bucket) ?? []
@@ -97,7 +97,7 @@ export function createBrowseRouter(): Router {
         .collection<TranslationDoc>('translations')
         .find(
           { sourceLang: 'en', targetLang: 'en', source: { $in: ['llm', 'dict'] }, version: CACHE_VERSION },
-          { projection: { entries: 1 } }
+          { projection: { word: 1, entries: 1 } }
         )
         .toArray()
 

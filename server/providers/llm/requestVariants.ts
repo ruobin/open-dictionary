@@ -92,6 +92,70 @@ export function buildLadder(
 export const CORE_MAX_TOKENS = 4096
 export const EXTRAS_MAX_TOKENS = 2048
 
+/**
+ * Output cap for endpoints we know nothing about (the admin-configured
+ * "openai-compat" and "openai-responses" vendors). Much looser than the caps
+ * above: the model behind such an endpoint may reason before it answers, and
+ * reasoning tokens count against the cap, so a tight one would cut real
+ * answers short. This only stops a runaway generation.
+ */
+export const RUNAWAY_MAX_TOKENS = 16_384
+
+const OUTPUT_CAP_KEYS = ['max_tokens', 'max_completion_tokens', 'max_output_tokens']
+
+/** True when an admin `requestBody` already sets an output cap of its own. */
+export function hasOutputCap(body: Record<string, unknown> | undefined): boolean {
+  return !!body && OUTPUT_CAP_KEYS.some((k) => k in body)
+}
+
+export interface OptionalOutputCap {
+  /** Runs `fn` with the cap field to add to the request body (`{}` once the endpoint has refused it). */
+  run<T>(fn: (capBody: Record<string, unknown>) => Promise<T>): Promise<T>
+  /** Whether the cap is still being sent (exposed for tests/diagnostics). */
+  readonly enabled: boolean
+}
+
+/**
+ * An output cap that an endpoint is allowed to refuse. The request is sent
+ * with `{ [key]: tokens }`; if it comes back 400/422, the same request is
+ * tried once without the cap. Only when THAT succeeds is the cap blamed and
+ * switched off for the rest of the process — the same "only blame it once the
+ * request works without it" rule as the reasoning ladder. If the request
+ * fails without the cap too, the original error is rethrown, so whatever
+ * handles bad requests further out (the ladder, the streaming fallback) sees
+ * exactly what it would have seen with no cap at all.
+ */
+export function createOptionalOutputCap(key: string, tokens: number, label: string): OptionalOutputCap {
+  let enabled = true
+  return {
+    get enabled() {
+      return enabled
+    },
+    async run<T>(fn: (capBody: Record<string, unknown>) => Promise<T>): Promise<T> {
+      if (!enabled) return fn({})
+      try {
+        return await fn({ [key]: tokens })
+      } catch (err) {
+        const refused =
+          err instanceof LlmProviderError &&
+          err.code === 'api_error' &&
+          err.status !== undefined &&
+          STEP_DOWN_STATUSES.has(err.status)
+        if (!refused) throw err
+        let result: T
+        try {
+          result = await fn({})
+        } catch {
+          throw err
+        }
+        enabled = false
+        console.warn(`[${label}] endpoint rejected ${key} — sending no output cap from now on`)
+        return result
+      }
+    },
+  }
+}
+
 /** Reasoning-off rungs per vendor. Sources: DeepSeek/Z.AI `thinking` toggle,
  *  OpenRouter unified `reasoning`, OpenAI-style `reasoning.effort`. */
 export const DEEPSEEK_RUNGS: Array<Record<string, unknown>> = [{ thinking: { type: 'disabled' } }, {}]
