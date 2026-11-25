@@ -23,6 +23,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Needs no database, network or secrets: vite.config.ts supplies
+      # placeholder AUTH0_* values for test runs. Includes extension/src tests,
+      # which import only packages the root install provides.
+      - name: Test
+        run: npm test
+
       - name: Build frontend
         run: npm run build
 

@@ -382,7 +382,7 @@ docs/
   security.md                   Threat model, findings & mitigations, hardening
 docker‑compose.yml      Production stack (mongo + api) — see Production deployment
 Dockerfile              Production API image
-.github/workflows/      CI (build + typecheck + smoke‑start)
+.github/workflows/      CI (typecheck + tests + build + smoke‑start + audit)
 ```
 
 > **Docs index:** see [`docs/README.md`](docs/README.md) for a categorized index
@@ -412,8 +412,9 @@ and build do **not** cover the extension. For extension changes, also run
 `npm run ext:install`, `npm run ext:test`, `npm run ext:build` and
 `npx tsc --noEmit -p extension/tsconfig.json`. Store packaging uses
 `npm --prefix extension run build:prod`; see [extension/RELEASE.md](extension/RELEASE.md).
-CI currently runs typecheck, frontend build, API health smoke-start and a production
-dependency audit; tests and extension checks must be run separately. `npm test`
+CI runs typecheck, the unit tests (`npm test`, which includes the extension's tests),
+frontend build, API health smoke-start and a production dependency audit. The
+extension's typecheck and build are not in CI and must be run separately. `npm test`
 needs no `server/.env`, database or network (`vite.config.ts` supplies placeholder
 `AUTH0_*` values for test runs).
 
